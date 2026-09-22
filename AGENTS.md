@@ -10,20 +10,20 @@ Um agente não deve ampliar o escopo nem alterar decisões arquiteturais por ini
 
 ## Antes de implementar qualquer tarefa
 
-Leia os documentos relevantes em /docs.
+Leia somente os documentos explicitamente indicados na tarefa.
 
-Como regra geral, consulte:
+Se a tarefa fornecer uma especificação completa e disser que decisões de arquitetura já estão definidas, não releia documentos adicionais por iniciativa própria.
 
-- docs/produto.md
-- docs/arquitetura.md
-- docs/regras-negocio.md
+Use AGENTS.md como regra operacional permanente.
 
-Quando aplicável, consulte também:
+Consulte outros arquivos em /docs somente quando:
+- a tarefa mandar explicitamente;
+- faltar informação necessária para executar corretamente;
+- existir contradição ou ambiguidade relevante.
 
-- docs/fluxo-atendimento.md
-- docs/modelo-dados.md
-- docs/api.md
-- docs/metricas.md
+Não leia toda a documentação do projeto como etapa padrão.
+
+Quando precisar consultar documentação, leia apenas o arquivo ou trecho diretamente relacionado à tarefa.
 
 ## Regras obrigatórias
 
