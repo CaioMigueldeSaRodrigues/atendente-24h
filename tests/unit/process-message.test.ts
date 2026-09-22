@@ -142,6 +142,7 @@ const runAppointmentRequest = async (
 
 test("processes a normal message and saves customer and assistant messages", async () => {
   const interpretation = makeInterpretation({
+    intent: Intent.GENERAL_INFORMATION,
     proposedResponse: "Resposta proposta.",
   });
   const harness = createHarness(interpretation);
@@ -370,6 +371,22 @@ test("QUOTE_REQUEST with human handoff records both and prioritizes handoff stat
   assert.equal(conversation?.commercialOutcome, CommercialOutcome.HUMAN_HANDOFF);
 });
 
+test("QUOTE_REQUEST saves the safe response instead of proposedResponse", async () => {
+  const { harness, result } = await runQuoteRequest({
+    proposedResponse: "O valor é R$ 500.",
+  });
+  const messages = await harness.messageRepository.listByConversation(
+    "business-a",
+    "conversation-1",
+  );
+
+  assert.equal(
+    result.reply,
+    "Solicitação de orçamento registrada. A equipe precisa confirmar o valor.",
+  );
+  assert.equal(messages[1]?.content, result.reply);
+});
+
 test("APPOINTMENT_REQUEST creates an Appointment", async () => {
   const { harness } = await runAppointmentRequest();
   const appointment = (await harness.appointmentRepository.findById(
@@ -455,4 +472,43 @@ test("APPOINTMENT_REQUEST with human handoff records both and prioritizes handof
   assert.equal(result.requiresHuman, true);
   assert.equal(conversation?.status, ConversationStatus.WAITING_HUMAN);
   assert.equal(conversation?.commercialOutcome, CommercialOutcome.HUMAN_HANDOFF);
+});
+
+test("APPOINTMENT_REQUEST saves the safe response instead of proposedResponse", async () => {
+  const { harness, result } = await runAppointmentRequest({
+    proposedResponse: "Seu horário está confirmado.",
+  });
+  const messages = await harness.messageRepository.listByConversation(
+    "business-a",
+    "conversation-1",
+  );
+
+  assert.equal(
+    result.reply,
+    "Solicitação de agendamento registrada. O horário ainda precisa ser confirmado pela equipe.",
+  );
+  assert.equal(messages[1]?.content, result.reply);
+});
+
+test("HUMAN_REQUEST returns the safe handoff response", async () => {
+  const harness = createHarness(
+    makeInterpretation({
+      intent: Intent.HUMAN_REQUEST,
+      proposedResponse: "Vou resolver isso imediatamente.",
+    }),
+  );
+
+  const result = await processMessage(
+    {
+      businessId: "business-a",
+      conversationId: "conversation-1",
+      content: "Quero falar com uma pessoa.",
+    },
+    harness.dependencies,
+  );
+
+  assert.equal(
+    result.reply,
+    "Vou encaminhar sua solicitação para a equipe responsável.",
+  );
 });

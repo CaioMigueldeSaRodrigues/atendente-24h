@@ -1,4 +1,5 @@
 import { requiresExplicitHumanHandoff } from "./business-rules.js";
+import { resolveSafeReply } from "./response-policy.js";
 import type {
   Appointment,
   Conversation,
@@ -86,6 +87,11 @@ export async function processMessage(
   const requiresHuman =
     requiresExplicitHumanHandoff(interpretation.intent) ||
     interpretation.requiresHuman;
+  const reply = resolveSafeReply({
+    intent: interpretation.intent,
+    proposedResponse: interpretation.proposedResponse,
+    requiresHuman,
+  });
 
   const quoteRequested = interpretation.intent === Intent.QUOTE_REQUEST;
   const appointmentRequested =
@@ -216,14 +222,14 @@ export async function processMessage(
     conversationId: conversation.id,
     senderType: SenderType.ASSISTANT,
     channel: conversation.channel,
-    content: interpretation.proposedResponse,
+    content: reply,
     createdAt: dependencies.now(),
   };
   await dependencies.messageRepository.save(assistantMessage);
 
   return {
     conversationId: updatedConversation.id,
-    reply: interpretation.proposedResponse,
+    reply,
     intent: interpretation.intent,
     conversationStatus: updatedConversation.status,
     commercialOutcome: updatedConversation.commercialOutcome,
