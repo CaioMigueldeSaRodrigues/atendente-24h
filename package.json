@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "tsc -p tsconfig.test.json && node --test dist-test/tests/unit/in-memory-repositories.test.js"
+    "test": "tsc -p tsconfig.test.json && node --test dist-test/tests/unit/*.test.js"
   },
   "devDependencies": {
     "@types/node": "^26.6.2",
