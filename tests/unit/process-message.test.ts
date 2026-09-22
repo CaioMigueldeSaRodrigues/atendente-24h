@@ -7,14 +7,23 @@ import {
   HandoffReason,
   HandoffStatus,
   Intent,
+  OpportunityStatus,
+  QuoteRequestStatus,
   SenderType,
 } from "../../src/core/domain/enums.js";
-import type { Conversation, HumanHandoff } from "../../src/core/domain/entities.js";
+import type {
+  Conversation,
+  HumanHandoff,
+  Opportunity,
+  QuoteRequest,
+} from "../../src/core/domain/entities.js";
 import type { AIInterpretation } from "../../src/core/domain/types.js";
 import {
   InMemoryConversationRepository,
   InMemoryHumanHandoffRepository,
   InMemoryMessageRepository,
+  InMemoryOpportunityRepository,
+  InMemoryQuoteRequestRepository,
 } from "../../src/core/in-memory-repositories.js";
 import type { MessageInterpreter } from "../../src/core/message-interpreter.js";
 import { processMessage } from "../../src/core/process-message.js";
@@ -53,6 +62,8 @@ const createHarness = (
   const conversationRepository = new InMemoryConversationRepository();
   const messageRepository = new InMemoryMessageRepository();
   const humanHandoffRepository = new InMemoryHumanHandoffRepository();
+  const opportunityRepository = new InMemoryOpportunityRepository();
+  const quoteRequestRepository = new InMemoryQuoteRequestRepository();
   void conversationRepository.save(initialConversation);
 
   let id = 0;
@@ -68,16 +79,38 @@ const createHarness = (
     conversationRepository,
     messageRepository,
     humanHandoffRepository,
+    opportunityRepository,
+    quoteRequestRepository,
     interpreterInputs,
     dependencies: {
       conversationRepository,
       messageRepository,
       humanHandoffRepository,
+      opportunityRepository,
+      quoteRequestRepository,
       interpreter,
       now: () => timestamp,
       generateId: (prefix: string) => `${prefix}-${++id}`,
     },
   };
+};
+
+const runQuoteRequest = async (
+  interpretationOverrides: Partial<AIInterpretation> = {},
+  content = "Quero solicitar um orçamento.",
+) => {
+  const harness = createHarness(
+    makeInterpretation({ intent: Intent.QUOTE_REQUEST, ...interpretationOverrides }),
+  );
+  const result = await processMessage(
+    {
+      businessId: "business-a",
+      conversationId: "conversation-1",
+      content,
+    },
+    harness.dependencies,
+  );
+  return { harness, result };
 };
 
 test("processes a normal message and saves customer and assistant messages", async () => {
@@ -190,4 +223,122 @@ test("provides the current customer Message in interpreter history", async () =>
   assert.equal(history?.length, 1);
   assert.equal(history?.[0]?.senderType, SenderType.CUSTOMER);
   assert.equal(history?.[0]?.content, "Esta mensagem deve estar no histórico.");
+});
+
+test("QUOTE_REQUEST creates an Opportunity", async () => {
+  const { harness } = await runQuoteRequest();
+  const opportunity = (await harness.opportunityRepository.findById(
+    "business-a",
+    "opportunity-2",
+  )) as Opportunity | null;
+
+  assert.ok(opportunity);
+  assert.equal(opportunity.businessId, "business-a");
+  assert.equal(opportunity.conversationId, "conversation-1");
+});
+
+test("QUOTE_REQUEST Opportunity waits for the business", async () => {
+  const { harness } = await runQuoteRequest();
+  const opportunity = await harness.opportunityRepository.findById(
+    "business-a",
+    "opportunity-2",
+  );
+
+  assert.equal(opportunity?.status, OpportunityStatus.WAITING_BUSINESS);
+});
+
+test("QUOTE_REQUEST creates a QuoteRequest linked to its Opportunity", async () => {
+  const { harness } = await runQuoteRequest();
+  const opportunity = await harness.opportunityRepository.findById(
+    "business-a",
+    "opportunity-2",
+  );
+  const quoteRequest = (await harness.quoteRequestRepository.findById(
+    "business-a",
+    "quote-3",
+  )) as QuoteRequest | null;
+
+  assert.ok(quoteRequest);
+  assert.equal(quoteRequest.opportunityId, opportunity?.id);
+});
+
+test("QUOTE_REQUEST QuoteRequest waits for the business", async () => {
+  const { harness } = await runQuoteRequest();
+  const quoteRequest = await harness.quoteRequestRepository.findById(
+    "business-a",
+    "quote-3",
+  );
+
+  assert.equal(quoteRequest?.status, QuoteRequestStatus.WAITING_BUSINESS);
+});
+
+test("QUOTE_REQUEST updates the Conversation commercial outcome", async () => {
+  const { harness } = await runQuoteRequest();
+  const conversation = await harness.conversationRepository.findById(
+    "business-a",
+    "conversation-1",
+  );
+
+  assert.equal(conversation?.commercialOutcome, CommercialOutcome.QUOTE_REQUESTED);
+});
+
+test("uses requestedItem as the request description when provided", async () => {
+  const { harness } = await runQuoteRequest({ requestedItem: "Pastilhas de freio" });
+  const opportunity = await harness.opportunityRepository.findById(
+    "business-a",
+    "opportunity-2",
+  );
+  const quoteRequest = await harness.quoteRequestRepository.findById(
+    "business-a",
+    "quote-3",
+  );
+
+  assert.equal(opportunity?.requestDescription, "Pastilhas de freio");
+  assert.equal(quoteRequest?.requestDescription, "Pastilhas de freio");
+});
+
+test("uses the customer's original content when requestedItem is absent", async () => {
+  const content = "Quero orçamento para trocar os pneus.";
+  const { harness } = await runQuoteRequest({}, content);
+  const opportunity = await harness.opportunityRepository.findById(
+    "business-a",
+    "opportunity-2",
+  );
+  const quoteRequest = await harness.quoteRequestRepository.findById(
+    "business-a",
+    "quote-3",
+  );
+
+  assert.equal(opportunity?.requestDescription, content);
+  assert.equal(quoteRequest?.requestDescription, content);
+});
+
+test("QUOTE_REQUEST with human handoff records both and prioritizes handoff state", async () => {
+  const { harness, result } = await runQuoteRequest({
+    requiresHuman: true,
+    handoffReason: HandoffReason.LOW_CONFIDENCE,
+  });
+  const opportunity = await harness.opportunityRepository.findById(
+    "business-a",
+    "opportunity-2",
+  );
+  const quoteRequest = await harness.quoteRequestRepository.findById(
+    "business-a",
+    "quote-3",
+  );
+  const handoff = await harness.humanHandoffRepository.findById(
+    "business-a",
+    "handoff-4",
+  );
+  const conversation = await harness.conversationRepository.findById(
+    "business-a",
+    "conversation-1",
+  );
+
+  assert.ok(opportunity);
+  assert.ok(quoteRequest);
+  assert.ok(handoff);
+  assert.equal(result.requiresHuman, true);
+  assert.equal(conversation?.status, ConversationStatus.WAITING_HUMAN);
+  assert.equal(conversation?.commercialOutcome, CommercialOutcome.HUMAN_HANDOFF);
 });

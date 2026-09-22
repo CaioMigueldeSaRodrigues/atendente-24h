@@ -3,6 +3,8 @@ import type {
   Conversation,
   HumanHandoff,
   Message,
+  Opportunity,
+  QuoteRequest,
 } from "./domain/entities.js";
 import {
   CommercialOutcome,
@@ -10,13 +12,17 @@ import {
   HandoffReason,
   HandoffStatus,
   Intent,
+  OpportunityStatus,
+  QuoteRequestStatus,
   SenderType,
 } from "./domain/enums.js";
-import type { AIInterpretation } from "./domain/types.js";
+import type { AIInterpretation, NextAction } from "./domain/types.js";
 import type {
   ConversationRepository,
   HumanHandoffRepository,
   MessageRepository,
+  OpportunityRepository,
+  QuoteRequestRepository,
 } from "./repositories.js";
 import type { MessageInterpreter } from "./message-interpreter.js";
 
@@ -30,6 +36,8 @@ export type ProcessMessageDependencies = {
   conversationRepository: ConversationRepository;
   messageRepository: MessageRepository;
   humanHandoffRepository: HumanHandoffRepository;
+  opportunityRepository: OpportunityRepository;
+  quoteRequestRepository: QuoteRequestRepository;
   interpreter: MessageInterpreter;
   now: () => string;
   generateId: (prefix: string) => string;
@@ -75,6 +83,57 @@ export async function processMessage(
     requiresExplicitHumanHandoff(interpretation.intent) ||
     interpretation.requiresHuman;
 
+  const quoteRequested = interpretation.intent === Intent.QUOTE_REQUEST;
+
+  if (quoteRequested) {
+    const now = dependencies.now();
+    const requestDescription =
+      interpretation.requestedItem ?? input.content;
+    const nextAction: NextAction = {
+      type: "PROVIDE_QUOTE",
+      description: "Fornecer orçamento ao cliente",
+    };
+    const opportunity: Opportunity = {
+      id: dependencies.generateId("opportunity"),
+      businessId: conversation.businessId,
+      conversationId: conversation.id,
+      ...(conversation.customerId !== undefined
+        ? { customerId: conversation.customerId }
+        : {}),
+      ...(conversation.vehicleId !== undefined
+        ? { vehicleId: conversation.vehicleId }
+        : {}),
+      requestDescription,
+      status: OpportunityStatus.WAITING_BUSINESS,
+      nextAction,
+      createdAt: now,
+      updatedAt: now,
+    };
+    await dependencies.opportunityRepository.save(opportunity);
+
+    const quoteRequest: QuoteRequest = {
+      id: dependencies.generateId("quote"),
+      businessId: conversation.businessId,
+      opportunityId: opportunity.id,
+      conversationId: conversation.id,
+      ...(conversation.customerId !== undefined
+        ? { customerId: conversation.customerId }
+        : {}),
+      ...(conversation.vehicleId !== undefined
+        ? { vehicleId: conversation.vehicleId }
+        : {}),
+      requestDescription,
+      ...(interpretation.symptomDescription !== undefined
+        ? { symptomDescription: interpretation.symptomDescription }
+        : {}),
+      status: QuoteRequestStatus.WAITING_BUSINESS,
+      requestedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    };
+    await dependencies.quoteRequestRepository.save(quoteRequest);
+  }
+
   if (requiresHuman) {
     const now = dependencies.now();
     const handoffReason =
@@ -100,6 +159,13 @@ export async function processMessage(
     currentIntent: interpretation.intent,
     lastMessageAt: dependencies.now(),
   };
+
+  if (quoteRequested) {
+    updatedConversation = {
+      ...updatedConversation,
+      commercialOutcome: CommercialOutcome.QUOTE_REQUESTED,
+    };
+  }
 
   if (requiresHuman) {
     updatedConversation = {
