@@ -5,8 +5,11 @@ import type {
   CommercialOutcome,
   ConversationStatus,
   Intent,
+  OpportunityStatus,
+  QuoteRequestStatus,
   SenderType,
 } from "./enums.js";
+import type { Money, NextAction } from "./types.js";
 
 export type AutomotiveBusiness = {
   id: string;
@@ -81,4 +84,38 @@ export type Message = {
   content: string;
   externalMessageId?: string;
   createdAt: string;
+};
+
+export type Opportunity = {
+  id: string;
+  businessId: string;
+  conversationId: string;
+  customerId?: string;
+  vehicleId?: string;
+  requestDescription?: string;
+  status: OpportunityStatus;
+  nextAction?: NextAction;
+  estimatedValue?: Money;
+  realizedValue?: Money;
+  valueSource?: string;
+  createdAt: string;
+  updatedAt: string;
+  closedAt?: string;
+};
+
+export type QuoteRequest = {
+  id: string;
+  businessId: string;
+  opportunityId: string;
+  conversationId: string;
+  customerId?: string;
+  vehicleId?: string;
+  requestDescription: string;
+  symptomDescription?: string;
+  status: QuoteRequestStatus;
+  requestedAt: string;
+  respondedAt?: string;
+  authorizedPrice?: Money;
+  createdAt: string;
+  updatedAt: string;
 };

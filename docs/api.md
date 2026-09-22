@@ -340,7 +340,7 @@ Conceitualmente:
     "year": 2020
   },
   "symptomDescription": null,
-  "requestedService": "troca de pastilhas",
+  "requestedItem": "troca de pastilhas",
   "missingData": [],
   "suggestedNextAction": "PROVIDE_QUOTE",
   "requiresHuman": false,

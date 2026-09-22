@@ -346,7 +346,7 @@ Campos conceituais:
 - conversationId
 - customerId, opcional
 - vehicleId, opcional
-- serviceDescription, opcional
+- requestDescription, opcional
 - status
 - nextAction, opcional
 - estimatedValue, opcional
@@ -443,7 +443,7 @@ Campos conceituais:
 - conversationId
 - customerId, opcional
 - vehicleId, opcional
-- serviceDescription
+- requestDescription
 - symptomDescription, opcional
 - status
 - requestedAt
@@ -505,7 +505,7 @@ Campos conceituais:
 - requestedTime, opcional
 - confirmedStartAt, opcional
 - status
-- serviceDescription, opcional
+- requestDescription, opcional
 - externalAppointmentId, opcional
 - createdAt
 - updatedAt
@@ -750,7 +750,7 @@ Campos:
 - extractedCustomerData
 - extractedVehicleData
 - symptomDescription, opcional
-- requestedService, opcional
+- requestedItem, opcional
 - missingData
 - suggestedNextAction
 - requiresHuman
@@ -997,7 +997,7 @@ currentIntent = QUOTE_REQUEST
 
 Opportunity:
 status = OPEN
-serviceDescription = troca de pastilhas
+requestDescription = troca de pastilhas
 
 QuoteRequest:
 status = REQUESTED

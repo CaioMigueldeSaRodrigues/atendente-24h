@@ -36,7 +36,7 @@ export type AIInterpretation = {
     mileage?: number;
   };
   symptomDescription?: string;
-  requestedService?: string;
+  requestedItem?: string;
   missingData: string[];
   suggestedNextAction: NextAction;
   requiresHuman: boolean;
