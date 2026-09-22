@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  AppointmentStatus,
   Channel,
   CommercialOutcome,
   ConversationStatus,
@@ -12,6 +13,7 @@ import {
   SenderType,
 } from "../../src/core/domain/enums.js";
 import type {
+  Appointment,
   Conversation,
   HumanHandoff,
   Opportunity,
@@ -19,6 +21,7 @@ import type {
 } from "../../src/core/domain/entities.js";
 import type { AIInterpretation } from "../../src/core/domain/types.js";
 import {
+  InMemoryAppointmentRepository,
   InMemoryConversationRepository,
   InMemoryHumanHandoffRepository,
   InMemoryMessageRepository,
@@ -60,6 +63,7 @@ const createHarness = (
   initialConversation = makeConversation(),
 ) => {
   const conversationRepository = new InMemoryConversationRepository();
+  const appointmentRepository = new InMemoryAppointmentRepository();
   const messageRepository = new InMemoryMessageRepository();
   const humanHandoffRepository = new InMemoryHumanHandoffRepository();
   const opportunityRepository = new InMemoryOpportunityRepository();
@@ -77,6 +81,7 @@ const createHarness = (
 
   return {
     conversationRepository,
+    appointmentRepository,
     messageRepository,
     humanHandoffRepository,
     opportunityRepository,
@@ -84,6 +89,7 @@ const createHarness = (
     interpreterInputs,
     dependencies: {
       conversationRepository,
+      appointmentRepository,
       messageRepository,
       humanHandoffRepository,
       opportunityRepository,
@@ -101,6 +107,27 @@ const runQuoteRequest = async (
 ) => {
   const harness = createHarness(
     makeInterpretation({ intent: Intent.QUOTE_REQUEST, ...interpretationOverrides }),
+  );
+  const result = await processMessage(
+    {
+      businessId: "business-a",
+      conversationId: "conversation-1",
+      content,
+    },
+    harness.dependencies,
+  );
+  return { harness, result };
+};
+
+const runAppointmentRequest = async (
+  interpretationOverrides: Partial<AIInterpretation> = {},
+  content = "Quero solicitar um agendamento.",
+) => {
+  const harness = createHarness(
+    makeInterpretation({
+      intent: Intent.APPOINTMENT_REQUEST,
+      ...interpretationOverrides,
+    }),
   );
   const result = await processMessage(
     {
@@ -337,6 +364,93 @@ test("QUOTE_REQUEST with human handoff records both and prioritizes handoff stat
 
   assert.ok(opportunity);
   assert.ok(quoteRequest);
+  assert.ok(handoff);
+  assert.equal(result.requiresHuman, true);
+  assert.equal(conversation?.status, ConversationStatus.WAITING_HUMAN);
+  assert.equal(conversation?.commercialOutcome, CommercialOutcome.HUMAN_HANDOFF);
+});
+
+test("APPOINTMENT_REQUEST creates an Appointment", async () => {
+  const { harness } = await runAppointmentRequest();
+  const appointment = (await harness.appointmentRepository.findById(
+    "business-a",
+    "appointment-2",
+  )) as Appointment | null;
+
+  assert.ok(appointment);
+  assert.equal(appointment.businessId, "business-a");
+  assert.equal(appointment.conversationId, "conversation-1");
+});
+
+test("requested Appointment remains REQUESTED without confirmation time", async () => {
+  const { harness } = await runAppointmentRequest();
+  const appointment = await harness.appointmentRepository.findById(
+    "business-a",
+    "appointment-2",
+  );
+
+  assert.equal(appointment?.status, AppointmentStatus.REQUESTED);
+  assert.equal(
+    appointment && Object.hasOwn(appointment, "confirmedStartAt"),
+    false,
+  );
+});
+
+test("APPOINTMENT_REQUEST updates the Conversation commercial outcome", async () => {
+  const { harness } = await runAppointmentRequest();
+  const conversation = await harness.conversationRepository.findById(
+    "business-a",
+    "conversation-1",
+  );
+
+  assert.equal(
+    conversation?.commercialOutcome,
+    CommercialOutcome.APPOINTMENT_REQUESTED,
+  );
+});
+
+test("uses requestedItem as Appointment requestDescription when provided", async () => {
+  const { harness } = await runAppointmentRequest({
+    requestedItem: "Instalação de para-brisa",
+  });
+  const appointment = await harness.appointmentRepository.findById(
+    "business-a",
+    "appointment-2",
+  );
+
+  assert.equal(appointment?.requestDescription, "Instalação de para-brisa");
+});
+
+test("uses original customer content when Appointment requestedItem is absent", async () => {
+  const content = "Quero marcar uma avaliação dos pneus.";
+  const { harness } = await runAppointmentRequest({}, content);
+  const appointment = await harness.appointmentRepository.findById(
+    "business-a",
+    "appointment-2",
+  );
+
+  assert.equal(appointment?.requestDescription, content);
+});
+
+test("APPOINTMENT_REQUEST with human handoff records both and prioritizes handoff", async () => {
+  const { harness, result } = await runAppointmentRequest({
+    requiresHuman: true,
+    handoffReason: HandoffReason.LOW_CONFIDENCE,
+  });
+  const appointment = await harness.appointmentRepository.findById(
+    "business-a",
+    "appointment-2",
+  );
+  const handoff = await harness.humanHandoffRepository.findById(
+    "business-a",
+    "handoff-3",
+  );
+  const conversation = await harness.conversationRepository.findById(
+    "business-a",
+    "conversation-1",
+  );
+
+  assert.ok(appointment);
   assert.ok(handoff);
   assert.equal(result.requiresHuman, true);
   assert.equal(conversation?.status, ConversationStatus.WAITING_HUMAN);

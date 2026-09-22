@@ -1,5 +1,6 @@
 import { requiresExplicitHumanHandoff } from "./business-rules.js";
 import type {
+  Appointment,
   Conversation,
   HumanHandoff,
   Message,
@@ -8,6 +9,7 @@ import type {
 } from "./domain/entities.js";
 import {
   CommercialOutcome,
+  AppointmentStatus,
   ConversationStatus,
   HandoffReason,
   HandoffStatus,
@@ -19,6 +21,7 @@ import {
 import type { AIInterpretation, NextAction } from "./domain/types.js";
 import type {
   ConversationRepository,
+  AppointmentRepository,
   HumanHandoffRepository,
   MessageRepository,
   OpportunityRepository,
@@ -34,6 +37,7 @@ export type ProcessMessageInput = {
 
 export type ProcessMessageDependencies = {
   conversationRepository: ConversationRepository;
+  appointmentRepository: AppointmentRepository;
   messageRepository: MessageRepository;
   humanHandoffRepository: HumanHandoffRepository;
   opportunityRepository: OpportunityRepository;
@@ -84,6 +88,8 @@ export async function processMessage(
     interpretation.requiresHuman;
 
   const quoteRequested = interpretation.intent === Intent.QUOTE_REQUEST;
+  const appointmentRequested =
+    interpretation.intent === Intent.APPOINTMENT_REQUEST;
 
   if (quoteRequested) {
     const now = dependencies.now();
@@ -134,6 +140,26 @@ export async function processMessage(
     await dependencies.quoteRequestRepository.save(quoteRequest);
   }
 
+  if (appointmentRequested) {
+    const now = dependencies.now();
+    const appointment: Appointment = {
+      id: dependencies.generateId("appointment"),
+      businessId: conversation.businessId,
+      conversationId: conversation.id,
+      ...(conversation.customerId !== undefined
+        ? { customerId: conversation.customerId }
+        : {}),
+      ...(conversation.vehicleId !== undefined
+        ? { vehicleId: conversation.vehicleId }
+        : {}),
+      status: AppointmentStatus.REQUESTED,
+      requestDescription: interpretation.requestedItem ?? input.content,
+      createdAt: now,
+      updatedAt: now,
+    };
+    await dependencies.appointmentRepository.save(appointment);
+  }
+
   if (requiresHuman) {
     const now = dependencies.now();
     const handoffReason =
@@ -164,6 +190,13 @@ export async function processMessage(
     updatedConversation = {
       ...updatedConversation,
       commercialOutcome: CommercialOutcome.QUOTE_REQUESTED,
+    };
+  }
+
+  if (appointmentRequested) {
+    updatedConversation = {
+      ...updatedConversation,
+      commercialOutcome: CommercialOutcome.APPOINTMENT_REQUESTED,
     };
   }
 
