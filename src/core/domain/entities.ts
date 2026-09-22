@@ -1,4 +1,12 @@
-import type { BusinessType, CatalogItemKind, Channel } from "./enums.js";
+import type {
+  BusinessType,
+  CatalogItemKind,
+  Channel,
+  CommercialOutcome,
+  ConversationStatus,
+  Intent,
+  SenderType,
+} from "./enums.js";
 
 export type AutomotiveBusiness = {
   id: string;
@@ -48,4 +56,29 @@ export type CatalogItem = {
   active: boolean;
   createdAt: string;
   updatedAt: string;
+};
+
+export type Conversation = {
+  id: string;
+  businessId: string;
+  customerId?: string;
+  vehicleId?: string;
+  channel: Channel;
+  status: ConversationStatus;
+  commercialOutcome?: CommercialOutcome;
+  currentIntent?: Intent;
+  startedAt: string;
+  lastMessageAt: string;
+  closedAt?: string;
+};
+
+export type Message = {
+  id: string;
+  businessId: string;
+  conversationId: string;
+  senderType: SenderType;
+  channel: Channel;
+  content: string;
+  externalMessageId?: string;
+  createdAt: string;
 };
