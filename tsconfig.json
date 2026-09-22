@@ -8,5 +8,6 @@
     "outDir": "dist",
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true
-  }
+  },
+  "include": ["src/**/*.ts"]
 }
