@@ -1,0 +1,51 @@
+import type { BusinessType, CatalogItemKind, Channel } from "./enums.js";
+
+export type AutomotiveBusiness = {
+  id: string;
+  name: string;
+  legalName?: string;
+  businessType: BusinessType;
+  phone?: string;
+  email?: string;
+  address?: string;
+  timezone: string;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type Customer = {
+  id: string;
+  businessId: string;
+  name?: string;
+  primaryPhone?: string;
+  email?: string;
+  preferredContactChannel?: Channel;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type Vehicle = {
+  id: string;
+  businessId: string;
+  customerId?: string;
+  brand?: string;
+  model?: string;
+  year?: number;
+  version?: string;
+  licensePlate?: string;
+  mileage?: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CatalogItem = {
+  id: string;
+  businessId: string;
+  kind: CatalogItemKind;
+  name: string;
+  description?: string;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+};

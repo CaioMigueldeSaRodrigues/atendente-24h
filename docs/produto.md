@@ -2,7 +2,7 @@
 
 ## 1. Propósito do produto
 
-O Atendente Automotivo 24/7 é uma solução de atendimento comercial para oficinas multimarcas e auto centers.
+O Atendente Automotivo 24/7 é uma solução de atendimento comercial para estabelecimentos automotivos em geral, incluindo oficinas, auto centers, vidros automotivos, insufilm, iluminação, baterias, pneus, autoelétricas, acessórios, estética automotiva, funilaria e pintura, além de outros varejistas e prestadores de serviços automotivos.
 
 Seu objetivo principal não é substituir funcionários nem simplesmente automatizar conversas.
 
@@ -19,7 +19,7 @@ O produto deve transformar contatos recebidos por canais digitais e de voz em:
 
 ## 2. Problema de negócio
 
-Oficinas e auto centers frequentemente perdem oportunidades porque:
+Estabelecimentos automotivos frequentemente perdem oportunidades porque:
 
 - funcionários estão ocupados com veículos ou clientes presenciais;
 - mensagens de WhatsApp acumulam;
@@ -33,9 +33,9 @@ O produto deve reduzir essas perdas.
 
 ## 3. Cliente inicial
 
-O primeiro perfil de cliente será:
+O público inclui oficinas, auto centers, vidros e para-brisas, insufilm e películas, faróis e iluminação, baterias, pneus e rodas, autoelétrica, ar-condicionado automotivo, acessórios, estética automotiva, funilaria e pintura, além de outros varejistas e prestadores de serviços automotivos.
 
-Auto centers e oficinas multimarcas estruturadas.
+O primeiro perfil de cliente poderá incluir auto centers e oficinas multimarcas estruturadas.
 
 Características desejáveis:
 
@@ -51,7 +51,7 @@ Características desejáveis:
 
 ## 4. Proposta de valor
 
-Transformar contatos que poderiam ser perdidos em oportunidades comerciais estruturadas.
+Transformar contatos que poderiam ser perdidos em oportunidades comerciais, orçamentos, vendas, agendamentos ou encaminhamentos.
 
 A solução deve ser avaliada pelo impacto gerado no negócio e não pelo número de mensagens processadas.
 

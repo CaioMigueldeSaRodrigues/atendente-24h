@@ -86,7 +86,7 @@ Cliente:
 
 Resposta adequada:
 
-"Olá! Sim, se esse serviço estiver cadastrado como oferecido pela oficina. Se quiser, posso verificar como agendar."
+"Olá! Sim, se esse serviço estiver cadastrado como oferecido pelo estabelecimento automotivo. Se quiser, posso verificar como agendar."
 
 Não pedir nome, placa e telefone antes de responder uma pergunta simples.
 
@@ -195,7 +195,7 @@ Se não existir preço autorizado:
 
 criar ou atualizar Opportunity;
 criar QuoteRequest;
-marcar necessidade de retorno da oficina.
+marcar necessidade de retorno do estabelecimento automotivo.
 
 Resposta conceitual:
 
@@ -221,7 +221,7 @@ Fluxo:
 
 Resposta conceitual:
 
-"Entendi. Vou considerar esse relato para a avaliação da oficina. Se quiser, posso verificar como agendar."
+"Entendi. Vou considerar esse relato para a avaliação do estabelecimento automotivo. Se quiser, posso verificar como agendar."
 
 Nunca responder:
 
@@ -502,7 +502,7 @@ registrar oportunidade
   ->
 registrar QuoteRequest
   ->
-WAITING_WORKSHOP
+WAITING_BUSINESS
 
 Resposta:
 
@@ -562,7 +562,7 @@ Cliente:
 Atendente:
 "Bom dia! Como posso ajudar com seu veículo?"
 
-Se a conversa permanecer sem relação com a oficina, o sistema deverá redirecionar ou encerrar educadamente.
+Se a conversa permanecer sem relação com o estabelecimento automotivo, o sistema deverá redirecionar ou encerrar educadamente.
 
 ---
 
@@ -688,9 +688,9 @@ A conversa pode ser encerrada.
 
 Mas:
 
-OpportunityStatus = WAITING_WORKSHOP
+OpportunityStatus = WAITING_BUSINESS
 
-QuoteRequestStatus = WAITING_WORKSHOP
+QuoteRequestStatus = WAITING_BUSINESS
 
 A oportunidade continua aberta.
 
@@ -719,7 +719,7 @@ Opportunity criada.
 
 Se não houver preço autorizado:
 
-QuoteRequestStatus = WAITING_WORKSHOP
+QuoteRequestStatus = WAITING_BUSINESS
 
 Resposta:
 

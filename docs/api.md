@@ -16,7 +16,7 @@ Posteriormente, WhatsApp, web e voz poderão utilizar o mesmo núcleo.
 
 1. A API não contém regras de negócio específicas do canal.
 2. Toda entrada externa deve ser validada.
-3. O workshopId delimita a operação da oficina.
+3. O businessId delimita a operação do estabelecimento automotivo.
 4. A API não deve expor credenciais ou detalhes internos de fornecedores.
 5. Respostas devem distinguir ações solicitadas de ações confirmadas.
 6. Erros de integração não devem gerar respostas comerciais falsas.
@@ -84,7 +84,7 @@ iniciar uma nova Conversation.
 Request conceitual:
 
 {
-  "workshopId": "workshop_123",
+  "businessId": "business_123",
   "channel": "WEB",
   "customerId": null
 }
@@ -98,9 +98,9 @@ Response conceitual:
   "commercialOutcome": null
 }
 
-No MVP local, workshopId poderá ser fornecido explicitamente.
+No MVP local, businessId poderá ser fornecido explicitamente.
 
-Em produção, a identificação da oficina deverá futuramente ser derivada de contexto autenticado e não confiada cegamente ao cliente da API.
+Em produção, a identificação do estabelecimento automotivo deverá futuramente ser derivada de contexto autenticado e não confiada cegamente ao cliente da API.
 
 ---
 
@@ -117,7 +117,7 @@ enviar uma mensagem do cliente ao motor de atendimento.
 Request:
 
 {
-  "workshopId": "workshop_123",
+  "businessId": "business_123",
   "message": "Quero saber quanto custa trocar as pastilhas do meu Corolla 2020"
 }
 
@@ -180,11 +180,11 @@ Exemplo:
   "requiresHuman": false,
   "quoteRequest": {
     "id": "quote_123",
-    "status": "WAITING_WORKSHOP"
+    "status": "WAITING_BUSINESS"
   },
   "opportunity": {
     "id": "opp_123",
-    "status": "WAITING_WORKSHOP",
+    "status": "WAITING_BUSINESS",
     "nextAction": {
       "type": "PROVIDE_QUOTE"
     }
@@ -242,7 +242,7 @@ Response conceitual:
 
 {
   "id": "conv_123",
-  "workshopId": "workshop_123",
+  "businessId": "business_123",
   "channel": "WEB",
   "status": "ACTIVE",
   "commercialOutcome": "OPPORTUNITY",
@@ -292,7 +292,7 @@ Estrutura conceitual:
 ProcessMessageInput
 
 {
-  "workshopId": "...",
+  "businessId": "...",
   "conversationId": "...",
   "channel": "WEB",
   "senderType": "CUSTOMER",
@@ -380,7 +380,7 @@ o domínio não deverá transformar isso em diagnóstico confirmado.
 
 ## 19. Fonte autorizada
 
-A API interna deverá permitir ao motor consultar informações autorizadas da oficina através de contrato próprio.
+A API interna deverá permitir ao motor consultar informações autorizadas do estabelecimento automotivo através de contrato próprio.
 
 Conceitualmente:
 
@@ -537,13 +537,13 @@ A necessidade deverá ser considerada antes de integrar canais reais.
 
 ---
 
-## 28. Isolamento por oficina
+## 28. Isolamento por estabelecimento automotivo
 
-Toda operação deverá validar que os recursos pertencem ao workshopId correto.
+Toda operação deverá validar que os recursos pertencem ao businessId correto.
 
 Exemplo proibido:
 
-Workshop A acessar conversationId pertencente ao Workshop B.
+Business A acessar conversationId pertencente ao Business B.
 
 Essa verificação deverá existir na camada apropriada da aplicação.
 
@@ -555,7 +555,7 @@ O MVP local poderá operar sem autenticação externa completa.
 
 Isso não é aceitável para produção.
 
-Antes de disponibilizar a API publicamente, deverá existir autenticação e associação segura da requisição à Workshop correspondente.
+Antes de disponibilizar a API publicamente, deverá existir autenticação e associação segura da requisição à AutomotiveBusiness correspondente.
 
 Não implementar autenticação antes da necessidade do MVP local.
 
@@ -584,7 +584,7 @@ Logs deverão permitir rastrear:
 
 - requisição;
 - conversationId;
-- workshopId;
+- businessId;
 - resultado;
 - erro.
 
@@ -727,7 +727,7 @@ A implementação futura da API deverá demonstrar que:
 5. preço não autorizado não é inventado;
 6. pedido de humano gera handoff;
 7. agendamento solicitado não vira confirmado sem confirmação real;
-8. workshopId não permite acesso cruzado;
+8. businessId não permite acesso cruzado;
 9. entradas inválidas são rejeitadas;
 10. o core pode ser testado sem servidor HTTP.
 

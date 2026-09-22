@@ -242,7 +242,7 @@ Exemplos:
 - serviços oferecidos;
 - preços autorizados;
 - disponibilidade de agenda;
-- políticas da oficina.
+- políticas do estabelecimento automotivo.
 
 A IA poderá formular a resposta, mas não criar esses dados.
 

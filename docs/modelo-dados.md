@@ -28,26 +28,27 @@ O modelo deve permitir:
 4. Estados solicitados e estados confirmados devem permanecer separados.
 5. Dados pessoais devem ser coletados somente quando necessários.
 6. Informações comerciais autorizadas devem ser distinguíveis de informação inferida.
-7. Toda entidade pertencente à operação de uma oficina deve ser associada à oficina responsável.
+7. Toda entidade pertencente à operação de um estabelecimento automotivo deve ser associada ao estabelecimento responsável.
 8. IDs devem ser opacos e não carregar significado de negócio.
 9. Datas devem ser registradas com data e hora completas.
 10. O modelo deve permitir substituição futura da persistência.
 
 ---
 
-## 3. Oficina
+## 3. Estabelecimento automotivo
 
 Entidade conceitual:
 
-Workshop
+AutomotiveBusiness
 
-Representa a empresa atendida pela plataforma.
+Representa o estabelecimento automotivo atendido pela plataforma, seja varejista ou prestador de serviços.
 
 Campos conceituais:
 
 - id
 - name
 - legalName, opcional
+- businessType
 - phone, opcional
 - email, opcional
 - address, opcional
@@ -56,9 +57,25 @@ Campos conceituais:
 - createdAt
 - updatedAt
 
-O campo id será utilizado como workshopId nas demais entidades.
+BusinessType define o tipo de negócio automotivo. Valores iniciais:
 
-Mesmo no MVP com apenas uma oficina, os dados deverão permanecer associados a uma Workshop.
+- WORKSHOP
+- AUTO_CENTER
+- AUTO_GLASS
+- WINDOW_TINT
+- LIGHTING
+- BATTERY
+- TIRES_WHEELS
+- AUTO_ELECTRICAL
+- AIR_CONDITIONING
+- ACCESSORIES
+- DETAILING
+- BODYWORK_PAINT
+- OTHER
+
+O campo id será utilizado como businessId nas demais entidades.
+
+Mesmo no MVP com apenas um estabelecimento automotivo, os dados deverão permanecer associados a uma AutomotiveBusiness.
 
 Essa decisão evita mistura de informações entre clientes quando o produto for expandido.
 
@@ -70,12 +87,12 @@ Entidade:
 
 Customer
 
-Representa uma pessoa que interage com a oficina.
+Representa uma pessoa que interage com o estabelecimento automotivo.
 
 Campos conceituais:
 
 - id
-- workshopId
+- businessId
 - name, opcional
 - primaryPhone, opcional
 - email, opcional
@@ -102,7 +119,7 @@ Representa o veículo relacionado ao atendimento.
 Campos conceituais:
 
 - id
-- workshopId
+- businessId
 - customerId, opcional
 - brand, opcional
 - model, opcional
@@ -130,7 +147,7 @@ Representa uma sessão de atendimento.
 Campos conceituais:
 
 - id
-- workshopId
+- businessId
 - customerId, opcional
 - vehicleId, opcional
 - channel
@@ -245,7 +262,7 @@ Representa uma mensagem individual dentro de uma conversa.
 Campos conceituais:
 
 - id
-- workshopId
+- businessId
 - conversationId
 - senderType
 - channel
@@ -325,7 +342,7 @@ Representa uma intenção comercial suficientemente clara para exigir acompanham
 Campos conceituais:
 
 - id
-- workshopId
+- businessId
 - conversationId
 - customerId, opcional
 - vehicleId, opcional
@@ -355,7 +372,7 @@ Valores:
 
 - OPEN
 - WAITING_CUSTOMER
-- WAITING_WORKSHOP
+- WAITING_BUSINESS
 - CONVERTED
 - LOST
 - CLOSED
@@ -366,8 +383,8 @@ existe ação comercial em andamento.
 WAITING_CUSTOMER:
 continuidade depende do cliente.
 
-WAITING_WORKSHOP:
-continuidade depende da oficina.
+WAITING_BUSINESS:
+continuidade depende do estabelecimento automotivo.
 
 CONVERTED:
 houve conversão operacional definida pelo produto.
@@ -421,7 +438,7 @@ Representa um pedido do cliente por preço, proposta ou orçamento.
 Campos conceituais:
 
 - id
-- workshopId
+- businessId
 - opportunityId
 - conversationId
 - customerId, opcional
@@ -447,7 +464,7 @@ Valores:
 
 - REQUESTED
 - WAITING_INFORMATION
-- WAITING_WORKSHOP
+- WAITING_BUSINESS
 - RESPONDED
 - CANCELLED
 - CLOSED
@@ -458,11 +475,11 @@ pedido registrado.
 WAITING_INFORMATION:
 faltam dados necessários.
 
-WAITING_WORKSHOP:
+WAITING_BUSINESS:
 depende da equipe.
 
 RESPONDED:
-a oficina forneceu resposta ou orçamento autorizado.
+o estabelecimento automotivo forneceu resposta ou orçamento autorizado.
 
 A IA não muda REQUESTED para RESPONDED sem confirmação operacional.
 
@@ -479,7 +496,7 @@ Representa tanto uma solicitação quanto um agendamento efetivamente confirmado
 Campos conceituais:
 
 - id
-- workshopId
+- businessId
 - opportunityId, opcional
 - conversationId
 - customerId, opcional
@@ -532,7 +549,7 @@ Representa transferência ou necessidade explícita de ação humana.
 Campos conceituais:
 
 - id
-- workshopId
+- businessId
 - conversationId
 - opportunityId, opcional
 - reason
@@ -625,7 +642,7 @@ quando nenhum profissional confirmou.
 
 ---
 
-## 24. Informação autorizada da oficina
+## 24. Informação autorizada do estabelecimento automotivo
 
 Entidade conceitual:
 
@@ -636,7 +653,7 @@ Representa uma informação que o atendente pode tratar como fonte de verdade.
 Campos conceituais:
 
 - id
-- workshopId
+- businessId
 - type
 - key
 - value
@@ -770,7 +787,7 @@ mesmo com confiança alta, o modelo não pode diagnosticar um defeito.
 O sistema deve distinguir:
 
 - informação dita pelo cliente;
-- informação autorizada da oficina;
+- informação autorizada do estabelecimento automotivo;
 - interpretação da IA;
 - ação realmente executada.
 
@@ -830,7 +847,7 @@ Devem ser armazenados como referências externas.
 
 Datas e horários persistidos deverão conter informação suficiente de timezone.
 
-A oficina deverá possuir timezone configurado.
+O estabelecimento automotivo deverá possuir timezone configurado.
 
 Exemplo esperado no Brasil:
 
@@ -863,15 +880,15 @@ Não armazenar:
 - informações sem finalidade operacional;
 - credenciais.
 
-Dados pessoais deverão permanecer associados à oficina responsável.
+Dados pessoais deverão permanecer associados ao estabelecimento automotivo responsável.
 
 ---
 
-## 35. Isolamento por oficina
+## 35. Isolamento por estabelecimento automotivo
 
-Qualquer consulta operacional deverá ser limitada pelo workshopId.
+Qualquer consulta operacional deverá ser limitada pelo businessId.
 
-Uma oficina não poderá consultar:
+Um estabelecimento automotivo não poderá consultar:
 
 - clientes;
 - veículos;
@@ -881,7 +898,7 @@ Uma oficina não poderá consultar:
 - agendamentos;
 - orçamentos;
 
-pertencentes a outra oficina.
+pertencentes a outro estabelecimento automotivo.
 
 Essa regra deverá existir mesmo antes de uma implementação completa de multitenancy.
 
@@ -889,14 +906,17 @@ Essa regra deverá existir mesmo antes de uma implementação completa de multit
 
 ## 36. Relacionamentos principais
 
-Workshop
+AutomotiveBusiness
   1 -> N Customer
 
-Workshop
+AutomotiveBusiness
   1 -> N Conversation
 
-Workshop
+AutomotiveBusiness
   1 -> N Opportunity
+
+AutomotiveBusiness
+  1 -> N CatalogItem
 
 Customer
   1 -> N Vehicle
@@ -922,8 +942,37 @@ Conversation
 Opportunity
   0 -> N HumanHandoff
 
-Workshop
+AutomotiveBusiness
   1 -> N AuthorizedBusinessFact
+
+---
+
+## Item de catálogo
+
+CatalogItem representa um produto, um serviço ou a combinação dos dois oferecidos pelo estabelecimento automotivo.
+
+Campos conceituais:
+
+- id
+- businessId
+- kind
+- name
+- description, opcional
+- active
+- createdAt
+- updatedAt
+
+CatalogItemKind possui os valores:
+
+- PRODUCT
+- SERVICE
+- PRODUCT_AND_SERVICE
+
+Exemplos:
+
+- "Farol esquerdo Hilux 2021" — PRODUCT
+- "Alinhamento" — SERVICE
+- "Para-brisa Corolla 2020 + instalação" — PRODUCT_AND_SERVICE
 
 ---
 
@@ -956,10 +1005,10 @@ status = REQUESTED
 Se não houver preço autorizado:
 
 Opportunity:
-status = WAITING_WORKSHOP
+status = WAITING_BUSINESS
 
 QuoteRequest:
-status = WAITING_WORKSHOP
+status = WAITING_BUSINESS
 
 O sistema não cria preço.
 
