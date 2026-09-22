@@ -4,6 +4,9 @@ import type {
   Channel,
   CommercialOutcome,
   ConversationStatus,
+  AppointmentStatus,
+  HandoffReason,
+  HandoffStatus,
   Intent,
   OpportunityStatus,
   QuoteRequestStatus,
@@ -116,6 +119,39 @@ export type QuoteRequest = {
   requestedAt: string;
   respondedAt?: string;
   authorizedPrice?: Money;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type Appointment = {
+  id: string;
+  businessId: string;
+  opportunityId?: string;
+  conversationId: string;
+  customerId?: string;
+  vehicleId?: string;
+  requestedDate?: string;
+  requestedTime?: string;
+  confirmedStartAt?: string;
+  status: AppointmentStatus;
+  requestDescription?: string;
+  externalAppointmentId?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type HumanHandoff = {
+  id: string;
+  businessId: string;
+  conversationId: string;
+  opportunityId?: string;
+  reason: HandoffReason;
+  summary: string;
+  status: HandoffStatus;
+  assignedTo?: string;
+  requestedAt: string;
+  acceptedAt?: string;
+  resolvedAt?: string;
   createdAt: string;
   updatedAt: string;
 };
