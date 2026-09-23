@@ -141,7 +141,16 @@ const runQuoteRequest = async (
   content = "Quero solicitar um orçamento.",
 ) => {
   const harness = createHarness(
-    makeInterpretation({ intent: Intent.QUOTE_REQUEST, ...interpretationOverrides }),
+    makeInterpretation({
+      intent: Intent.QUOTE_REQUEST,
+      extractedVehicleData: {
+        brand: "Toyota",
+        model: "Corolla",
+        year: 2020,
+        version: "XEi",
+      },
+      ...interpretationOverrides,
+    }),
   );
   const result = await processMessage(
     {
@@ -347,12 +356,13 @@ test("QUOTE_REQUEST QuoteRequest waits for the business", async () => {
   assert.equal(quoteRequest?.status, QuoteRequestStatus.WAITING_BUSINESS);
 });
 
-test("QUOTE_REQUEST with REQUEST_INFORMATION waits for the customer", async () => {
+test("QUOTE_REQUEST with missing baseline data waits for the customer", async () => {
   const { harness } = await runQuoteRequest({
-    missingData: ["brand", "version"],
+    extractedVehicleData: { model: "Corolla", year: 2020 },
+    missingData: ["licensePlate", "mileage", "name", "primaryPhone", "email"],
     suggestedNextAction: {
-      type: "REQUEST_INFORMATION",
-      description: "Solicitar dados do veículo.",
+      type: "PROVIDE_QUOTE",
+      description: "A IA sugeriu fornecer orçamento.",
     },
   });
   const [opportunity] = await harness.opportunityRepository.listByConversation(
@@ -366,6 +376,37 @@ test("QUOTE_REQUEST with REQUEST_INFORMATION waits for the customer", async () =
 
   assert.equal(opportunity?.status, OpportunityStatus.WAITING_CUSTOMER);
   assert.equal(quoteRequest?.status, QuoteRequestStatus.WAITING_INFORMATION);
+});
+
+test("ignores model missingData and suggestedNextAction when baseline fields are complete", async () => {
+  const { harness, result } = await runQuoteRequest({
+    extractedVehicleData: {
+      brand: "Toyota",
+      model: "Corolla",
+      year: 2020,
+      version: "XEi",
+    },
+    missingData: ["licensePlate", "mileage", "name", "primaryPhone", "email"],
+    suggestedNextAction: {
+      type: "REQUEST_INFORMATION",
+      description: "A IA sugeriu pedir dados adicionais.",
+    },
+  });
+  const [opportunity] = await harness.opportunityRepository.listByConversation(
+    "business-a",
+    "conversation-1",
+  );
+  const [quoteRequest] = await harness.quoteRequestRepository.listByConversation(
+    "business-a",
+    "conversation-1",
+  );
+
+  assert.equal(opportunity?.status, OpportunityStatus.WAITING_BUSINESS);
+  assert.equal(quoteRequest?.status, QuoteRequestStatus.WAITING_BUSINESS);
+  assert.equal(
+    result.reply,
+    "Solicitação de orçamento registrada. A equipe precisa confirmar o valor.",
+  );
 });
 
 test("QUOTE_REQUEST without REQUEST_INFORMATION waits for the business", async () => {
@@ -431,6 +472,11 @@ test("uses the customer's original content when requestedItem is absent", async 
 
 test("QUOTE_REQUEST with human handoff records both and prioritizes handoff state", async () => {
   const { harness, result } = await runQuoteRequest({
+    extractedVehicleData: { model: "Corolla", year: 2020 },
+    suggestedNextAction: {
+      type: "REQUEST_INFORMATION",
+      description: "Solicitar informações faltantes.",
+    },
     requiresHuman: true,
     handoffReason: HandoffReason.LOW_CONFIDENCE,
   });
@@ -455,6 +501,10 @@ test("QUOTE_REQUEST with human handoff records both and prioritizes handoff stat
   assert.ok(quoteRequest);
   assert.ok(handoff);
   assert.equal(result.requiresHuman, true);
+  assert.equal(
+    result.reply,
+    "Vou encaminhar sua solicitação para a equipe responsável.",
+  );
   assert.equal(conversation?.status, ConversationStatus.WAITING_HUMAN);
   assert.equal(conversation?.commercialOutcome, CommercialOutcome.HUMAN_HANDOFF);
 });
@@ -477,10 +527,11 @@ test("QUOTE_REQUEST saves the safe response instead of proposedResponse", async 
 
 test("QUOTE_REQUEST requests missing customer data without human handoff", async () => {
   const { harness, result } = await runQuoteRequest({
+    extractedVehicleData: { model: "Corolla", year: 2020 },
     missingData: ["brand", "version", "licensePlate", "mileage"],
     suggestedNextAction: {
-      type: "REQUEST_INFORMATION",
-      description: "Solicitar dados faltantes do veículo.",
+      type: "PROVIDE_QUOTE",
+      description: "A IA sugeriu fornecer orçamento.",
     },
     requiresHuman: false,
     proposedResponse: "O orçamento custa R$ 500.",
@@ -497,6 +548,14 @@ test("QUOTE_REQUEST requests missing customer data without human handoff", async
     "business-a",
     "handoff-4",
   );
+  const opportunity = await harness.opportunityRepository.findById(
+    "business-a",
+    "opportunity-2",
+  );
+  const quoteRequest = await harness.quoteRequestRepository.findById(
+    "business-a",
+    "quote-3",
+  );
 
   assert.equal(
     messages[1]?.content,
@@ -504,6 +563,8 @@ test("QUOTE_REQUEST requests missing customer data without human handoff", async
   );
   assert.equal(result.requiresHuman, false);
   assert.equal(handoff, null);
+  assert.equal(opportunity?.status, OpportunityStatus.WAITING_CUSTOMER);
+  assert.equal(quoteRequest?.status, QuoteRequestStatus.WAITING_INFORMATION);
   assert.equal(conversation?.commercialOutcome, CommercialOutcome.QUOTE_REQUESTED);
 });
 
@@ -554,6 +615,12 @@ test("continues the latest active Opportunity and linked QuoteRequest without du
 
 test("moves an active quote pair from customer waiting to business waiting", async () => {
   const harness = createHarness(makeInterpretation({
+    extractedVehicleData: {
+      brand: "Toyota",
+      model: "Corolla",
+      year: 2020,
+      version: "XEi",
+    },
     suggestedNextAction: {
       type: "PROVIDE_QUOTE",
       description: "Preparar o orçamento.",
@@ -579,12 +646,19 @@ test("moves an active quote pair from customer waiting to business waiting", asy
   assert.equal(quoteRequest?.status, QuoteRequestStatus.WAITING_BUSINESS);
   assert.deepEqual(opportunity?.nextAction, {
     type: "PROVIDE_QUOTE",
-    description: "Preparar o orçamento.",
+    description: "Fornecer orçamento ao cliente",
   });
 });
 
 test("does not reuse a closed Opportunity or responded QuoteRequest", async () => {
-  const harness = createHarness();
+  const harness = createHarness(makeInterpretation({
+    extractedVehicleData: {
+      brand: "Toyota",
+      model: "Corolla",
+      year: 2020,
+      version: "XEi",
+    },
+  }));
   await seedQuotePair(
     harness,
     OpportunityStatus.CLOSED,

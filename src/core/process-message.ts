@@ -1,5 +1,6 @@
 import { requiresExplicitHumanHandoff } from "./business-rules.js";
 import { resolveSafeReply } from "./response-policy.js";
+import { getMissingQuoteRequiredFields } from "./quote-intake-policy.js";
 import type {
   Appointment,
   Conversation,
@@ -87,23 +88,37 @@ export async function processMessage(
   const requiresHuman =
     requiresExplicitHumanHandoff(interpretation.intent) ||
     interpretation.requiresHuman;
+  const quoteRequested = interpretation.intent === Intent.QUOTE_REQUEST;
+  const quoteMissingData = quoteRequested
+    ? getMissingQuoteRequiredFields(interpretation)
+    : [];
+  const quoteNextAction: NextAction = quoteMissingData.length > 0
+    ? {
+        type: "REQUEST_INFORMATION",
+        description: "Solicitar informações necessárias para o orçamento",
+      }
+    : {
+        type: "PROVIDE_QUOTE",
+        description: "Fornecer orçamento ao cliente",
+      };
   const reply = resolveSafeReply({
     intent: interpretation.intent,
     proposedResponse: interpretation.proposedResponse,
     requiresHuman,
-    suggestedNextAction: interpretation.suggestedNextAction,
-    missingData: interpretation.missingData,
+    suggestedNextAction: quoteRequested
+      ? quoteNextAction
+      : interpretation.suggestedNextAction,
+    missingData: quoteRequested
+      ? quoteMissingData
+      : interpretation.missingData,
   });
 
-  const quoteRequested = interpretation.intent === Intent.QUOTE_REQUEST;
   const appointmentRequested =
     interpretation.intent === Intent.APPOINTMENT_REQUEST;
 
   if (quoteRequested) {
     const now = dependencies.now();
-    const waitingForCustomer =
-      interpretation.suggestedNextAction.type === "REQUEST_INFORMATION" &&
-      !requiresHuman;
+    const waitingForCustomer = quoteMissingData.length > 0 && !requiresHuman;
     const opportunityStatus = waitingForCustomer
       ? OpportunityStatus.WAITING_CUSTOMER
       : OpportunityStatus.WAITING_BUSINESS;
@@ -143,7 +158,7 @@ export async function processMessage(
         requestDescription:
           interpretation.requestedItem ?? activeOpportunity.requestDescription ?? input.content,
         status: opportunityStatus,
-        nextAction: interpretation.suggestedNextAction,
+        nextAction: quoteNextAction,
         updatedAt: now,
       });
 
@@ -160,10 +175,6 @@ export async function processMessage(
     } else {
       const requestDescription =
         interpretation.requestedItem ?? input.content;
-      const nextAction: NextAction = {
-        type: "PROVIDE_QUOTE",
-        description: "Fornecer orçamento ao cliente",
-      };
       const opportunity: Opportunity = {
         id: dependencies.generateId("opportunity"),
         businessId: conversation.businessId,
@@ -176,7 +187,7 @@ export async function processMessage(
           : {}),
         requestDescription,
         status: opportunityStatus,
-        nextAction,
+        nextAction: quoteNextAction,
         createdAt: now,
         updatedAt: now,
       };
