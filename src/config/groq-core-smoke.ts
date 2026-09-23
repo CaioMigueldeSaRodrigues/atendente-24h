@@ -7,6 +7,7 @@ import {
   InMemoryMessageRepository,
   InMemoryOpportunityRepository,
   InMemoryQuoteRequestRepository,
+  InMemoryVehicleRepository,
 } from "../core/in-memory-repositories.js";
 import { processMessage } from "../core/process-message.js";
 import { Channel, ConversationStatus } from "../core/domain/enums.js";
@@ -35,6 +36,7 @@ async function main(): Promise<void> {
   const opportunityRepository = new InMemoryOpportunityRepository();
   const quoteRequestRepository = new InMemoryQuoteRequestRepository();
   const appointmentRepository = new InMemoryAppointmentRepository();
+  const vehicleRepository = new InMemoryVehicleRepository();
 
   const timestamp = new Date().toISOString();
   await conversationRepository.save({
@@ -65,6 +67,7 @@ async function main(): Promise<void> {
       opportunityRepository,
       quoteRequestRepository,
       appointmentRepository,
+      vehicleRepository,
       interpreter,
       now: () => timestamp,
       generateId,

@@ -15,6 +15,7 @@ import type {
   Message,
   Opportunity,
   QuoteRequest,
+  Vehicle,
 } from "../../src/core/domain/entities.js";
 import {
   InMemoryAutomotiveBusinessRepository,
@@ -23,6 +24,7 @@ import {
   InMemoryMessageRepository,
   InMemoryOpportunityRepository,
   InMemoryQuoteRequestRepository,
+  InMemoryVehicleRepository,
 } from "../../src/core/in-memory-repositories.js";
 
 const business = (id: string): AutomotiveBusiness => ({
@@ -268,4 +270,34 @@ test("does not list QuoteRequests from another business", async () => {
     await repository.listByConversation("business-b", "conversation-1"),
     [],
   );
+});
+
+test("saves and retrieves a Vehicle for its business", async () => {
+  const repository = new InMemoryVehicleRepository();
+  const vehicle: Vehicle = {
+    id: "vehicle-1",
+    businessId: "business-a",
+    model: "Corolla",
+    year: 2020,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  };
+
+  await repository.save(vehicle);
+
+  assert.deepEqual(await repository.findById("business-a", vehicle.id), vehicle);
+});
+
+test("does not retrieve a Vehicle through another business", async () => {
+  const repository = new InMemoryVehicleRepository();
+  const vehicle: Vehicle = {
+    id: "vehicle-1",
+    businessId: "business-a",
+    model: "Corolla",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  };
+  await repository.save(vehicle);
+
+  assert.equal(await repository.findById("business-b", vehicle.id), null);
 });

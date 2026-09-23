@@ -18,6 +18,7 @@ import type {
   HumanHandoff,
   Opportunity,
   QuoteRequest,
+  Vehicle,
 } from "../../src/core/domain/entities.js";
 import type { AIInterpretation } from "../../src/core/domain/types.js";
 import {
@@ -27,6 +28,7 @@ import {
   InMemoryMessageRepository,
   InMemoryOpportunityRepository,
   InMemoryQuoteRequestRepository,
+  InMemoryVehicleRepository,
 } from "../../src/core/in-memory-repositories.js";
 import type { MessageInterpreter } from "../../src/core/message-interpreter.js";
 import { processMessage } from "../../src/core/process-message.js";
@@ -59,7 +61,7 @@ const makeInterpretation = (
 });
 
 const createHarness = (
-  interpretation = makeInterpretation(),
+  interpretation: AIInterpretation | readonly AIInterpretation[] = makeInterpretation(),
   initialConversation = makeConversation(),
 ) => {
   const conversationRepository = new InMemoryConversationRepository();
@@ -68,14 +70,26 @@ const createHarness = (
   const humanHandoffRepository = new InMemoryHumanHandoffRepository();
   const opportunityRepository = new InMemoryOpportunityRepository();
   const quoteRequestRepository = new InMemoryQuoteRequestRepository();
+  const vehicleRepository = new InMemoryVehicleRepository();
   void conversationRepository.save(initialConversation);
 
-  let id = 0;
+  const idCounters: Record<string, number> = {};
+  const interpretationSequence: readonly AIInterpretation[] = Array.isArray(interpretation)
+    ? interpretation
+    : [interpretation as AIInterpretation];
+  let interpretationIndex = 0;
   const interpreterInputs: Parameters<MessageInterpreter["interpret"]>[0][] = [];
   const interpreter: MessageInterpreter = {
     async interpret(input) {
       interpreterInputs.push(input);
-      return interpretation;
+      const result = interpretationSequence[
+        Math.min(interpretationIndex, interpretationSequence.length - 1)
+      ];
+      interpretationIndex += 1;
+      if (!result) {
+        throw new Error("Missing test interpretation");
+      }
+      return result;
     },
   };
 
@@ -86,6 +100,7 @@ const createHarness = (
     humanHandoffRepository,
     opportunityRepository,
     quoteRequestRepository,
+    vehicleRepository,
     interpreterInputs,
     dependencies: {
       conversationRepository,
@@ -94,9 +109,13 @@ const createHarness = (
       humanHandoffRepository,
       opportunityRepository,
       quoteRequestRepository,
+      vehicleRepository,
       interpreter,
       now: () => timestamp,
-      generateId: (prefix: string) => `${prefix}-${++id}`,
+      generateId: (prefix: string) => {
+        idCounters[prefix] = (idCounters[prefix] ?? 0) + 1;
+        return `${prefix}-${idCounters[prefix]}`;
+      },
     },
   };
 };
@@ -265,7 +284,7 @@ test("creates a customer-request handoff for HUMAN_REQUEST", async () => {
   );
   const handoff = (await harness.humanHandoffRepository.findById(
     "business-a",
-    "handoff-2",
+    "handoff-1",
   )) as HumanHandoff | null;
 
   assert.equal(result.requiresHuman, true);
@@ -313,7 +332,7 @@ test("QUOTE_REQUEST creates an Opportunity", async () => {
   const { harness } = await runQuoteRequest();
   const opportunity = (await harness.opportunityRepository.findById(
     "business-a",
-    "opportunity-2",
+    "opportunity-1",
   )) as Opportunity | null;
 
   assert.ok(opportunity);
@@ -325,7 +344,7 @@ test("QUOTE_REQUEST Opportunity waits for the business", async () => {
   const { harness } = await runQuoteRequest();
   const opportunity = await harness.opportunityRepository.findById(
     "business-a",
-    "opportunity-2",
+    "opportunity-1",
   );
 
   assert.equal(opportunity?.status, OpportunityStatus.WAITING_BUSINESS);
@@ -335,11 +354,11 @@ test("QUOTE_REQUEST creates a QuoteRequest linked to its Opportunity", async () 
   const { harness } = await runQuoteRequest();
   const opportunity = await harness.opportunityRepository.findById(
     "business-a",
-    "opportunity-2",
+    "opportunity-1",
   );
   const quoteRequest = (await harness.quoteRequestRepository.findById(
     "business-a",
-    "quote-3",
+    "quote-1",
   )) as QuoteRequest | null;
 
   assert.ok(quoteRequest);
@@ -350,7 +369,7 @@ test("QUOTE_REQUEST QuoteRequest waits for the business", async () => {
   const { harness } = await runQuoteRequest();
   const quoteRequest = await harness.quoteRequestRepository.findById(
     "business-a",
-    "quote-3",
+    "quote-1",
   );
 
   assert.equal(quoteRequest?.status, QuoteRequestStatus.WAITING_BUSINESS);
@@ -443,11 +462,11 @@ test("uses requestedItem as the request description when provided", async () => 
   const { harness } = await runQuoteRequest({ requestedItem: "Pastilhas de freio" });
   const opportunity = await harness.opportunityRepository.findById(
     "business-a",
-    "opportunity-2",
+    "opportunity-1",
   );
   const quoteRequest = await harness.quoteRequestRepository.findById(
     "business-a",
-    "quote-3",
+    "quote-1",
   );
 
   assert.equal(opportunity?.requestDescription, "Pastilhas de freio");
@@ -459,11 +478,11 @@ test("uses the customer's original content when requestedItem is absent", async 
   const { harness } = await runQuoteRequest({}, content);
   const opportunity = await harness.opportunityRepository.findById(
     "business-a",
-    "opportunity-2",
+    "opportunity-1",
   );
   const quoteRequest = await harness.quoteRequestRepository.findById(
     "business-a",
-    "quote-3",
+    "quote-1",
   );
 
   assert.equal(opportunity?.requestDescription, content);
@@ -482,15 +501,15 @@ test("QUOTE_REQUEST with human handoff records both and prioritizes handoff stat
   });
   const opportunity = await harness.opportunityRepository.findById(
     "business-a",
-    "opportunity-2",
+    "opportunity-1",
   );
   const quoteRequest = await harness.quoteRequestRepository.findById(
     "business-a",
-    "quote-3",
+    "quote-1",
   );
   const handoff = await harness.humanHandoffRepository.findById(
     "business-a",
-    "handoff-4",
+    "handoff-1",
   );
   const conversation = await harness.conversationRepository.findById(
     "business-a",
@@ -546,15 +565,15 @@ test("QUOTE_REQUEST requests missing customer data without human handoff", async
   );
   const handoff = await harness.humanHandoffRepository.findById(
     "business-a",
-    "handoff-4",
+    "handoff-1",
   );
   const opportunity = await harness.opportunityRepository.findById(
     "business-a",
-    "opportunity-2",
+    "opportunity-1",
   );
   const quoteRequest = await harness.quoteRequestRepository.findById(
     "business-a",
-    "quote-3",
+    "quote-1",
   );
 
   assert.equal(
@@ -679,11 +698,11 @@ test("does not reuse a closed Opportunity or responded QuoteRequest", async () =
   assert.equal(quoteRequests.length, 2);
   assert.equal(opportunities[0]?.id, "opportunity-existing");
   assert.equal(opportunities[0]?.status, OpportunityStatus.CLOSED);
-  assert.equal(opportunities[1]?.id, "opportunity-2");
+  assert.equal(opportunities[1]?.id, "opportunity-1");
   assert.equal(opportunities[1]?.status, OpportunityStatus.WAITING_BUSINESS);
   assert.equal(quoteRequests[0]?.id, "quote-existing");
   assert.equal(quoteRequests[0]?.status, QuoteRequestStatus.RESPONDED);
-  assert.equal(quoteRequests[1]?.id, "quote-3");
+  assert.equal(quoteRequests[1]?.id, "quote-1");
   assert.equal(quoteRequests[1]?.status, QuoteRequestStatus.WAITING_BUSINESS);
 });
 
@@ -691,7 +710,7 @@ test("APPOINTMENT_REQUEST creates an Appointment", async () => {
   const { harness } = await runAppointmentRequest();
   const appointment = (await harness.appointmentRepository.findById(
     "business-a",
-    "appointment-2",
+    "appointment-1",
   )) as Appointment | null;
 
   assert.ok(appointment);
@@ -703,7 +722,7 @@ test("requested Appointment remains REQUESTED without confirmation time", async 
   const { harness } = await runAppointmentRequest();
   const appointment = await harness.appointmentRepository.findById(
     "business-a",
-    "appointment-2",
+    "appointment-1",
   );
 
   assert.equal(appointment?.status, AppointmentStatus.REQUESTED);
@@ -732,7 +751,7 @@ test("uses requestedItem as Appointment requestDescription when provided", async
   });
   const appointment = await harness.appointmentRepository.findById(
     "business-a",
-    "appointment-2",
+    "appointment-1",
   );
 
   assert.equal(appointment?.requestDescription, "Instalação de para-brisa");
@@ -743,7 +762,7 @@ test("uses original customer content when Appointment requestedItem is absent", 
   const { harness } = await runAppointmentRequest({}, content);
   const appointment = await harness.appointmentRepository.findById(
     "business-a",
-    "appointment-2",
+    "appointment-1",
   );
 
   assert.equal(appointment?.requestDescription, content);
@@ -756,11 +775,11 @@ test("APPOINTMENT_REQUEST with human handoff records both and prioritizes handof
   });
   const appointment = await harness.appointmentRepository.findById(
     "business-a",
-    "appointment-2",
+    "appointment-1",
   );
   const handoff = await harness.humanHandoffRepository.findById(
     "business-a",
-    "handoff-3",
+    "handoff-1",
   );
   const conversation = await harness.conversationRepository.findById(
     "business-a",
@@ -811,4 +830,74 @@ test("HUMAN_REQUEST returns the safe handoff response", async () => {
     result.reply,
     "Vou encaminhar sua solicitação para a equipe responsável.",
   );
+});
+
+test("persists and incrementally merges vehicle data across quote turns", async () => {
+  const harness = createHarness([
+    makeInterpretation({ extractedVehicleData: { model: "Corolla", year: 2020 } }),
+    makeInterpretation({ extractedVehicleData: { brand: "Toyota", version: "XEi" } }),
+    makeInterpretation({ extractedVehicleData: { licensePlate: "ABC1D23", mileage: 42000 } }),
+  ]);
+
+  await processQuoteOnHarness(harness, "I have a Corolla 2020.");
+  const firstConversation = await harness.conversationRepository.findById("business-a", "conversation-1");
+  const vehicleId = firstConversation?.vehicleId;
+  assert.equal(vehicleId, "vehicle-1");
+  const [firstOpportunity] = await harness.opportunityRepository.listByConversation("business-a", "conversation-1");
+  const [firstQuote] = await harness.quoteRequestRepository.listByConversation("business-a", "conversation-1");
+  assert.equal(firstOpportunity?.status, OpportunityStatus.WAITING_CUSTOMER);
+  assert.equal(firstQuote?.status, QuoteRequestStatus.WAITING_INFORMATION);
+
+  await processQuoteOnHarness(harness, "It is Toyota XEi.");
+  const [secondOpportunity] = await harness.opportunityRepository.listByConversation("business-a", "conversation-1");
+  const [secondQuote] = await harness.quoteRequestRepository.listByConversation("business-a", "conversation-1");
+  const vehicleAfterSecondTurn = await harness.vehicleRepository.findById("business-a", vehicleId!);
+  assert.equal(vehicleAfterSecondTurn?.model, "Corolla");
+  assert.equal(vehicleAfterSecondTurn?.year, 2020);
+  assert.equal(vehicleAfterSecondTurn?.brand, "Toyota");
+  assert.equal(vehicleAfterSecondTurn?.version, "XEi");
+  assert.equal(secondOpportunity?.id, firstOpportunity?.id);
+  assert.equal(secondQuote?.id, firstQuote?.id);
+  assert.equal(secondOpportunity?.status, OpportunityStatus.WAITING_BUSINESS);
+  assert.equal(secondQuote?.status, QuoteRequestStatus.WAITING_BUSINESS);
+
+  await processQuoteOnHarness(harness, "The plate is ABC1D23 and mileage is 42,000 km.");
+  const finalConversation = await harness.conversationRepository.findById("business-a", "conversation-1");
+  const finalVehicle = await harness.vehicleRepository.findById("business-a", vehicleId!);
+  const [finalOpportunity] = await harness.opportunityRepository.listByConversation("business-a", "conversation-1");
+  const [finalQuote] = await harness.quoteRequestRepository.listByConversation("business-a", "conversation-1");
+
+  assert.equal(finalConversation?.vehicleId, vehicleId);
+  assert.deepEqual({
+    brand: finalVehicle?.brand,
+    model: finalVehicle?.model,
+    year: finalVehicle?.year,
+    version: finalVehicle?.version,
+    licensePlate: finalVehicle?.licensePlate,
+    mileage: finalVehicle?.mileage,
+  }, {
+    brand: "Toyota",
+    model: "Corolla",
+    year: 2020,
+    version: "XEi",
+    licensePlate: "ABC1D23",
+    mileage: 42000,
+  });
+  assert.equal(await harness.vehicleRepository.findById("business-a", "vehicle-2"), null);
+  assert.equal(finalOpportunity?.id, firstOpportunity?.id);
+  assert.equal(finalQuote?.id, firstQuote?.id);
+  assert.equal(finalOpportunity?.vehicleId, vehicleId);
+  assert.equal(finalQuote?.vehicleId, vehicleId);
+  assert.equal(finalOpportunity?.status, OpportunityStatus.WAITING_BUSINESS);
+  assert.equal(finalQuote?.status, QuoteRequestStatus.WAITING_BUSINESS);
+});
+
+test("does not create a Vehicle when extracted vehicle data is empty", async () => {
+  const harness = createHarness(makeInterpretation({ extractedVehicleData: {} }));
+
+  await processQuoteOnHarness(harness);
+
+  const conversation = await harness.conversationRepository.findById("business-a", "conversation-1");
+  assert.equal(conversation?.vehicleId, undefined);
+  assert.equal(await harness.vehicleRepository.findById("business-a", "vehicle-1"), null);
 });

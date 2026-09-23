@@ -23,7 +23,7 @@ const interpretation = (
 test("returns all absent required vehicle fields in baseline order", () => {
   assert.deepEqual(DEFAULT_QUOTE_REQUIRED_FIELDS, ["brand", "model", "year", "version"]);
   assert.deepEqual(
-    getMissingQuoteRequiredFields(interpretation()),
+    getMissingQuoteRequiredFields(interpretation().extractedVehicleData),
     ["brand", "model", "year", "version"],
   );
 });
@@ -32,7 +32,7 @@ test("returns brand and version when model and year are present", () => {
   assert.deepEqual(
     getMissingQuoteRequiredFields(interpretation({
       extractedVehicleData: { model: "Corolla", year: 2020 },
-    })),
+    }).extractedVehicleData),
     ["brand", "version"],
   );
 });
@@ -45,8 +45,11 @@ test("returns no missing fields when all baseline data is present", () => {
         model: "Corolla",
         year: 2020,
         version: "XEi",
+        licensePlate: "ABC1D23",
+        mileage: 42000,
       },
-    })),
+      missingData: ["licensePlate", "mileage", "name", "primaryPhone", "email"],
+    }).extractedVehicleData),
     [],
   );
 });
@@ -60,22 +63,7 @@ test("treats a whitespace-only string as missing", () => {
         year: 2020,
         version: "XEi",
       },
-    })),
+    }).extractedVehicleData),
     ["brand"],
-  );
-});
-
-test("ignores model missingData fields outside the deterministic baseline", () => {
-  assert.deepEqual(
-    getMissingQuoteRequiredFields(interpretation({
-      extractedVehicleData: {
-        brand: "Toyota",
-        model: "Corolla",
-        year: 2020,
-        version: "XEi",
-      },
-      missingData: ["licensePlate", "mileage", "name", "primaryPhone", "email"],
-    })),
-    [],
   );
 });

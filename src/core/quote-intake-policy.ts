@@ -9,10 +9,8 @@ export const DEFAULT_QUOTE_REQUIRED_FIELDS = [
 ] as const;
 
 export function getMissingQuoteRequiredFields(
-  interpretation: AIInterpretation,
+  vehicleData: AIInterpretation["extractedVehicleData"],
 ): readonly string[] {
-  const vehicleData = interpretation.extractedVehicleData;
-
   return DEFAULT_QUOTE_REQUIRED_FIELDS.filter((field) => {
     const value = vehicleData[field];
     return typeof value === "string"

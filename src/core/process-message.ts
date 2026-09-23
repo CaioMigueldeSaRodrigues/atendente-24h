@@ -8,6 +8,7 @@ import type {
   Message,
   Opportunity,
   QuoteRequest,
+  Vehicle,
 } from "./domain/entities.js";
 import {
   CommercialOutcome,
@@ -28,6 +29,7 @@ import type {
   MessageRepository,
   OpportunityRepository,
   QuoteRequestRepository,
+  VehicleRepository,
 } from "./repositories.js";
 import type { MessageInterpreter } from "./message-interpreter.js";
 
@@ -41,6 +43,7 @@ export type ProcessMessageDependencies = {
   conversationRepository: ConversationRepository;
   appointmentRepository: AppointmentRepository;
   messageRepository: MessageRepository;
+  vehicleRepository: VehicleRepository;
   humanHandoffRepository: HumanHandoffRepository;
   opportunityRepository: OpportunityRepository;
   quoteRequestRepository: QuoteRequestRepository;
@@ -88,9 +91,55 @@ export async function processMessage(
   const requiresHuman =
     requiresExplicitHumanHandoff(interpretation.intent) ||
     interpretation.requiresHuman;
+
+  const extractedVehicleData = interpretation.extractedVehicleData;
+  const vehicleUpdates = Object.fromEntries(
+    Object.entries(extractedVehicleData).filter(([, value]) => value !== undefined),
+  ) as typeof extractedVehicleData;
+  const hasUsefulVehicleData = Object.values(vehicleUpdates).some((value) =>
+    typeof value === "string" ? value.trim().length > 0 : value !== undefined,
+  );
+
+  let vehicleId = conversation.vehicleId;
+  let existingVehicle = vehicleId
+    ? await dependencies.vehicleRepository.findById(
+        conversation.businessId,
+        vehicleId,
+      )
+    : null;
+  let effectiveVehicleData = vehicleUpdates;
+
+  if (existingVehicle) {
+    if (Object.keys(vehicleUpdates).length > 0) {
+      existingVehicle = {
+        ...existingVehicle,
+        ...vehicleUpdates,
+        updatedAt: dependencies.now(),
+      };
+      await dependencies.vehicleRepository.save(existingVehicle);
+    }
+    effectiveVehicleData = { ...existingVehicle, ...vehicleUpdates };
+  } else if (vehicleId === undefined && hasUsefulVehicleData) {
+    const now = dependencies.now();
+    const vehicle: Vehicle = {
+      id: dependencies.generateId("vehicle"),
+      businessId: conversation.businessId,
+      ...(conversation.customerId !== undefined
+        ? { customerId: conversation.customerId }
+        : {}),
+      ...vehicleUpdates,
+      createdAt: now,
+      updatedAt: now,
+    };
+    await dependencies.vehicleRepository.save(vehicle);
+    vehicleId = vehicle.id;
+    existingVehicle = vehicle;
+    effectiveVehicleData = vehicle;
+  }
+
   const quoteRequested = interpretation.intent === Intent.QUOTE_REQUEST;
   const quoteMissingData = quoteRequested
-    ? getMissingQuoteRequiredFields(interpretation)
+    ? getMissingQuoteRequiredFields(effectiveVehicleData)
     : [];
   const quoteNextAction: NextAction = quoteMissingData.length > 0
     ? {
@@ -182,8 +231,8 @@ export async function processMessage(
         ...(conversation.customerId !== undefined
           ? { customerId: conversation.customerId }
           : {}),
-        ...(conversation.vehicleId !== undefined
-          ? { vehicleId: conversation.vehicleId }
+        ...(vehicleId !== undefined
+          ? { vehicleId }
           : {}),
         requestDescription,
         status: opportunityStatus,
@@ -201,8 +250,8 @@ export async function processMessage(
         ...(conversation.customerId !== undefined
           ? { customerId: conversation.customerId }
           : {}),
-        ...(conversation.vehicleId !== undefined
-          ? { vehicleId: conversation.vehicleId }
+        ...(vehicleId !== undefined
+          ? { vehicleId }
           : {}),
         requestDescription,
         ...(interpretation.symptomDescription !== undefined
@@ -226,8 +275,8 @@ export async function processMessage(
       ...(conversation.customerId !== undefined
         ? { customerId: conversation.customerId }
         : {}),
-      ...(conversation.vehicleId !== undefined
-        ? { vehicleId: conversation.vehicleId }
+      ...(vehicleId !== undefined
+        ? { vehicleId }
         : {}),
       status: AppointmentStatus.REQUESTED,
       requestDescription: interpretation.requestedItem ?? input.content,
@@ -259,6 +308,7 @@ export async function processMessage(
 
   let updatedConversation: Conversation = {
     ...conversation,
+    ...(vehicleId !== undefined ? { vehicleId } : {}),
     currentIntent: interpretation.intent,
     lastMessageAt: dependencies.now(),
   };
