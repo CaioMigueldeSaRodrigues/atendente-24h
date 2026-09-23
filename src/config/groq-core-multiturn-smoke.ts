@@ -74,7 +74,7 @@ async function main(): Promise<void> {
     {
       businessId: "smoke-business",
       conversationId: "smoke-conversation",
-      content: "Tenho um Corolla 2020 e quero orçamento para trocar as pastilhas de freio.",
+      content: "Meu nome é Carlos. Tenho um Corolla 2020 e quero orçamento para pastilhas.",
     },
     dependencies,
   );
@@ -83,7 +83,7 @@ async function main(): Promise<void> {
     {
       businessId: "smoke-business",
       conversationId: "smoke-conversation",
-      content: "É Toyota XEi.",
+      content: "É Toyota XEi. Meu telefone é 11999999999.",
     },
     dependencies,
   );
@@ -92,7 +92,7 @@ async function main(): Promise<void> {
     {
       businessId: "smoke-business",
       conversationId: "smoke-conversation",
-      content: "A placa é ABC1D23 e está com 42 mil km.",
+      content: "Meu e-mail é carlos@exemplo.com.",
     },
     dependencies,
   );

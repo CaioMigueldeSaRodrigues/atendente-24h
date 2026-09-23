@@ -913,11 +913,14 @@ test("persists Customer data progressively and links new quote entities", async 
       extractedCustomerData: { name: "Carlos" },
       extractedVehicleData: { model: "Corolla", year: 2020 },
     }),
-    makeInterpretation({ extractedCustomerData: { primaryPhone: "11999999999" } }),
-    makeInterpretation({ extractedCustomerData: { email: "carlos@example.com", name: "", primaryPhone: "   " } }),
+    makeInterpretation({
+      extractedCustomerData: { primaryPhone: "11999999999" },
+      extractedVehicleData: { brand: "Toyota", version: "XEi" },
+    }),
+    makeInterpretation({ extractedCustomerData: { email: "carlos@exemplo.com", name: "", primaryPhone: "   " } }),
   ]);
 
-  await processQuoteOnHarness(harness, "Meu nome é Carlos, tenho um Corolla 2020.");
+  await processQuoteOnHarness(harness, "Meu nome é Carlos. Tenho um Corolla 2020 e quero orçamento para pastilhas.");
   const firstConversation = await harness.conversationRepository.findById("business-a", "conversation-1");
   const customerId = firstConversation?.customerId;
   const vehicleId = firstConversation?.vehicleId;
@@ -928,18 +931,29 @@ test("persists Customer data progressively and links new quote entities", async 
   assert.equal(opportunity?.customerId, customerId);
   assert.equal(quoteRequest?.customerId, customerId);
 
-  await processQuoteOnHarness(harness, "Meu telefone é 11999999999.");
-  await processQuoteOnHarness(harness, "Meu e-mail é carlos@example.com.");
+  await processQuoteOnHarness(harness, "É Toyota XEi. Meu telefone é 11999999999.");
+  await processQuoteOnHarness(harness, "Meu e-mail é carlos@exemplo.com.");
 
   const customer = await harness.customerRepository.findById("business-a", customerId!);
   const finalConversation = await harness.conversationRepository.findById("business-a", "conversation-1");
   assert.deepEqual({ name: customer?.name, primaryPhone: customer?.primaryPhone, email: customer?.email }, {
     name: "Carlos",
     primaryPhone: "11999999999",
-    email: "carlos@example.com",
+    email: "carlos@exemplo.com",
   });
   assert.equal(finalConversation?.customerId, customerId);
   assert.equal(finalConversation?.vehicleId, vehicleId);
+  const finalVehicle = await harness.vehicleRepository.findById("business-a", vehicleId!);
+  assert.equal(finalVehicle?.brand, "Toyota");
+  assert.equal(finalVehicle?.model, "Corolla");
+  assert.equal(finalVehicle?.year, 2020);
+  assert.equal(finalVehicle?.version, "XEi");
+  const [finalOpportunity] = await harness.opportunityRepository.listByConversation("business-a", "conversation-1");
+  const [finalQuoteRequest] = await harness.quoteRequestRepository.listByConversation("business-a", "conversation-1");
+  assert.equal(finalOpportunity?.id, opportunity?.id);
+  assert.equal(finalQuoteRequest?.id, quoteRequest?.id);
+  assert.equal((await harness.opportunityRepository.listByConversation("business-a", "conversation-1")).length, 1);
+  assert.equal((await harness.quoteRequestRepository.listByConversation("business-a", "conversation-1")).length, 1);
   assert.equal(await harness.customerRepository.findById("business-a", "customer-2"), null);
 });
 
