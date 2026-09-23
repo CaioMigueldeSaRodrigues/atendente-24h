@@ -4,6 +4,7 @@ import { getMissingQuoteRequiredFields } from "./quote-intake-policy.js";
 import type {
   Appointment,
   Conversation,
+  Customer,
   HumanHandoff,
   Message,
   Opportunity,
@@ -25,6 +26,7 @@ import type { AIInterpretation, NextAction } from "./domain/types.js";
 import type {
   ConversationRepository,
   AppointmentRepository,
+  CustomerRepository,
   HumanHandoffRepository,
   MessageRepository,
   OpportunityRepository,
@@ -43,6 +45,7 @@ export type ProcessMessageDependencies = {
   conversationRepository: ConversationRepository;
   appointmentRepository: AppointmentRepository;
   messageRepository: MessageRepository;
+  customerRepository: CustomerRepository;
   vehicleRepository: VehicleRepository;
   humanHandoffRepository: HumanHandoffRepository;
   opportunityRepository: OpportunityRepository;
@@ -92,6 +95,42 @@ export async function processMessage(
     requiresExplicitHumanHandoff(interpretation.intent) ||
     interpretation.requiresHuman;
 
+  const customerUpdates = Object.fromEntries(
+    Object.entries(interpretation.extractedCustomerData).filter(
+      ([, value]) => typeof value === "string" && value.trim().length > 0,
+    ),
+  ) as typeof interpretation.extractedCustomerData;
+  const hasUsefulCustomerData = Object.keys(customerUpdates).length > 0;
+
+  let customerId = conversation.customerId;
+  let existingCustomer = customerId
+    ? await dependencies.customerRepository.findById(
+        conversation.businessId,
+        customerId,
+      )
+    : null;
+
+  if (existingCustomer && hasUsefulCustomerData) {
+    existingCustomer = {
+      ...existingCustomer,
+      ...customerUpdates,
+      updatedAt: dependencies.now(),
+    };
+    await dependencies.customerRepository.save(existingCustomer);
+  } else if (customerId === undefined && hasUsefulCustomerData) {
+    const now = dependencies.now();
+    const customer: Customer = {
+      id: dependencies.generateId("customer"),
+      businessId: conversation.businessId,
+      ...customerUpdates,
+      createdAt: now,
+      updatedAt: now,
+    };
+    await dependencies.customerRepository.save(customer);
+    customerId = customer.id;
+    existingCustomer = customer;
+  }
+
   const extractedVehicleData = interpretation.extractedVehicleData;
   const vehicleUpdates = Object.fromEntries(
     Object.entries(extractedVehicleData).filter(([, value]) => value !== undefined),
@@ -110,10 +149,18 @@ export async function processMessage(
   let effectiveVehicleData = vehicleUpdates;
 
   if (existingVehicle) {
-    if (Object.keys(vehicleUpdates).length > 0) {
+    const customerAssociation = customerId !== undefined &&
+        existingVehicle.customerId !== customerId
+      ? { customerId }
+      : {};
+    if (
+      Object.keys(vehicleUpdates).length > 0 ||
+      Object.keys(customerAssociation).length > 0
+    ) {
       existingVehicle = {
         ...existingVehicle,
         ...vehicleUpdates,
+        ...customerAssociation,
         updatedAt: dependencies.now(),
       };
       await dependencies.vehicleRepository.save(existingVehicle);
@@ -124,8 +171,8 @@ export async function processMessage(
     const vehicle: Vehicle = {
       id: dependencies.generateId("vehicle"),
       businessId: conversation.businessId,
-      ...(conversation.customerId !== undefined
-        ? { customerId: conversation.customerId }
+      ...(customerId !== undefined
+        ? { customerId }
         : {}),
       ...vehicleUpdates,
       createdAt: now,
@@ -204,6 +251,7 @@ export async function processMessage(
     if (activeOpportunity && activeQuoteRequest) {
       await dependencies.opportunityRepository.save({
         ...activeOpportunity,
+        ...(customerId !== undefined ? { customerId } : {}),
         requestDescription:
           interpretation.requestedItem ?? activeOpportunity.requestDescription ?? input.content,
         status: opportunityStatus,
@@ -213,6 +261,7 @@ export async function processMessage(
 
       await dependencies.quoteRequestRepository.save({
         ...activeQuoteRequest,
+        ...(customerId !== undefined ? { customerId } : {}),
         requestDescription:
           interpretation.requestedItem ?? activeQuoteRequest.requestDescription,
         ...(interpretation.symptomDescription !== undefined
@@ -228,8 +277,8 @@ export async function processMessage(
         id: dependencies.generateId("opportunity"),
         businessId: conversation.businessId,
         conversationId: conversation.id,
-        ...(conversation.customerId !== undefined
-          ? { customerId: conversation.customerId }
+        ...(customerId !== undefined
+          ? { customerId }
           : {}),
         ...(vehicleId !== undefined
           ? { vehicleId }
@@ -247,8 +296,8 @@ export async function processMessage(
         businessId: conversation.businessId,
         opportunityId: opportunity.id,
         conversationId: conversation.id,
-        ...(conversation.customerId !== undefined
-          ? { customerId: conversation.customerId }
+        ...(customerId !== undefined
+          ? { customerId }
           : {}),
         ...(vehicleId !== undefined
           ? { vehicleId }
@@ -308,6 +357,7 @@ export async function processMessage(
 
   let updatedConversation: Conversation = {
     ...conversation,
+    ...(customerId !== undefined ? { customerId } : {}),
     ...(vehicleId !== undefined ? { vehicleId } : {}),
     currentIntent: interpretation.intent,
     lastMessageAt: dependencies.now(),

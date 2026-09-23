@@ -3,6 +3,7 @@ import { GroqMessageInterpreter } from "../integrations/groq-message-interpreter
 import {
   InMemoryAppointmentRepository,
   InMemoryConversationRepository,
+  InMemoryCustomerRepository,
   InMemoryHumanHandoffRepository,
   InMemoryMessageRepository,
   InMemoryOpportunityRepository,
@@ -31,6 +32,7 @@ async function main(): Promise<void> {
   const interpreter = new GroqMessageInterpreter(client, model);
 
   const conversationRepository = new InMemoryConversationRepository();
+  const customerRepository = new InMemoryCustomerRepository();
   const messageRepository = new InMemoryMessageRepository();
   const humanHandoffRepository = new InMemoryHumanHandoffRepository();
   const opportunityRepository = new InMemoryOpportunityRepository();
@@ -56,6 +58,7 @@ async function main(): Promise<void> {
 
   const dependencies = {
     conversationRepository,
+    customerRepository,
     messageRepository,
     humanHandoffRepository,
     opportunityRepository,
@@ -113,6 +116,9 @@ async function main(): Promise<void> {
   const vehicle = conversation?.vehicleId
     ? await vehicleRepository.findById("smoke-business", conversation.vehicleId)
     : null;
+  const customer = conversation?.customerId
+    ? await customerRepository.findById("smoke-business", conversation.customerId)
+    : null;
   const handoff = await humanHandoffRepository.findById(
     "smoke-business",
     "handoff-1",
@@ -129,6 +135,7 @@ async function main(): Promise<void> {
     opportunities,
     quoteRequests,
     vehicle,
+    customer,
     handoff,
   }, null, 2));
 }

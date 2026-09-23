@@ -3,6 +3,7 @@ import { GroqMessageInterpreter } from "../integrations/groq-message-interpreter
 import {
   InMemoryAppointmentRepository,
   InMemoryConversationRepository,
+  InMemoryCustomerRepository,
   InMemoryHumanHandoffRepository,
   InMemoryMessageRepository,
   InMemoryOpportunityRepository,
@@ -31,6 +32,7 @@ async function main(): Promise<void> {
   const interpreter = new GroqMessageInterpreter(client, model);
 
   const conversationRepository = new InMemoryConversationRepository();
+  const customerRepository = new InMemoryCustomerRepository();
   const messageRepository = new InMemoryMessageRepository();
   const humanHandoffRepository = new InMemoryHumanHandoffRepository();
   const opportunityRepository = new InMemoryOpportunityRepository();
@@ -62,6 +64,7 @@ async function main(): Promise<void> {
     },
     {
       conversationRepository,
+      customerRepository,
       messageRepository,
       humanHandoffRepository,
       opportunityRepository,

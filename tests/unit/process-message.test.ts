@@ -15,6 +15,7 @@ import {
 import type {
   Appointment,
   Conversation,
+  Customer,
   HumanHandoff,
   Opportunity,
   QuoteRequest,
@@ -24,6 +25,7 @@ import type { AIInterpretation } from "../../src/core/domain/types.js";
 import {
   InMemoryAppointmentRepository,
   InMemoryConversationRepository,
+  InMemoryCustomerRepository,
   InMemoryHumanHandoffRepository,
   InMemoryMessageRepository,
   InMemoryOpportunityRepository,
@@ -65,6 +67,7 @@ const createHarness = (
   initialConversation = makeConversation(),
 ) => {
   const conversationRepository = new InMemoryConversationRepository();
+  const customerRepository = new InMemoryCustomerRepository();
   const appointmentRepository = new InMemoryAppointmentRepository();
   const messageRepository = new InMemoryMessageRepository();
   const humanHandoffRepository = new InMemoryHumanHandoffRepository();
@@ -95,6 +98,7 @@ const createHarness = (
 
   return {
     conversationRepository,
+    customerRepository,
     appointmentRepository,
     messageRepository,
     humanHandoffRepository,
@@ -104,6 +108,7 @@ const createHarness = (
     interpreterInputs,
     dependencies: {
       conversationRepository,
+      customerRepository,
       appointmentRepository,
       messageRepository,
       humanHandoffRepository,
@@ -900,4 +905,112 @@ test("does not create a Vehicle when extracted vehicle data is empty", async () 
   const conversation = await harness.conversationRepository.findById("business-a", "conversation-1");
   assert.equal(conversation?.vehicleId, undefined);
   assert.equal(await harness.vehicleRepository.findById("business-a", "vehicle-1"), null);
+});
+
+test("persists Customer data progressively and links new quote entities", async () => {
+  const harness = createHarness([
+    makeInterpretation({
+      extractedCustomerData: { name: "Carlos" },
+      extractedVehicleData: { model: "Corolla", year: 2020 },
+    }),
+    makeInterpretation({ extractedCustomerData: { primaryPhone: "11999999999" } }),
+    makeInterpretation({ extractedCustomerData: { email: "carlos@example.com", name: "", primaryPhone: "   " } }),
+  ]);
+
+  await processQuoteOnHarness(harness, "Meu nome é Carlos, tenho um Corolla 2020.");
+  const firstConversation = await harness.conversationRepository.findById("business-a", "conversation-1");
+  const customerId = firstConversation?.customerId;
+  const vehicleId = firstConversation?.vehicleId;
+  assert.equal(customerId, "customer-1");
+  assert.equal(vehicleId, "vehicle-1");
+  const [opportunity] = await harness.opportunityRepository.listByConversation("business-a", "conversation-1");
+  const [quoteRequest] = await harness.quoteRequestRepository.listByConversation("business-a", "conversation-1");
+  assert.equal(opportunity?.customerId, customerId);
+  assert.equal(quoteRequest?.customerId, customerId);
+
+  await processQuoteOnHarness(harness, "Meu telefone é 11999999999.");
+  await processQuoteOnHarness(harness, "Meu e-mail é carlos@example.com.");
+
+  const customer = await harness.customerRepository.findById("business-a", customerId!);
+  const finalConversation = await harness.conversationRepository.findById("business-a", "conversation-1");
+  assert.deepEqual({ name: customer?.name, primaryPhone: customer?.primaryPhone, email: customer?.email }, {
+    name: "Carlos",
+    primaryPhone: "11999999999",
+    email: "carlos@example.com",
+  });
+  assert.equal(finalConversation?.customerId, customerId);
+  assert.equal(finalConversation?.vehicleId, vehicleId);
+  assert.equal(await harness.customerRepository.findById("business-a", "customer-2"), null);
+});
+
+test("does not create a Customer without useful extracted data", async () => {
+  const harness = createHarness(makeInterpretation({
+    extractedCustomerData: { name: "", primaryPhone: "   " },
+  }));
+
+  await processQuoteOnHarness(harness);
+
+  const conversation = await harness.conversationRepository.findById("business-a", "conversation-1");
+  assert.equal(conversation?.customerId, undefined);
+  assert.equal(await harness.customerRepository.findById("business-a", "customer-1"), null);
+});
+
+test("associates a later Customer with the existing quote pair and Vehicle", async () => {
+  const harness = createHarness([
+    makeInterpretation({
+      extractedVehicleData: { brand: "Toyota", model: "Corolla", year: 2020, version: "XEi" },
+    }),
+    makeInterpretation({ extractedCustomerData: { name: "Carlos" } }),
+  ]);
+
+  await processQuoteOnHarness(harness, "Quero orçamento para meu Corolla.");
+  const firstConversation = await harness.conversationRepository.findById("business-a", "conversation-1");
+  const [firstOpportunity] = await harness.opportunityRepository.listByConversation("business-a", "conversation-1");
+  const [firstQuote] = await harness.quoteRequestRepository.listByConversation("business-a", "conversation-1");
+
+  await processQuoteOnHarness(harness, "Meu nome é Carlos.");
+
+  const conversation = await harness.conversationRepository.findById("business-a", "conversation-1");
+  const [opportunity] = await harness.opportunityRepository.listByConversation("business-a", "conversation-1");
+  const [quoteRequest] = await harness.quoteRequestRepository.listByConversation("business-a", "conversation-1");
+  const vehicle = await harness.vehicleRepository.findById("business-a", firstConversation!.vehicleId!);
+
+  assert.equal(opportunity?.id, firstOpportunity?.id);
+  assert.equal(quoteRequest?.id, firstQuote?.id);
+  assert.equal(opportunity?.customerId, conversation?.customerId);
+  assert.equal(quoteRequest?.customerId, conversation?.customerId);
+  assert.equal(vehicle?.customerId, conversation?.customerId);
+  assert.equal(conversation?.vehicleId, firstConversation?.vehicleId);
+  assert.equal((await harness.opportunityRepository.listByConversation("business-a", "conversation-1")).length, 1);
+  assert.equal((await harness.quoteRequestRepository.listByConversation("business-a", "conversation-1")).length, 1);
+});
+
+test("links a newly created Vehicle to an existing Customer", async () => {
+  const harness = createHarness(
+    makeInterpretation({
+      extractedCustomerData: { primaryPhone: "11999999999" },
+      extractedVehicleData: { model: "Corolla", year: 2020 },
+    }),
+    makeConversation({ customerId: "customer-existing" }),
+  );
+  const existingCustomer: Customer = {
+    id: "customer-existing",
+    businessId: "business-a",
+    name: "Carlos",
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+  await harness.customerRepository.save(existingCustomer);
+
+  await processQuoteOnHarness(harness);
+
+  const conversation = await harness.conversationRepository.findById("business-a", "conversation-1");
+  const vehicle = await harness.vehicleRepository.findById("business-a", conversation!.vehicleId!);
+  const customer = await harness.customerRepository.findById("business-a", "customer-existing");
+  assert.equal(conversation?.customerId, "customer-existing");
+  assert.equal(conversation?.vehicleId, "vehicle-1");
+  assert.equal(vehicle?.customerId, "customer-existing");
+  assert.equal(vehicle?.model, "Corolla");
+  assert.equal(customer?.name, "Carlos");
+  assert.equal(customer?.primaryPhone, "11999999999");
 });
