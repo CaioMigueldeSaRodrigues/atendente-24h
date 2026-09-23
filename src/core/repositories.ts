@@ -46,11 +46,19 @@ export interface MessageRepository {
 
 export interface OpportunityRepository {
   findById(businessId: string, id: string): Promise<Opportunity | null>;
+  listByConversation(
+    businessId: string,
+    conversationId: string,
+  ): Promise<Opportunity[]>;
   save(entity: Opportunity): Promise<void>;
 }
 
 export interface QuoteRequestRepository {
   findById(businessId: string, id: string): Promise<QuoteRequest | null>;
+  listByConversation(
+    businessId: string,
+    conversationId: string,
+  ): Promise<QuoteRequest[]>;
   save(entity: QuoteRequest): Promise<void>;
 }
 

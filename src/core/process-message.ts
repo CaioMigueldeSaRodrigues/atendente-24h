@@ -101,51 +101,109 @@ export async function processMessage(
 
   if (quoteRequested) {
     const now = dependencies.now();
-    const requestDescription =
-      interpretation.requestedItem ?? input.content;
-    const nextAction: NextAction = {
-      type: "PROVIDE_QUOTE",
-      description: "Fornecer orçamento ao cliente",
-    };
-    const opportunity: Opportunity = {
-      id: dependencies.generateId("opportunity"),
-      businessId: conversation.businessId,
-      conversationId: conversation.id,
-      ...(conversation.customerId !== undefined
-        ? { customerId: conversation.customerId }
-        : {}),
-      ...(conversation.vehicleId !== undefined
-        ? { vehicleId: conversation.vehicleId }
-        : {}),
-      requestDescription,
-      status: OpportunityStatus.WAITING_BUSINESS,
-      nextAction,
-      createdAt: now,
-      updatedAt: now,
-    };
-    await dependencies.opportunityRepository.save(opportunity);
+    const waitingForCustomer =
+      interpretation.suggestedNextAction.type === "REQUEST_INFORMATION" &&
+      !requiresHuman;
+    const opportunityStatus = waitingForCustomer
+      ? OpportunityStatus.WAITING_CUSTOMER
+      : OpportunityStatus.WAITING_BUSINESS;
+    const quoteRequestStatus = waitingForCustomer
+      ? QuoteRequestStatus.WAITING_INFORMATION
+      : QuoteRequestStatus.WAITING_BUSINESS;
 
-    const quoteRequest: QuoteRequest = {
-      id: dependencies.generateId("quote"),
-      businessId: conversation.businessId,
-      opportunityId: opportunity.id,
-      conversationId: conversation.id,
-      ...(conversation.customerId !== undefined
-        ? { customerId: conversation.customerId }
-        : {}),
-      ...(conversation.vehicleId !== undefined
-        ? { vehicleId: conversation.vehicleId }
-        : {}),
-      requestDescription,
-      ...(interpretation.symptomDescription !== undefined
-        ? { symptomDescription: interpretation.symptomDescription }
-        : {}),
-      status: QuoteRequestStatus.WAITING_BUSINESS,
-      requestedAt: now,
-      createdAt: now,
-      updatedAt: now,
-    };
-    await dependencies.quoteRequestRepository.save(quoteRequest);
+    const opportunities = await dependencies.opportunityRepository.listByConversation(
+      conversation.businessId,
+      conversation.id,
+    );
+    const activeOpportunity = opportunities
+      .filter(({ status }) =>
+        status === OpportunityStatus.OPEN ||
+        status === OpportunityStatus.WAITING_CUSTOMER ||
+        status === OpportunityStatus.WAITING_BUSINESS,
+      )
+      .at(-1);
+    const quoteRequests = await dependencies.quoteRequestRepository.listByConversation(
+      conversation.businessId,
+      conversation.id,
+    );
+    const activeQuoteRequest = activeOpportunity
+      ? quoteRequests
+          .filter((quoteRequest) =>
+            quoteRequest.opportunityId === activeOpportunity.id &&
+            (quoteRequest.status === QuoteRequestStatus.REQUESTED ||
+              quoteRequest.status === QuoteRequestStatus.WAITING_INFORMATION ||
+              quoteRequest.status === QuoteRequestStatus.WAITING_BUSINESS),
+          )
+          .at(-1)
+      : undefined;
+
+    if (activeOpportunity && activeQuoteRequest) {
+      await dependencies.opportunityRepository.save({
+        ...activeOpportunity,
+        requestDescription:
+          interpretation.requestedItem ?? activeOpportunity.requestDescription ?? input.content,
+        status: opportunityStatus,
+        nextAction: interpretation.suggestedNextAction,
+        updatedAt: now,
+      });
+
+      await dependencies.quoteRequestRepository.save({
+        ...activeQuoteRequest,
+        requestDescription:
+          interpretation.requestedItem ?? activeQuoteRequest.requestDescription,
+        ...(interpretation.symptomDescription !== undefined
+          ? { symptomDescription: interpretation.symptomDescription }
+          : {}),
+        status: quoteRequestStatus,
+        updatedAt: now,
+      });
+    } else {
+      const requestDescription =
+        interpretation.requestedItem ?? input.content;
+      const nextAction: NextAction = {
+        type: "PROVIDE_QUOTE",
+        description: "Fornecer orçamento ao cliente",
+      };
+      const opportunity: Opportunity = {
+        id: dependencies.generateId("opportunity"),
+        businessId: conversation.businessId,
+        conversationId: conversation.id,
+        ...(conversation.customerId !== undefined
+          ? { customerId: conversation.customerId }
+          : {}),
+        ...(conversation.vehicleId !== undefined
+          ? { vehicleId: conversation.vehicleId }
+          : {}),
+        requestDescription,
+        status: opportunityStatus,
+        nextAction,
+        createdAt: now,
+        updatedAt: now,
+      };
+      await dependencies.opportunityRepository.save(opportunity);
+
+      const quoteRequest: QuoteRequest = {
+        id: dependencies.generateId("quote"),
+        businessId: conversation.businessId,
+        opportunityId: opportunity.id,
+        conversationId: conversation.id,
+        ...(conversation.customerId !== undefined
+          ? { customerId: conversation.customerId }
+          : {}),
+        ...(conversation.vehicleId !== undefined
+          ? { vehicleId: conversation.vehicleId }
+          : {}),
+        requestDescription,
+        ...(interpretation.symptomDescription !== undefined
+          ? { symptomDescription: interpretation.symptomDescription }
+          : {}),
+        status: quoteRequestStatus,
+        requestedAt: now,
+        createdAt: now,
+        updatedAt: now,
+      };
+      await dependencies.quoteRequestRepository.save(quoteRequest);
+    }
   }
 
   if (appointmentRequested) {

@@ -5,6 +5,7 @@ import {
   Channel,
   ConversationStatus,
   OpportunityStatus,
+  QuoteRequestStatus,
   SenderType,
 } from "../../src/core/domain/enums.js";
 import type {
@@ -13,6 +14,7 @@ import type {
   Customer,
   Message,
   Opportunity,
+  QuoteRequest,
 } from "../../src/core/domain/entities.js";
 import {
   InMemoryAutomotiveBusinessRepository,
@@ -20,6 +22,7 @@ import {
   InMemoryCustomerRepository,
   InMemoryMessageRepository,
   InMemoryOpportunityRepository,
+  InMemoryQuoteRequestRepository,
 } from "../../src/core/in-memory-repositories.js";
 
 const business = (id: string): AutomotiveBusiness => ({
@@ -162,5 +165,107 @@ test("saves and retrieves an Opportunity for its business", async () => {
   assert.deepEqual(
     await repository.findById("business-a", entity.id),
     entity,
+  );
+});
+
+test("lists Opportunities for a Conversation in insertion order", async () => {
+  const repository = new InMemoryOpportunityRepository();
+  const first: Opportunity = {
+    id: "opportunity-1",
+    businessId: "business-a",
+    conversationId: "conversation-1",
+    status: OpportunityStatus.OPEN,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  };
+  const otherConversation: Opportunity = {
+    ...first,
+    id: "opportunity-2",
+    conversationId: "conversation-2",
+  };
+  const second: Opportunity = {
+    ...first,
+    id: "opportunity-3",
+  };
+
+  await repository.save(first);
+  await repository.save(otherConversation);
+  await repository.save(second);
+
+  assert.deepEqual(
+    await repository.listByConversation("business-a", "conversation-1"),
+    [first, second],
+  );
+});
+
+test("does not list Opportunities from another business", async () => {
+  const repository = new InMemoryOpportunityRepository();
+  const entity: Opportunity = {
+    id: "opportunity-1",
+    businessId: "business-a",
+    conversationId: "conversation-1",
+    status: OpportunityStatus.OPEN,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  };
+  await repository.save(entity);
+
+  assert.deepEqual(
+    await repository.listByConversation("business-b", "conversation-1"),
+    [],
+  );
+});
+
+test("lists QuoteRequests for a Conversation in insertion order", async () => {
+  const repository = new InMemoryQuoteRequestRepository();
+  const first: QuoteRequest = {
+    id: "quote-1",
+    businessId: "business-a",
+    opportunityId: "opportunity-1",
+    conversationId: "conversation-1",
+    requestDescription: "Serviço solicitado",
+    status: QuoteRequestStatus.REQUESTED,
+    requestedAt: "2026-01-01T00:00:00.000Z",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  };
+  const otherConversation: QuoteRequest = {
+    ...first,
+    id: "quote-2",
+    conversationId: "conversation-2",
+  };
+  const second: QuoteRequest = {
+    ...first,
+    id: "quote-3",
+  };
+
+  await repository.save(first);
+  await repository.save(otherConversation);
+  await repository.save(second);
+
+  assert.deepEqual(
+    await repository.listByConversation("business-a", "conversation-1"),
+    [first, second],
+  );
+});
+
+test("does not list QuoteRequests from another business", async () => {
+  const repository = new InMemoryQuoteRequestRepository();
+  const entity: QuoteRequest = {
+    id: "quote-1",
+    businessId: "business-a",
+    opportunityId: "opportunity-1",
+    conversationId: "conversation-1",
+    requestDescription: "Serviço solicitado",
+    status: QuoteRequestStatus.REQUESTED,
+    requestedAt: "2026-01-01T00:00:00.000Z",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  };
+  await repository.save(entity);
+
+  assert.deepEqual(
+    await repository.listByConversation("business-b", "conversation-1"),
+    [],
   );
 });

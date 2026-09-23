@@ -101,6 +101,41 @@ const createHarness = (
   };
 };
 
+const seedQuotePair = async (
+  harness: ReturnType<typeof createHarness>,
+  opportunityStatus: OpportunityStatus,
+  quoteRequestStatus: QuoteRequestStatus,
+) => {
+  const opportunity: Opportunity = {
+    id: "opportunity-existing",
+    businessId: "business-a",
+    conversationId: "conversation-1",
+    requestDescription: "Pastilhas de freio",
+    status: opportunityStatus,
+    nextAction: {
+      type: "REQUEST_INFORMATION",
+      description: "Aguardar dados do cliente.",
+    },
+    createdAt: "2025-12-31T12:00:00.000Z",
+    updatedAt: "2025-12-31T12:00:00.000Z",
+  };
+  const quoteRequest: QuoteRequest = {
+    id: "quote-existing",
+    businessId: "business-a",
+    conversationId: "conversation-1",
+    opportunityId: opportunity.id,
+    requestDescription: "Pastilhas de freio",
+    symptomDescription: "Ruído ao frear",
+    status: quoteRequestStatus,
+    requestedAt: "2025-12-31T12:00:00.000Z",
+    createdAt: "2025-12-31T12:00:00.000Z",
+    updatedAt: "2025-12-31T12:00:00.000Z",
+  };
+  await harness.opportunityRepository.save(opportunity);
+  await harness.quoteRequestRepository.save(quoteRequest);
+  return { opportunity, quoteRequest };
+};
+
 const runQuoteRequest = async (
   interpretationOverrides: Partial<AIInterpretation> = {},
   content = "Quero solicitar um orçamento.",
@@ -118,6 +153,18 @@ const runQuoteRequest = async (
   );
   return { harness, result };
 };
+
+const processQuoteOnHarness = (
+  harness: ReturnType<typeof createHarness>,
+  content = "Quero solicitar um orçamento.",
+) => processMessage(
+  {
+    businessId: "business-a",
+    conversationId: "conversation-1",
+    content,
+  },
+  harness.dependencies,
+);
 
 const runAppointmentRequest = async (
   interpretationOverrides: Partial<AIInterpretation> = {},
@@ -300,6 +347,47 @@ test("QUOTE_REQUEST QuoteRequest waits for the business", async () => {
   assert.equal(quoteRequest?.status, QuoteRequestStatus.WAITING_BUSINESS);
 });
 
+test("QUOTE_REQUEST with REQUEST_INFORMATION waits for the customer", async () => {
+  const { harness } = await runQuoteRequest({
+    missingData: ["brand", "version"],
+    suggestedNextAction: {
+      type: "REQUEST_INFORMATION",
+      description: "Solicitar dados do veículo.",
+    },
+  });
+  const [opportunity] = await harness.opportunityRepository.listByConversation(
+    "business-a",
+    "conversation-1",
+  );
+  const [quoteRequest] = await harness.quoteRequestRepository.listByConversation(
+    "business-a",
+    "conversation-1",
+  );
+
+  assert.equal(opportunity?.status, OpportunityStatus.WAITING_CUSTOMER);
+  assert.equal(quoteRequest?.status, QuoteRequestStatus.WAITING_INFORMATION);
+});
+
+test("QUOTE_REQUEST without REQUEST_INFORMATION waits for the business", async () => {
+  const { harness } = await runQuoteRequest({
+    suggestedNextAction: {
+      type: "PROVIDE_QUOTE",
+      description: "Preparar orçamento.",
+    },
+  });
+  const [opportunity] = await harness.opportunityRepository.listByConversation(
+    "business-a",
+    "conversation-1",
+  );
+  const [quoteRequest] = await harness.quoteRequestRepository.listByConversation(
+    "business-a",
+    "conversation-1",
+  );
+
+  assert.equal(opportunity?.status, OpportunityStatus.WAITING_BUSINESS);
+  assert.equal(quoteRequest?.status, QuoteRequestStatus.WAITING_BUSINESS);
+});
+
 test("QUOTE_REQUEST updates the Conversation commercial outcome", async () => {
   const { harness } = await runQuoteRequest();
   const conversation = await harness.conversationRepository.findById(
@@ -417,6 +505,112 @@ test("QUOTE_REQUEST requests missing customer data without human handoff", async
   assert.equal(result.requiresHuman, false);
   assert.equal(handoff, null);
   assert.equal(conversation?.commercialOutcome, CommercialOutcome.QUOTE_REQUESTED);
+});
+
+test("continues the latest active Opportunity and linked QuoteRequest without duplicates", async () => {
+  const harness = createHarness(makeInterpretation({
+    suggestedNextAction: {
+      type: "REQUEST_INFORMATION",
+      description: "Solicitar dados adicionais.",
+    },
+    requestedItem: "Pastilhas de freio para Corolla",
+  }));
+  const seeded = await seedQuotePair(
+    harness,
+    OpportunityStatus.WAITING_CUSTOMER,
+    QuoteRequestStatus.WAITING_INFORMATION,
+  );
+
+  await processQuoteOnHarness(harness, "É para meu Corolla 2020.");
+
+  const opportunities = await harness.opportunityRepository.listByConversation(
+    "business-a",
+    "conversation-1",
+  );
+  const quoteRequests = await harness.quoteRequestRepository.listByConversation(
+    "business-a",
+    "conversation-1",
+  );
+  const updatedOpportunity = await harness.opportunityRepository.findById(
+    "business-a",
+    seeded.opportunity.id,
+  );
+  const updatedQuoteRequest = await harness.quoteRequestRepository.findById(
+    "business-a",
+    seeded.quoteRequest.id,
+  );
+
+  assert.equal(opportunities.length, 1);
+  assert.equal(quoteRequests.length, 1);
+  assert.equal(updatedOpportunity?.id, seeded.opportunity.id);
+  assert.equal(updatedQuoteRequest?.id, seeded.quoteRequest.id);
+  assert.equal(updatedOpportunity?.createdAt, seeded.opportunity.createdAt);
+  assert.equal(updatedQuoteRequest?.createdAt, seeded.quoteRequest.createdAt);
+  assert.equal(updatedQuoteRequest?.requestedAt, seeded.quoteRequest.requestedAt);
+  assert.equal(updatedOpportunity?.requestDescription, "Pastilhas de freio para Corolla");
+  assert.equal(updatedQuoteRequest?.requestDescription, "Pastilhas de freio para Corolla");
+  assert.equal(updatedQuoteRequest?.symptomDescription, "Ruído ao frear");
+});
+
+test("moves an active quote pair from customer waiting to business waiting", async () => {
+  const harness = createHarness(makeInterpretation({
+    suggestedNextAction: {
+      type: "PROVIDE_QUOTE",
+      description: "Preparar o orçamento.",
+    },
+  }));
+  const seeded = await seedQuotePair(
+    harness,
+    OpportunityStatus.WAITING_CUSTOMER,
+    QuoteRequestStatus.WAITING_INFORMATION,
+  );
+
+  await processQuoteOnHarness(harness, "A quilometragem é 50000 km.");
+
+  const opportunity = await harness.opportunityRepository.findById(
+    "business-a",
+    seeded.opportunity.id,
+  );
+  const quoteRequest = await harness.quoteRequestRepository.findById(
+    "business-a",
+    seeded.quoteRequest.id,
+  );
+  assert.equal(opportunity?.status, OpportunityStatus.WAITING_BUSINESS);
+  assert.equal(quoteRequest?.status, QuoteRequestStatus.WAITING_BUSINESS);
+  assert.deepEqual(opportunity?.nextAction, {
+    type: "PROVIDE_QUOTE",
+    description: "Preparar o orçamento.",
+  });
+});
+
+test("does not reuse a closed Opportunity or responded QuoteRequest", async () => {
+  const harness = createHarness();
+  await seedQuotePair(
+    harness,
+    OpportunityStatus.CLOSED,
+    QuoteRequestStatus.RESPONDED,
+  );
+
+  await processQuoteOnHarness(harness);
+
+  const opportunities = await harness.opportunityRepository.listByConversation(
+    "business-a",
+    "conversation-1",
+  );
+  const quoteRequests = await harness.quoteRequestRepository.listByConversation(
+    "business-a",
+    "conversation-1",
+  );
+  assert.equal(opportunities.length, 2);
+  assert.equal(quoteRequests.length, 2);
+  assert.equal(opportunities[0]?.id, "opportunity-existing");
+  assert.equal(opportunities[0]?.status, OpportunityStatus.CLOSED);
+  assert.equal(opportunities[1]?.id, "opportunity-2");
+  assert.equal(opportunities[1]?.status, OpportunityStatus.WAITING_BUSINESS);
+  assert.equal(quoteRequests[0]?.id, "quote-existing");
+  assert.equal(quoteRequests[0]?.status, QuoteRequestStatus.RESPONDED);
+  assert.equal(quoteRequests[1]?.id, "quote-3");
+  assert.equal(quoteRequests[1]?.status, QuoteRequestStatus.WAITING_BUSINESS);
 });
 
 test("APPOINTMENT_REQUEST creates an Appointment", async () => {

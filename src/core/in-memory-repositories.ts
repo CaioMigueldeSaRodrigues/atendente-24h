@@ -142,6 +142,17 @@ export class InMemoryOpportunityRepository implements OpportunityRepository {
     return this.opportunities.get(businessId)?.get(id) ?? null;
   }
 
+  async listByConversation(
+    businessId: string,
+    conversationId: string,
+  ): Promise<Opportunity[]> {
+    const businessOpportunities = this.opportunities.get(businessId);
+    return [...(businessOpportunities?.values() ?? [])].filter(
+      (opportunity) => opportunity.businessId === businessId &&
+        opportunity.conversationId === conversationId,
+    );
+  }
+
   async save(entity: Opportunity): Promise<void> {
     let businessOpportunities = this.opportunities.get(entity.businessId);
     if (!businessOpportunities) {
@@ -157,6 +168,17 @@ export class InMemoryQuoteRequestRepository implements QuoteRequestRepository {
 
   async findById(businessId: string, id: string): Promise<QuoteRequest | null> {
     return this.quoteRequests.get(businessId)?.get(id) ?? null;
+  }
+
+  async listByConversation(
+    businessId: string,
+    conversationId: string,
+  ): Promise<QuoteRequest[]> {
+    const businessQuoteRequests = this.quoteRequests.get(businessId);
+    return [...(businessQuoteRequests?.values() ?? [])].filter(
+      (quoteRequest) => quoteRequest.businessId === businessId &&
+        quoteRequest.conversationId === conversationId,
+    );
   }
 
   async save(entity: QuoteRequest): Promise<void> {
