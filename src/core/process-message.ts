@@ -91,6 +91,8 @@ export async function processMessage(
     intent: interpretation.intent,
     proposedResponse: interpretation.proposedResponse,
     requiresHuman,
+    suggestedNextAction: interpretation.suggestedNextAction,
+    missingData: interpretation.missingData,
   });
 
   const quoteRequested = interpretation.intent === Intent.QUOTE_REQUEST;

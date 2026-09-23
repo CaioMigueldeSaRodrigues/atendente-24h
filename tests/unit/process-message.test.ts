@@ -387,6 +387,38 @@ test("QUOTE_REQUEST saves the safe response instead of proposedResponse", async 
   assert.equal(messages[1]?.content, result.reply);
 });
 
+test("QUOTE_REQUEST requests missing customer data without human handoff", async () => {
+  const { harness, result } = await runQuoteRequest({
+    missingData: ["brand", "version", "licensePlate", "mileage"],
+    suggestedNextAction: {
+      type: "REQUEST_INFORMATION",
+      description: "Solicitar dados faltantes do veículo.",
+    },
+    requiresHuman: false,
+    proposedResponse: "O orçamento custa R$ 500.",
+  });
+  const messages = await harness.messageRepository.listByConversation(
+    "business-a",
+    "conversation-1",
+  );
+  const conversation = await harness.conversationRepository.findById(
+    "business-a",
+    "conversation-1",
+  );
+  const handoff = await harness.humanHandoffRepository.findById(
+    "business-a",
+    "handoff-4",
+  );
+
+  assert.equal(
+    messages[1]?.content,
+    "Para preparar o orçamento, preciso de mais algumas informações: marca e versão. Pode me informar?",
+  );
+  assert.equal(result.requiresHuman, false);
+  assert.equal(handoff, null);
+  assert.equal(conversation?.commercialOutcome, CommercialOutcome.QUOTE_REQUESTED);
+});
+
 test("APPOINTMENT_REQUEST creates an Appointment", async () => {
   const { harness } = await runAppointmentRequest();
   const appointment = (await harness.appointmentRepository.findById(
