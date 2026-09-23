@@ -123,6 +123,20 @@ test("uses the configured model and sends current content with reduced history",
   }
 });
 
+test("system instructions define extraction and missing-information handling", async () => {
+  const { interpreter, getRequest } = createInterpreter(JSON.stringify(modelOutput));
+
+  await interpreter.interpret(createInput());
+
+  const messages = getRequest()?.messages as Array<{ role: string; content: string }>;
+  const systemMessage = messages.find(({ role }) => role === "system")?.content ?? "";
+  assert.match(systemMessage, /somente informações explicitamente declaradas/i);
+  assert.match(systemMessage, /não infira dados usando conhecimento geral/i);
+  assert.match(systemMessage, /não exige atendimento humano por si só/i);
+  assert.match(systemMessage, /UNKNOWN_INFORMATION apenas porque falta um dado/i);
+  assert.match(systemMessage, /REQUEST_INFORMATION/i);
+});
+
 test("requests strict json_schema Structured Output with closed object schemas", async () => {
   const { interpreter, getRequest } = createInterpreter(JSON.stringify(modelOutput));
 
