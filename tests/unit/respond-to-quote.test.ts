@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { Opportunity, QuoteRequest } from "../../src/core/domain/entities.js";
 import {
+  CommercialEventType,
   OpportunityStatus,
   QuoteRequestStatus,
 } from "../../src/core/domain/enums.js";
 import type { Money } from "../../src/core/domain/types.js";
 import { canPresentAuthorizedPrice } from "../../src/core/business-rules.js";
 import {
+  InMemoryCommercialEventRepository,
   InMemoryOpportunityRepository,
   InMemoryQuoteRequestRepository,
 } from "../../src/core/in-memory-repositories.js";
@@ -54,6 +56,7 @@ const setup = async ({
 } = {}) => {
   const quoteRequestRepository = new InMemoryQuoteRequestRepository();
   const opportunityRepository = new InMemoryOpportunityRepository();
+  const commercialEventRepository = new InMemoryCommercialEventRepository();
   await quoteRequestRepository.save(quoteRequest);
   if (opportunity) {
     await opportunityRepository.save(opportunity);
@@ -62,9 +65,12 @@ const setup = async ({
   return {
     quoteRequestRepository,
     opportunityRepository,
+    commercialEventRepository,
     dependencies: {
       quoteRequestRepository,
       opportunityRepository,
+      commercialEventRepository,
+      generateId: (prefix: string) => `${prefix}-generated`,
       now: () => responseTime,
     },
   };
@@ -93,6 +99,17 @@ test("responds to a quote waiting for the business with an authorized price", as
     quoteRequestStatus: QuoteRequestStatus.RESPONDED,
     opportunityStatus: OpportunityStatus.WAITING_CUSTOMER,
   });
+});
+
+test("successful response appends QUOTE_RESPONDED with exact authorized cents", async () => {
+  const harness = await setup();
+  await respondToQuote(input({ authorizedPrice: { amountCents: 65005, currency: "BRL" } }), harness.dependencies);
+  const [event] = await harness.commercialEventRepository.listByBusiness("business-1");
+  assert.equal(event?.eventType, CommercialEventType.QUOTE_RESPONDED);
+  assert.equal(event?.quoteRequestId, "quote-1");
+  assert.equal(event?.opportunityId, "opportunity-1");
+  assert.equal(event?.conversationId, "conversation-1");
+  assert.deepEqual(event?.amount, { amountCents: 65005, currency: "BRL" });
 });
 
 test("preserves quote identifiers, relationships, and creation timestamps", async () => {
@@ -156,6 +173,22 @@ test("does not respond to a QuoteRequest that is already responded", async () =>
   await assert.rejects(respondToQuote(input(), harness.dependencies), {
     message: "QuoteRequest cannot be responded",
   });
+  assert.deepEqual(await harness.commercialEventRepository.listByBusiness("business-1"), []);
+});
+
+test("analytics failure does not make respondToQuote fail", async () => {
+  const harness = await setup();
+  const dependencies = {
+    ...harness.dependencies,
+    commercialEventRepository: {
+      async append() { throw new Error("analytics storage unavailable"); },
+      async listByBusiness() { return []; },
+      async listByConversation() { return []; },
+    },
+  };
+  const result = await respondToQuote(input(), dependencies);
+  assert.equal(result.quoteRequestStatus, QuoteRequestStatus.RESPONDED);
+  assert.equal((await harness.quoteRequestRepository.findById("business-1", "quote-1"))?.status, QuoteRequestStatus.RESPONDED);
 });
 
 test("does not respond to a cancelled QuoteRequest", async () => {

@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import type { AppointmentRepository, ConversationRepository, CustomerRepository, HumanHandoffRepository, MessageRepository, OpportunityRepository, QuoteRequestRepository, VehicleRepository } from "../../core/repositories.js";
+import type { AppointmentRepository, CommercialEventRepository, ConversationRepository, CustomerRepository, HumanHandoffRepository, MessageRepository, OpportunityRepository, QuoteRequestRepository, VehicleRepository } from "../../core/repositories.js";
 import type { MessageInterpreter } from "../../core/message-interpreter.js";
 import { Channel, ConversationStatus, QuoteRequestStatus } from "../../core/domain/enums.js";
 import type { Channel as ChannelType } from "../../core/domain/enums.js";
@@ -20,6 +20,7 @@ export type BasicPlanHttpServerDependencies = {
   quoteRequestRepository: QuoteRequestRepository;
   appointmentRepository: AppointmentRepository;
   humanHandoffRepository: HumanHandoffRepository;
+  commercialEventRepository?: CommercialEventRepository;
   operator: BasicPlanOperatorConfig;
   interpreter: MessageInterpreter;
   now: () => string;

@@ -8,6 +8,7 @@ import type { AutomotiveBusiness, Conversation } from "../../src/core/domain/ent
 import {
   BusinessType,
   Channel,
+  CommercialEventType,
   CommercialOutcome,
   ConversationStatus,
   Intent,
@@ -27,6 +28,7 @@ import {
   InMemoryHumanHandoffRepository,
 } from "../../src/core/in-memory-repositories.js";
 import { SqliteAutomotiveBusinessRepository } from "../../src/infrastructure/sqlite/sqlite-automotive-business-repository.js";
+import { SqliteCommercialEventRepository } from "../../src/infrastructure/sqlite/sqlite-commercial-event-repository.js";
 import { SqliteConversationRepository } from "../../src/infrastructure/sqlite/sqlite-conversation-repository.js";
 import { SqliteCustomerRepository } from "../../src/infrastructure/sqlite/sqlite-customer-repository.js";
 import { SqliteMessageRepository } from "../../src/infrastructure/sqlite/sqlite-message-repository.js";
@@ -87,6 +89,7 @@ type SqliteRepositories = {
   messageRepository: SqliteMessageRepository;
   opportunityRepository: SqliteOpportunityRepository;
   quoteRequestRepository: SqliteQuoteRequestRepository;
+  commercialEventRepository: SqliteCommercialEventRepository;
 };
 
 function createRepositories(database: DatabaseSync): SqliteRepositories {
@@ -98,6 +101,7 @@ function createRepositories(database: DatabaseSync): SqliteRepositories {
     messageRepository: new SqliteMessageRepository(database),
     opportunityRepository: new SqliteOpportunityRepository(database),
     quoteRequestRepository: new SqliteQuoteRequestRepository(database),
+    commercialEventRepository: new SqliteCommercialEventRepository(database),
   };
 }
 
@@ -157,6 +161,7 @@ test("completes and recovers the commercial quote cycle across SQLite restarts",
         humanHandoffRepository: new InMemoryHumanHandoffRepository(),
         opportunityRepository: repositories.opportunityRepository,
         quoteRequestRepository: repositories.quoteRequestRepository,
+        commercialEventRepository: repositories.commercialEventRepository,
         interpreter,
         now,
         generateId,
@@ -252,6 +257,8 @@ test("completes and recovers the commercial quote cycle across SQLite restarts",
       {
         quoteRequestRepository: repositories.quoteRequestRepository,
         opportunityRepository: repositories.opportunityRepository,
+        commercialEventRepository: repositories.commercialEventRepository,
+        generateId,
         now,
       },
     );
@@ -298,6 +305,7 @@ test("completes and recovers the commercial quote cycle across SQLite restarts",
         quoteRequestRepository: repositories.quoteRequestRepository,
         conversationRepository: repositories.conversationRepository,
         messageRepository: repositories.messageRepository,
+        commercialEventRepository: repositories.commercialEventRepository,
         generateId,
         now: () => {
           publishedAt = now();
@@ -361,6 +369,22 @@ test("completes and recovers the commercial quote cycle across SQLite restarts",
     assert.ok(finalMessages.some((message) => message.senderType === SenderType.CUSTOMER && message.content.includes("pastilhas de freio")));
     assert.ok(finalMessages.some((message) => message.senderType === SenderType.ASSISTANT && message.content === processResult.reply));
     assert.ok(finalMessages.some((message) => message.id === publishResult.messageId && message.content === publishResult.content));
+
+    const commercialEvents = await repositories.commercialEventRepository.listByBusiness("business-a");
+    assert.deepEqual(commercialEvents.map((event) => event.eventType), [
+      CommercialEventType.QUOTE_REQUESTED,
+      CommercialEventType.QUOTE_RESPONDED,
+      CommercialEventType.QUOTE_PUBLISHED,
+    ]);
+    assert.equal(commercialEvents.length, 3);
+    assert.ok(commercialEvents.every((event) => event.businessId === "business-a"));
+    assert.ok(commercialEvents.every((event) => event.quoteRequestId === finalQuoteRequests[0]?.id));
+    assert.deepEqual(commercialEvents.slice(1).map((event) => event.amount), [
+      { amountCents: 65000, currency: "BRL" },
+      { amountCents: 65000, currency: "BRL" },
+    ]);
+    assert.ok(commercialEvents[0]!.occurredAt < commercialEvents[1]!.occurredAt);
+    assert.ok(commercialEvents[1]!.occurredAt < commercialEvents[2]!.occurredAt);
 
     assert.equal(await repositories.customerRepository.findById("business-b", finalCustomer!.id), null);
     assert.equal(await repositories.vehicleRepository.findById("business-b", finalVehicle!.id), null);

@@ -1,13 +1,22 @@
-import type { Opportunity, QuoteRequest } from "./domain/entities.js";
+import type { CommercialEvent, Opportunity, QuoteRequest } from "./domain/entities.js";
 import {
+  CommercialEventType,
   OpportunityStatus,
   QuoteRequestStatus,
 } from "./domain/enums.js";
 import type { Money } from "./domain/types.js";
 import type {
   OpportunityRepository,
+  CommercialEventRepository,
   QuoteRequestRepository,
 } from "./repositories.js";
+import { appendCommercialEventSafely } from "./append-commercial-event-safely.js";
+
+type RespondToQuoteBaseDependencies = {
+  quoteRequestRepository: QuoteRequestRepository;
+  opportunityRepository: OpportunityRepository;
+  now: () => string;
+};
 
 export type RespondToQuoteInput = {
   businessId: string;
@@ -15,10 +24,9 @@ export type RespondToQuoteInput = {
   authorizedPrice: Money;
 };
 
-export type RespondToQuoteDependencies = {
-  quoteRequestRepository: QuoteRequestRepository;
-  opportunityRepository: OpportunityRepository;
-  now: () => string;
+export type RespondToQuoteDependencies = RespondToQuoteBaseDependencies & {
+  commercialEventRepository?: CommercialEventRepository;
+  generateId?: (prefix: string) => string;
 };
 
 export async function respondToQuote(
@@ -70,6 +78,29 @@ export async function respondToQuote(
 
   await dependencies.quoteRequestRepository.save(updatedQuoteRequest);
   await dependencies.opportunityRepository.save(updatedOpportunity);
+
+  if (dependencies.commercialEventRepository !== undefined && dependencies.generateId !== undefined) {
+    const generateId = dependencies.generateId;
+    await appendCommercialEventSafely(dependencies.commercialEventRepository, () => {
+      const event: CommercialEvent = {
+        id: generateId("commercial-event"),
+        businessId: updatedQuoteRequest.businessId,
+        eventType: CommercialEventType.QUOTE_RESPONDED,
+        conversationId: updatedQuoteRequest.conversationId,
+        ...(updatedQuoteRequest.customerId !== undefined ? { customerId: updatedQuoteRequest.customerId } : {}),
+        ...(updatedQuoteRequest.vehicleId !== undefined ? { vehicleId: updatedQuoteRequest.vehicleId } : {}),
+        opportunityId: updatedQuoteRequest.opportunityId,
+        quoteRequestId: updatedQuoteRequest.id,
+        requestedItem: updatedQuoteRequest.requestDescription,
+        ...(updatedQuoteRequest.symptomDescription !== undefined
+          ? { symptom: updatedQuoteRequest.symptomDescription }
+          : {}),
+        amount: input.authorizedPrice,
+        occurredAt: dependencies.now(),
+      };
+      return event;
+    });
+  }
 
   return {
     quoteRequestId: updatedQuoteRequest.id,

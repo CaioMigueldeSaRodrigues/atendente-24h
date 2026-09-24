@@ -3,6 +3,7 @@ import { resolveSafeReply } from "./response-policy.js";
 import { getMissingQuoteRequiredFields } from "./quote-intake-policy.js";
 import type {
   Appointment,
+  CommercialEvent,
   Conversation,
   Customer,
   HumanHandoff,
@@ -13,6 +14,7 @@ import type {
 } from "./domain/entities.js";
 import {
   CommercialOutcome,
+  CommercialEventType,
   AppointmentStatus,
   ConversationStatus,
   HandoffReason,
@@ -26,6 +28,7 @@ import type { AIInterpretation, NextAction } from "./domain/types.js";
 import type {
   ConversationRepository,
   AppointmentRepository,
+  CommercialEventRepository,
   CustomerRepository,
   HumanHandoffRepository,
   MessageRepository,
@@ -34,6 +37,7 @@ import type {
   VehicleRepository,
 } from "./repositories.js";
 import type { MessageInterpreter } from "./message-interpreter.js";
+import { appendCommercialEventSafely } from "./append-commercial-event-safely.js";
 
 export type ProcessMessageInput = {
   businessId: string;
@@ -50,6 +54,7 @@ export type ProcessMessageDependencies = {
   humanHandoffRepository: HumanHandoffRepository;
   opportunityRepository: OpportunityRepository;
   quoteRequestRepository: QuoteRequestRepository;
+  commercialEventRepository?: CommercialEventRepository;
   interpreter: MessageInterpreter;
   now: () => string;
   generateId: (prefix: string) => string;
@@ -312,6 +317,40 @@ export async function processMessage(
         updatedAt: now,
       };
       await dependencies.quoteRequestRepository.save(quoteRequest);
+      if (dependencies.commercialEventRepository !== undefined) {
+        await appendCommercialEventSafely(dependencies.commercialEventRepository, () => {
+          const event: CommercialEvent = {
+            id: dependencies.generateId("commercial-event"),
+            businessId: conversation.businessId,
+            eventType: CommercialEventType.QUOTE_REQUESTED,
+            conversationId: conversation.id,
+            ...(customerId !== undefined ? { customerId } : {}),
+            ...(vehicleId !== undefined ? { vehicleId } : {}),
+            opportunityId: opportunity.id,
+            quoteRequestId: quoteRequest.id,
+            channel: conversation.channel,
+            intent: interpretation.intent,
+            commercialOutcome: CommercialOutcome.QUOTE_REQUESTED,
+            ...(interpretation.requestedItem !== undefined
+              ? { requestedItem: interpretation.requestedItem }
+              : {}),
+            ...(interpretation.symptomDescription !== undefined
+              ? { symptom: interpretation.symptomDescription }
+              : {}),
+            ...(effectiveVehicleData.brand !== undefined
+              ? { vehicleBrand: effectiveVehicleData.brand }
+              : {}),
+            ...(effectiveVehicleData.model !== undefined
+              ? { vehicleModel: effectiveVehicleData.model }
+              : {}),
+            ...(effectiveVehicleData.year !== undefined
+              ? { vehicleYear: effectiveVehicleData.year }
+              : {}),
+            occurredAt: now,
+          };
+          return event;
+        });
+      }
     }
   }
 

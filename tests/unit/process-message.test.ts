@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   AppointmentStatus,
   Channel,
+  CommercialEventType,
   CommercialOutcome,
   ConversationStatus,
   HandoffReason,
@@ -25,6 +26,7 @@ import type { AIInterpretation } from "../../src/core/domain/types.js";
 import {
   InMemoryAppointmentRepository,
   InMemoryConversationRepository,
+  InMemoryCommercialEventRepository,
   InMemoryCustomerRepository,
   InMemoryHumanHandoffRepository,
   InMemoryMessageRepository,
@@ -73,6 +75,7 @@ const createHarness = (
   const humanHandoffRepository = new InMemoryHumanHandoffRepository();
   const opportunityRepository = new InMemoryOpportunityRepository();
   const quoteRequestRepository = new InMemoryQuoteRequestRepository();
+  const commercialEventRepository = new InMemoryCommercialEventRepository();
   const vehicleRepository = new InMemoryVehicleRepository();
   void conversationRepository.save(initialConversation);
 
@@ -104,6 +107,7 @@ const createHarness = (
     humanHandoffRepository,
     opportunityRepository,
     quoteRequestRepository,
+    commercialEventRepository,
     vehicleRepository,
     interpreterInputs,
     dependencies: {
@@ -114,6 +118,7 @@ const createHarness = (
       humanHandoffRepository,
       opportunityRepository,
       quoteRequestRepository,
+      commercialEventRepository,
       vehicleRepository,
       interpreter,
       now: () => timestamp,
@@ -368,6 +373,41 @@ test("QUOTE_REQUEST creates a QuoteRequest linked to its Opportunity", async () 
 
   assert.ok(quoteRequest);
   assert.equal(quoteRequest.opportunityId, opportunity?.id);
+});
+
+test("a new QuoteRequest emits one QUOTE_REQUESTED with available vehicle and item data", async () => {
+  const { harness } = await runQuoteRequest({
+    requestedItem: "Pastilhas de freio",
+    symptomDescription: "Ruído ao frear",
+  });
+  const [event] = await harness.commercialEventRepository.listByBusiness("business-a");
+  assert.equal((await harness.commercialEventRepository.listByBusiness("business-a")).length, 1);
+  assert.equal(event?.eventType, CommercialEventType.QUOTE_REQUESTED);
+  assert.equal(event?.businessId, "business-a");
+  assert.equal(event?.conversationId, "conversation-1");
+  assert.equal(event?.quoteRequestId, "quote-1");
+  assert.equal(event?.opportunityId, "opportunity-1");
+  assert.equal(event?.channel, Channel.WEB);
+  assert.equal(event?.requestedItem, "Pastilhas de freio");
+  assert.equal(event?.symptom, "Ruído ao frear");
+  assert.deepEqual({ brand: event?.vehicleBrand, model: event?.vehicleModel, year: event?.vehicleYear }, {
+    brand: "Toyota", model: "Corolla", year: 2020,
+  });
+});
+
+test("continuing an active QuoteRequest does not emit a duplicate QUOTE_REQUESTED", async () => {
+  const interpretation = makeInterpretation({
+    extractedVehicleData: { brand: "Toyota", model: "Corolla", year: 2020, version: "XEi" },
+    requestedItem: "Pastilhas de freio",
+  });
+  const harness = createHarness([interpretation, interpretation]);
+  await processQuoteOnHarness(harness);
+  await processQuoteOnHarness(harness, "Complementando os dados do mesmo pedido.");
+  assert.deepEqual(
+    (await harness.commercialEventRepository.listByConversation("business-a", "conversation-1"))
+      .map((event) => [event.eventType, event.quoteRequestId]),
+    [[CommercialEventType.QUOTE_REQUESTED, "quote-1"]],
+  );
 });
 
 test("QUOTE_REQUEST QuoteRequest waits for the business", async () => {

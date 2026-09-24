@@ -13,6 +13,7 @@ import { createBasicPlanHttpServer } from "../infrastructure/http/basic-plan-htt
 import { createSqliteDatabase } from "../infrastructure/sqlite/sqlite-database.js";
 import { SqliteAutomotiveBusinessRepository } from "../infrastructure/sqlite/sqlite-automotive-business-repository.js";
 import { SqliteConversationRepository } from "../infrastructure/sqlite/sqlite-conversation-repository.js";
+import { SqliteCommercialEventRepository } from "../infrastructure/sqlite/sqlite-commercial-event-repository.js";
 import { SqliteCustomerRepository } from "../infrastructure/sqlite/sqlite-customer-repository.js";
 import { SqliteMessageRepository } from "../infrastructure/sqlite/sqlite-message-repository.js";
 import { SqliteOpportunityRepository } from "../infrastructure/sqlite/sqlite-opportunity-repository.js";
@@ -79,6 +80,7 @@ export async function createBasicPlanRuntime(
     const vehicleRepository = new SqliteVehicleRepository(database);
     const opportunityRepository = new SqliteOpportunityRepository(database);
     const quoteRequestRepository = new SqliteQuoteRequestRepository(database);
+    const commercialEventRepository = new SqliteCommercialEventRepository(database);
 
     server = createBasicPlanHttpServer({
       conversationRepository,
@@ -87,6 +89,7 @@ export async function createBasicPlanRuntime(
       vehicleRepository,
       opportunityRepository,
       quoteRequestRepository,
+      commercialEventRepository,
       appointmentRepository: new InMemoryAppointmentRepository(),
       humanHandoffRepository: new InMemoryHumanHandoffRepository(),
       operator: {

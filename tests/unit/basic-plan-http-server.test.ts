@@ -3,12 +3,13 @@ import test from "node:test";
 import type { AddressInfo } from "node:net";
 import { Script } from "node:vm";
 import type { AutomotiveBusiness } from "../../src/core/domain/entities.js";
-import { BusinessType, Channel, Intent, SenderType, QuoteRequestStatus } from "../../src/core/domain/enums.js";
+import { BusinessType, Channel, CommercialEventType, Intent, SenderType, QuoteRequestStatus } from "../../src/core/domain/enums.js";
 import type { AIInterpretation } from "../../src/core/domain/types.js";
 import { InMemoryAppointmentRepository, InMemoryHumanHandoffRepository } from "../../src/core/in-memory-repositories.js";
 import { createSqliteDatabase } from "../../src/infrastructure/sqlite/sqlite-database.js";
 import { SqliteAutomotiveBusinessRepository } from "../../src/infrastructure/sqlite/sqlite-automotive-business-repository.js";
 import { SqliteConversationRepository } from "../../src/infrastructure/sqlite/sqlite-conversation-repository.js";
+import { SqliteCommercialEventRepository } from "../../src/infrastructure/sqlite/sqlite-commercial-event-repository.js";
 import { SqliteCustomerRepository } from "../../src/infrastructure/sqlite/sqlite-customer-repository.js";
 import { SqliteMessageRepository } from "../../src/infrastructure/sqlite/sqlite-message-repository.js";
 import { SqliteOpportunityRepository } from "../../src/infrastructure/sqlite/sqlite-opportunity-repository.js";
@@ -37,6 +38,7 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
   const messageRepository = new SqliteMessageRepository(database);
   const opportunityRepository = new SqliteOpportunityRepository(database);
   const quoteRequestRepository = new SqliteQuoteRequestRepository(database);
+  const commercialEventRepository = new SqliteCommercialEventRepository(database);
   const business: AutomotiveBusiness = {
     id: "business-a", name: "Oficina A", businessType: BusinessType.WORKSHOP,
     timezone: "America/Sao_Paulo", active: true, createdAt: timestamp, updatedAt: timestamp,
@@ -45,14 +47,16 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
   await businessRepository.save({ ...business, id: "business-b", name: "Oficina B" });
 
   let sequence = 0;
+  let clockTick = 0;
   const serverDependencies = {
     conversationRepository, messageRepository, customerRepository, vehicleRepository,
     opportunityRepository, quoteRequestRepository,
+    commercialEventRepository,
     appointmentRepository: new InMemoryAppointmentRepository(),
     humanHandoffRepository: new InMemoryHumanHandoffRepository(),
     operator: { businessId: "business-a", businessName: "Oficina A" },
     interpreter: { interpret: async () => interpretation },
-    now: () => timestamp,
+    now: () => new Date(Date.parse(timestamp) + clockTick++).toISOString(),
     generateId: (prefix: string) => `${prefix}-${++sequence}`,
   };
   const server = createBasicPlanHttpServer(serverDependencies);
@@ -215,6 +219,19 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
     assert.equal(publishedBody.channel, Channel.WEB);
     const finalHistory = (await (await request(`/v1/businesses/business-a/conversations/${conversationId}/messages`)).json() as { messages: Array<{ content: string; senderType: string }> }).messages;
     assert.ok(finalHistory.some((message) => message.senderType === SenderType.ASSISTANT && message.content === publishedBody.content));
+    const commercialEvents = await commercialEventRepository.listByBusiness("business-a");
+    assert.deepEqual(commercialEvents.map(({ eventType }) => eventType), [
+      CommercialEventType.QUOTE_REQUESTED,
+      CommercialEventType.QUOTE_RESPONDED,
+      CommercialEventType.QUOTE_PUBLISHED,
+    ]);
+    assert.ok(commercialEvents.every((event) => event.businessId === "business-a"));
+    assert.equal(new Set(commercialEvents.map(({ quoteRequestId }) => quoteRequestId)).size, 1);
+    assert.equal(commercialEvents[0]?.quoteRequestId, quoteId);
+    assert.deepEqual(commercialEvents.slice(1).map(({ amount }) => amount), [
+      { amountCents: 65000, currency: "BRL" },
+      { amountCents: 65000, currency: "BRL" },
+    ]);
 
     for (const status of [
       QuoteRequestStatus.REQUESTED,

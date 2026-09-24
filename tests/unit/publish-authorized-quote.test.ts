@@ -3,6 +3,7 @@ import test from "node:test";
 import type { Conversation, QuoteRequest } from "../../src/core/domain/entities.js";
 import {
   Channel,
+  CommercialEventType,
   CommercialOutcome,
   ConversationStatus,
   Intent,
@@ -10,6 +11,7 @@ import {
   SenderType,
 } from "../../src/core/domain/enums.js";
 import {
+  InMemoryCommercialEventRepository,
   InMemoryConversationRepository,
   InMemoryMessageRepository,
   InMemoryQuoteRequestRepository,
@@ -57,6 +59,7 @@ const setup = async ({
   const quoteRequestRepository = new InMemoryQuoteRequestRepository();
   const conversationRepository = new InMemoryConversationRepository();
   const messageRepository = new InMemoryMessageRepository();
+  const commercialEventRepository = new InMemoryCommercialEventRepository();
   await quoteRequestRepository.save(quoteRequest);
   if (conversation) {
     await conversationRepository.save(conversation);
@@ -66,10 +69,12 @@ const setup = async ({
     quoteRequestRepository,
     conversationRepository,
     messageRepository,
+    commercialEventRepository,
     dependencies: {
       quoteRequestRepository,
       conversationRepository,
       messageRepository,
+      commercialEventRepository,
       generateId: (prefix: string) => `${prefix}-generated`,
       now: () => publishedAt,
     },
@@ -102,6 +107,19 @@ test("persists the authorized quote as an assistant Message", async () => {
     "O orçamento autorizado é de R$ 125,00. Deseja prosseguir?",
   );
   assert.equal(message.createdAt, publishedAt);
+});
+
+test("successful publish appends QUOTE_PUBLISHED with the authorized amount and channel", async () => {
+  const harness = await setup();
+  await publishAuthorizedQuote(input(), harness.dependencies);
+  const [event] = await harness.commercialEventRepository.listByBusiness("business-1");
+  assert.equal(event?.eventType, CommercialEventType.QUOTE_PUBLISHED);
+  assert.equal(event?.businessId, "business-1");
+  assert.equal(event?.conversationId, "conversation-1");
+  assert.equal(event?.quoteRequestId, "quote-1");
+  assert.equal(event?.opportunityId, "opportunity-1");
+  assert.equal(event?.channel, Channel.WHATSAPP);
+  assert.deepEqual(event?.amount, { amountCents: 12500, currency: "BRL" });
 });
 
 test("uses the authorized price stored on the QuoteRequest", async () => {
@@ -209,6 +227,22 @@ test("propagates the authorization error without changing the QuoteRequest", asy
     await harness.messageRepository.listByConversation("business-1", "conversation-1"),
     [],
   );
+  assert.deepEqual(await harness.commercialEventRepository.listByBusiness("business-1"), []);
+});
+
+test("analytics failure does not make publishAuthorizedQuote fail", async () => {
+  const harness = await setup();
+  const dependencies = {
+    ...harness.dependencies,
+    commercialEventRepository: {
+      async append() { throw new Error("analytics storage unavailable"); },
+      async listByBusiness() { return []; },
+      async listByConversation() { return []; },
+    },
+  };
+  const result = await publishAuthorizedQuote(input(), dependencies);
+  assert.equal(result.messageId, "message-generated");
+  assert.equal((await harness.messageRepository.listByConversation("business-1", "conversation-1")).length, 1);
 });
 
 test("does not modify any QuoteRequest field", async () => {
