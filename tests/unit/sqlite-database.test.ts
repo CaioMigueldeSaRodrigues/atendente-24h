@@ -18,6 +18,8 @@ test("creates an in-memory database and initializes the schema", () => {
       { name: "conversations" },
       { name: "customers" },
       { name: "messages" },
+      { name: "opportunities" },
+      { name: "quote_requests" },
       { name: "vehicles" },
     ]);
   } finally {
