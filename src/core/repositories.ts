@@ -55,6 +55,7 @@ export interface OpportunityRepository {
 
 export interface QuoteRequestRepository {
   findById(businessId: string, id: string): Promise<QuoteRequest | null>;
+  listByBusiness(businessId: string): Promise<QuoteRequest[]>;
   listByConversation(
     businessId: string,
     conversationId: string,

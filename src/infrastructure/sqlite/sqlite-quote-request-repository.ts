@@ -99,6 +99,25 @@ export class SqliteQuoteRequestRepository implements QuoteRequestRepository {
     }
   }
 
+  async listByBusiness(businessId: string): Promise<QuoteRequest[]> {
+    let rows: QuoteRequestRow[];
+    try {
+      rows = this.database.prepare(`
+        SELECT * FROM quote_requests
+        WHERE business_id = ?
+        ORDER BY requested_at ASC, id ASC
+      `).all(businessId) as QuoteRequestRow[];
+    } catch {
+      throw new Error("Failed to load QuoteRequests");
+    }
+
+    try {
+      return rows.map((row) => this.toDomain(row));
+    } catch {
+      throw new Error("Failed to load QuoteRequests");
+    }
+  }
+
   async listByConversation(
     businessId: string,
     conversationId: string,

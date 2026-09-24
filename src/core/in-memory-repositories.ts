@@ -170,6 +170,18 @@ export class InMemoryQuoteRequestRepository implements QuoteRequestRepository {
     return this.quoteRequests.get(businessId)?.get(id) ?? null;
   }
 
+  async listByBusiness(businessId: string): Promise<QuoteRequest[]> {
+    return [...(this.quoteRequests.get(businessId)?.values() ?? [])]
+      .filter((quoteRequest) => quoteRequest.businessId === businessId)
+      .sort((left, right) => {
+        if (left.requestedAt !== right.requestedAt) {
+          return left.requestedAt < right.requestedAt ? -1 : 1;
+        }
+        if (left.id === right.id) return 0;
+        return left.id < right.id ? -1 : 1;
+      });
+  }
+
   async listByConversation(
     businessId: string,
     conversationId: string,

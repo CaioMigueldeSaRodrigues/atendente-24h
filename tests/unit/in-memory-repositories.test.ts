@@ -272,6 +272,36 @@ test("does not list QuoteRequests from another business", async () => {
   );
 });
 
+test("lists QuoteRequests by business in requestedAt and id order without duplicates", async () => {
+  const repository = new InMemoryQuoteRequestRepository();
+  const base: QuoteRequest = {
+    id: "same-id",
+    businessId: "business-a",
+    opportunityId: "opportunity-1",
+    conversationId: "conversation-1",
+    requestDescription: "Pastilhas de freio",
+    status: QuoteRequestStatus.REQUESTED,
+    requestedAt: "2026-01-02T00:00:00.000Z",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  };
+  const later = { ...base, id: "later", requestedAt: "2026-01-03T00:00:00.000Z" };
+  const tieZ = { ...base, id: "z-tie" };
+  const tieA = { ...base, id: "a-tie" };
+  const otherBusiness = { ...base, businessId: "business-b" };
+  await repository.save(base);
+  await repository.save(later);
+  await repository.save(tieZ);
+  await repository.save(otherBusiness);
+  await repository.save(tieA);
+  await repository.save({ ...tieA, requestDescription: "Atualizado" });
+
+  const results = await repository.listByBusiness("business-a");
+  assert.deepEqual(results.map(({ id }) => id), ["a-tie", "same-id", "z-tie", "later"]);
+  assert.equal(results.find(({ id }) => id === "a-tie")?.requestDescription, "Atualizado");
+  assert.deepEqual(await repository.listByBusiness("business-b"), [otherBusiness]);
+});
+
 test("saves and retrieves a Vehicle for its business", async () => {
   const repository = new InMemoryVehicleRepository();
   const vehicle: Vehicle = {

@@ -77,6 +77,34 @@ test("listByConversation filters tenant and conversation, sorting requested_at t
   });
 });
 
+test("listByBusiness filters tenant, sorts requested_at then id, and keeps updates unique", async () => {
+  await withRepositories(async (quotes, opportunities, businesses, conversations) => {
+    const contract: QuoteRequestRepository = quotes;
+    await seedBase(opportunities, businesses, conversations, "business-a");
+    await seedBase(opportunities, businesses, conversations, "business-b");
+    const later = quote("later", "business-a", "opportunity-1", "conversation-1", {
+      requestedAt: "2026-01-04T00:00:00.000Z",
+    });
+    const tieB = quote("tie-b", "business-a", "opportunity-1", "conversation-1", {
+      requestedAt: "2026-01-03T00:00:00.000Z",
+    });
+    const tieA = quote("tie-a", "business-a", "opportunity-1", "conversation-1", {
+      requestedAt: "2026-01-03T00:00:00.000Z",
+    });
+    const sharedA = quote("shared", "business-a");
+    const sharedB = quote("shared", "business-b");
+    for (const item of [later, tieB, tieA, sharedA, sharedB]) await contract.save(item);
+    await contract.save({ ...tieA, requestDescription: "Updated" });
+
+    const businessAQuotes = await contract.listByBusiness("business-a");
+    assert.deepEqual(businessAQuotes.map(({ id }) => id), ["shared", "tie-a", "tie-b", "later"]);
+    assert.equal(businessAQuotes.find(({ id }) => id === "tie-a")?.requestDescription, "Updated");
+    assert.equal((await contract.listByBusiness("business-b")).length, 1);
+    assert.equal((await contract.listByBusiness("business-b"))[0]?.id, "shared");
+    assert.deepEqual(await contract.listByBusiness("business-c"), []);
+  });
+});
+
 test("composite identity allows same request id per business and optionals are omitted", async () => {
   await withRepositories(async (quotes, opportunities, businesses, conversations, database) => {
     await seedBase(opportunities, businesses, conversations, "business-a");
