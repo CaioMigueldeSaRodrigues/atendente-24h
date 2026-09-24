@@ -4,7 +4,9 @@
   "private": true,
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "tsc -p tsconfig.test.json && node --test dist-test/tests/unit/*.test.js"
+    "test": "tsc -p tsconfig.test.json && node --test dist-test/tests/unit/*.test.js",
+    "build": "tsc",
+    "start:basic": "node dist/app/run-basic-plan.js"
   },
   "devDependencies": {
     "@types/node": "^26.6.2",
