@@ -89,6 +89,10 @@ export async function createBasicPlanRuntime(
       quoteRequestRepository,
       appointmentRepository: new InMemoryAppointmentRepository(),
       humanHandoffRepository: new InMemoryHumanHandoffRepository(),
+      operator: {
+        businessId: options.business.businessId,
+        businessName: options.business.businessName,
+      },
       interpreter: options.interpreter,
       now,
       generateId: (prefix) => `${prefix}-${randomUUID()}`,

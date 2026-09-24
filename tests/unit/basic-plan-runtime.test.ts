@@ -39,6 +39,9 @@ test("creates and reuses the pilot business and persists conversations across ru
     const health = await fetch(`http://127.0.0.1:${firstAddress.port}/health`);
     assert.equal(health.status, 200);
     assert.deepEqual(await health.json(), { status: "ok" });
+    const operatorPage = await fetch(`http://127.0.0.1:${firstAddress.port}/operator`);
+    assert.equal(operatorPage.status, 200);
+    assert.match(await operatorPage.text(), /Oficina Piloto/);
 
     const createConversation = async (port: number) => {
       const response = await fetch(`http://127.0.0.1:${port}/v1/businesses/${business.businessId}/conversations`, {

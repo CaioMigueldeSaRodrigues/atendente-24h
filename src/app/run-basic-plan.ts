@@ -59,6 +59,7 @@ async function main(): Promise<void> {
   }
 
   console.log(`Basic Plan server listening on http://${config.host}:${config.port}`);
+  console.log(`Operator panel: http://${config.host}:${config.port}/operator`);
 }
 
 type RuntimeEnvironment = {

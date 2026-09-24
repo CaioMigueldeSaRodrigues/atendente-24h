@@ -1,12 +1,13 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AppointmentRepository, ConversationRepository, CustomerRepository, HumanHandoffRepository, MessageRepository, OpportunityRepository, QuoteRequestRepository, VehicleRepository } from "../../core/repositories.js";
 import type { MessageInterpreter } from "../../core/message-interpreter.js";
-import { Channel, ConversationStatus } from "../../core/domain/enums.js";
+import { Channel, ConversationStatus, QuoteRequestStatus } from "../../core/domain/enums.js";
 import type { Channel as ChannelType } from "../../core/domain/enums.js";
 import type { Conversation } from "../../core/domain/entities.js";
 import { processMessage } from "../../core/process-message.js";
 import { respondToQuote } from "../../core/respond-to-quote.js";
 import { publishAuthorizedQuote } from "../../core/publish-authorized-quote.js";
+import { renderBasicPlanOperatorUi, type BasicPlanOperatorConfig } from "./basic-plan-operator-ui.js";
 
 const MAX_BODY_BYTES = 1024 * 1024;
 
@@ -19,6 +20,7 @@ export type BasicPlanHttpServerDependencies = {
   quoteRequestRepository: QuoteRequestRepository;
   appointmentRepository: AppointmentRepository;
   humanHandoffRepository: HumanHandoffRepository;
+  operator: BasicPlanOperatorConfig;
   interpreter: MessageInterpreter;
   now: () => string;
   generateId: (prefix: string) => string;
@@ -42,6 +44,12 @@ async function handleRequest(
 ): Promise<void> {
   const url = new URL(request.url ?? "/", "http://localhost");
   const pathname = url.pathname;
+
+  if (request.method === "GET" && pathname === "/operator") {
+    response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    response.end(renderBasicPlanOperatorUi(dependencies.operator));
+    return;
+  }
 
   if (request.method === "GET" && pathname === "/health") {
     sendJson(response, 200, { status: "ok" });
@@ -116,6 +124,36 @@ async function handleRequest(
     }
     const quotes = await dependencies.quoteRequestRepository.listByConversation(businessId, conversationId);
     sendJson(response, 200, { quotes });
+    return;
+  }
+
+  const pendingQuotesMatch = pathname.match(/^\/v1\/businesses\/([^/]+)\/quotes\/pending$/);
+  if (request.method === "GET" && pendingQuotesMatch) {
+    const businessId = decodePathPart(pendingQuotesMatch[1]);
+    if (businessId === null) {
+      sendError(response, 400, "Invalid businessId");
+      return;
+    }
+    const pendingStatuses = new Set([
+      QuoteRequestStatus.REQUESTED,
+      QuoteRequestStatus.WAITING_INFORMATION,
+      QuoteRequestStatus.WAITING_BUSINESS,
+    ]);
+    const quotes = (await dependencies.quoteRequestRepository.listByBusiness(businessId))
+      .filter((quote) => pendingStatuses.has(quote.status));
+    const items = await Promise.all(quotes.map(async (quote) => {
+      const [customer, vehicle, conversation] = await Promise.all([
+        quote.customerId === undefined
+          ? Promise.resolve(null)
+          : dependencies.customerRepository.findById(businessId, quote.customerId),
+        quote.vehicleId === undefined
+          ? Promise.resolve(null)
+          : dependencies.vehicleRepository.findById(businessId, quote.vehicleId),
+        dependencies.conversationRepository.findById(businessId, quote.conversationId),
+      ]);
+      return { quote, customer, vehicle, conversation };
+    }));
+    sendJson(response, 200, { items });
     return;
   }
 

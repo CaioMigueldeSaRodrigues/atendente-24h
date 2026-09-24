@@ -44,15 +44,17 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
   await businessRepository.save({ ...business, id: "business-b", name: "Oficina B" });
 
   let sequence = 0;
-  const server = createBasicPlanHttpServer({
+  const serverDependencies = {
     conversationRepository, messageRepository, customerRepository, vehicleRepository,
     opportunityRepository, quoteRequestRepository,
     appointmentRepository: new InMemoryAppointmentRepository(),
     humanHandoffRepository: new InMemoryHumanHandoffRepository(),
+    operator: { businessId: "business-a", businessName: "Oficina A" },
     interpreter: { interpret: async () => interpretation },
     now: () => timestamp,
-    generateId: (prefix) => `${prefix}-${++sequence}`,
-  });
+    generateId: (prefix: string) => `${prefix}-${++sequence}`,
+  };
+  const server = createBasicPlanHttpServer(serverDependencies);
 
   let baseUrl = "";
   try {
@@ -71,6 +73,36 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
     assert.equal(health.status, 200);
     assert.equal(health.headers.get("content-type"), "application/json; charset=utf-8");
     assert.deepEqual(await health.json(), { status: "ok" });
+
+    const operatorPage = await request("/operator");
+    assert.equal(operatorPage.status, 200);
+    assert.match(operatorPage.headers.get("content-type") ?? "", /^text\/html; charset=utf-8$/);
+    const operatorHtml = await operatorPage.text();
+    assert.match(operatorHtml, /Ampliview/);
+    assert.match(operatorHtml, /Oficina A/);
+    assert.match(operatorHtml, /Orçamentos/);
+    assert.doesNotMatch(operatorHtml, /super-secret-test-key|GROQ_API_KEY/);
+    assert.match(operatorHtml, /meta name="viewport"/);
+
+    const maliciousNameServer = createBasicPlanHttpServer({
+      ...serverDependencies,
+      operator: { businessId: "business-a", businessName: "</script><script>alert(1)</script>" },
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        maliciousNameServer.once("error", reject);
+        maliciousNameServer.listen(0, "127.0.0.1", resolve);
+      });
+      const maliciousAddress = maliciousNameServer.address() as AddressInfo;
+      const maliciousHtml = await (await fetch(`http://127.0.0.1:${maliciousAddress.port}/operator`)).text();
+      assert.equal(maliciousHtml.includes("<script>alert(1)</script>"), false);
+      assert.match(maliciousHtml, /\\u003c\/script\\u003e/);
+    } finally {
+      await new Promise<void>((resolve) => {
+        if (!maliciousNameServer.listening) return resolve();
+        maliciousNameServer.close(() => resolve());
+      });
+    }
 
     const invalidJson = await request("/v1/businesses/business-a/conversations", {
       method: "POST", headers: { "content-type": "application/json" }, body: "{",
@@ -111,6 +143,29 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
     assert.equal(quotes.length, 1);
     assert.equal(quotes[0]?.status, QuoteRequestStatus.WAITING_BUSINESS);
     const quoteId = quotes[0]!.id;
+    const queueQuote = await quoteRequestRepository.findById("business-a", quoteId);
+    assert.ok(queueQuote);
+
+    const pendingResponse = await request("/v1/businesses/business-a/quotes/pending");
+    assert.equal(pendingResponse.status, 200);
+    const pendingItems = (await pendingResponse.json() as {
+      items: Array<{
+        quote: { id: string; status: string };
+        customer: { name?: string } | null;
+        vehicle: { brand?: string; model?: string; year?: number; version?: string } | null;
+        conversation: { businessId: string } | null;
+      }>;
+    }).items;
+    assert.equal(pendingItems.length, 1);
+    assert.equal(pendingItems[0]?.quote.status, QuoteRequestStatus.WAITING_BUSINESS);
+    assert.equal(pendingItems[0]?.customer?.name, "Carlos");
+    assert.deepEqual(pendingItems[0]?.vehicle && {
+      brand: pendingItems[0].vehicle.brand,
+      model: pendingItems[0].vehicle.model,
+      year: pendingItems[0].vehicle.year,
+      version: pendingItems[0].vehicle.version,
+    }, { brand: "Toyota", model: "Corolla", year: 2020, version: "XEi" });
+    assert.equal(pendingItems[0]?.conversation?.businessId, "business-a");
 
     const publishedTooEarly = await post(`/v1/businesses/business-a/quotes/${quoteId}/publish`, {});
     assert.equal(publishedTooEarly.status, 409);
@@ -135,6 +190,8 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
     const responded = await post(`/v1/businesses/business-a/quotes/${quoteId}/respond`, { amountCents: 65000, currency: "BRL" });
     assert.equal(responded.status, 200);
     assert.deepEqual((await responded.json() as { authorizedPrice: unknown }).authorizedPrice, { amountCents: 65000, currency: "BRL" });
+    const queueAfterRespond = await request("/v1/businesses/business-a/quotes/pending");
+    assert.deepEqual(await queueAfterRespond.json(), { items: [] });
     const secondResponse = await post(`/v1/businesses/business-a/quotes/${quoteId}/respond`, { amountCents: 65000, currency: "BRL" });
     assert.equal(secondResponse.status, 409);
 
@@ -145,6 +202,27 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
     assert.equal(publishedBody.channel, Channel.WEB);
     const finalHistory = (await (await request(`/v1/businesses/business-a/conversations/${conversationId}/messages`)).json() as { messages: Array<{ content: string; senderType: string }> }).messages;
     assert.ok(finalHistory.some((message) => message.senderType === SenderType.ASSISTANT && message.content === publishedBody.content));
+
+    for (const status of [
+      QuoteRequestStatus.REQUESTED,
+      QuoteRequestStatus.WAITING_INFORMATION,
+      QuoteRequestStatus.WAITING_BUSINESS,
+      QuoteRequestStatus.RESPONDED,
+      QuoteRequestStatus.CANCELLED,
+      QuoteRequestStatus.CLOSED,
+    ]) {
+      await quoteRequestRepository.save({ ...queueQuote, id: `status-${status}`, status });
+    }
+    const statusesInQueue = (await (await request("/v1/businesses/business-a/quotes/pending")).json() as {
+      items: Array<{ quote: { status: string } }>;
+    }).items.map(({ quote }) => quote.status).sort();
+    assert.deepEqual(statusesInQueue, [
+      QuoteRequestStatus.REQUESTED,
+      QuoteRequestStatus.WAITING_BUSINESS,
+      QuoteRequestStatus.WAITING_INFORMATION,
+    ]);
+    const secondBusinessQueue = await request("/v1/businesses/business-b/quotes/pending");
+    assert.deepEqual(await secondBusinessQueue.json(), { items: [] });
 
     const unknownRoute = await request("/not-a-route");
     assert.equal(unknownRoute.status, 404);
