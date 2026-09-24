@@ -139,6 +139,42 @@ function createSampleItems(): PreviewQuoteItem[] {
 
 let items = createSampleItems();
 
+function createSampleHistories(): Map<string, Array<{
+  id: string;
+  businessId: string;
+  conversationId: string;
+  senderType: "CUSTOMER" | "ASSISTANT";
+  channel: "WEB";
+  content: string;
+  createdAt: string;
+}>> {
+  const message = (
+    conversationId: string,
+    id: string,
+    senderType: "CUSTOMER" | "ASSISTANT",
+    content: string,
+    createdAt: string,
+  ) => ({ id, businessId: BUSINESS_ID, conversationId, senderType, channel: "WEB" as const, content, createdAt });
+
+  return new Map([
+    ["preview-conversation-carlos", [
+      message("preview-conversation-carlos", "preview-carlos-1", "CUSTOMER", "Olá, tenho um Corolla XEi 2020 e preciso trocar as pastilhas de freio.", "2026-09-24T10:12:00.000Z"),
+      message("preview-conversation-carlos", "preview-carlos-2", "ASSISTANT", "Posso registrar seu pedido de orçamento. Vou encaminhar os dados do veículo para a equipe.", "2026-09-24T10:12:08.000Z"),
+      message("preview-conversation-carlos", "preview-carlos-3", "CUSTOMER", "Perfeito, obrigado.", "2026-09-24T10:13:00.000Z"),
+    ]],
+    ["preview-conversation-mariana", [
+      message("preview-conversation-mariana", "preview-mariana-1", "CUSTOMER", "O ar do meu T-Cross parou de gelar.", "2026-09-24T10:28:00.000Z"),
+      message("preview-conversation-mariana", "preview-mariana-2", "ASSISTANT", "Para registrar corretamente, preciso confirmar mais algumas informações. O ar parou de gelar de repente ou foi perdendo a eficiência aos poucos?", "2026-09-24T10:28:10.000Z"),
+    ]],
+    ["preview-conversation-roberto", [
+      message("preview-conversation-roberto", "preview-roberto-1", "CUSTOMER", "Quanto fica para colocar película no meu Onix 2021?", "2026-09-24T10:58:00.000Z"),
+      message("preview-conversation-roberto", "preview-roberto-2", "ASSISTANT", "Vou registrar sua solicitação.", "2026-09-24T10:58:06.000Z"),
+    ]],
+  ]);
+}
+
+const sampleHistories = createSampleHistories();
+
 const server = createServer((request, response) => {
   void handleRequest(request, response).catch(() => {
     sendJson(response, 500, { error: "Internal server error" });
@@ -161,6 +197,18 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse)
       quote.status === QuoteRequestStatus.WAITING_BUSINESS,
     );
     sendJson(response, 200, { items: pending });
+    return;
+  }
+
+  const messagesMatch = pathname.match(/^\/v1\/businesses\/preview-business\/conversations\/([^/]+)\/messages$/);
+  if (request.method === "GET" && messagesMatch) {
+    const conversationId = decodePathPart(messagesMatch[1]);
+    const messages = conversationId === null ? undefined : sampleHistories.get(conversationId);
+    if (!messages) {
+      sendJson(response, 404, { error: "Conversation not found" });
+      return;
+    }
+    sendJson(response, 200, { messages });
     return;
   }
 
@@ -280,4 +328,3 @@ const close = (): void => {
 };
 process.once("SIGINT", close);
 process.once("SIGTERM", close);
-

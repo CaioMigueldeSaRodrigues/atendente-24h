@@ -23,15 +23,15 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
     * { box-sizing: border-box; }
     body { margin: 0; min-width: 320px; }
     header { background: #102d3d; color: #fff; border-bottom: 4px solid #39b98a; }
-    .header-inner, main { width: min(1120px, calc(100% - 40px)); margin: 0 auto; }
-    .header-inner { min-height: 82px; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+    .header-inner, main { width: min(1280px, calc(100% - 40px)); margin: 0 auto; }
+    .header-inner { min-height: 76px; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
     .brand { display: flex; align-items: center; gap: 13px; }
     .brand-mark { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 11px; background: #39b98a; color: #102d3d; font-weight: 800; font-size: 19px; }
     .brand-name { margin: 0; font-size: 18px; letter-spacing: -.03em; }
     .brand-caption { margin: 3px 0 0; color: #c6d5dc; font-size: 12px; }
     .business-name { color: #e3edf0; font-size: 14px; text-align: right; }
-    main { padding: 38px 0 56px; }
-    .page-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; margin-bottom: 25px; }
+    main { padding: 28px 0 42px; }
+    .page-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; margin-bottom: 20px; }
     h1 { margin: 0; font-size: clamp(27px, 4vw, 34px); letter-spacing: -.04em; }
     .subtitle { margin: 8px 0 0; color: #63727d; }
     button { border: 0; border-radius: 9px; padding: 11px 16px; background: #147a5a; color: white; font: inherit; font-weight: 700; cursor: pointer; transition: background .15s ease, transform .15s ease; }
@@ -39,54 +39,96 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
     button:active:not(:disabled) { transform: translateY(1px); }
     button:disabled { cursor: wait; opacity: .65; }
     button:focus-visible, input:focus-visible { outline: 3px solid #f0ae45; outline-offset: 3px; }
-    .summary { display: flex; align-items: center; gap: 14px; padding: 16px 19px; margin-bottom: 18px; border: 1px solid #dce5e9; border-radius: 12px; background: #fff; }
-    .summary-count { color: #147a5a; font-size: 27px; font-weight: 800; line-height: 1; }
-    .summary-label { color: #52616b; font-size: 14px; }
-    .feedback { margin: 0 0 18px; padding: 13px 15px; border-radius: 9px; background: #fff2de; color: #754600; font-size: 14px; }
+    .overview { display: flex; align-items: center; gap: 13px; padding: 13px 16px; margin-bottom: 13px; border: 1px solid #dce5e9; border-radius: 11px; background: #fff; }
+    .summary-count { color: #147a5a; font-size: 24px; font-weight: 800; line-height: 1; }
+    .summary-label { color: #52616b; font-size: 13px; }
+    .feedback { margin: 0 0 14px; padding: 12px 15px; border-radius: 9px; background: #fff2de; color: #754600; font-size: 14px; }
     .feedback[hidden] { display: none; }
     .feedback[data-kind="success"] { background: #e6f7ef; color: #145b3d; }
     .feedback[data-kind="error"] { background: #fff0ee; color: #8a2d25; }
-    .empty-state { padding: 44px 20px; border: 1px dashed #cbd8dd; border-radius: 12px; background: #fff; color: #63727d; text-align: center; }
-    .empty-state strong { display: block; margin-bottom: 6px; color: #243640; font-size: 16px; }
-    .quote-list { display: grid; gap: 15px; }
-    .quote-card { display: grid; grid-template-columns: minmax(0, 1fr) minmax(235px, 285px); gap: 24px; padding: 21px; border: 1px solid #dce5e9; border-radius: 13px; background: #fff; box-shadow: 0 3px 12px #19384a0b; }
-    .card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
-    .customer-name { margin: 0; font-size: 19px; }
-    .contact { margin: 5px 0 0; color: #63727d; font-size: 13px; }
-    .status { display: inline-flex; flex-shrink: 0; padding: 6px 9px; border-radius: 999px; background: #fff2de; color: #80520d; font-size: 12px; font-weight: 700; }
-    .details { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 20px; margin: 21px 0 0; }
-    .detail { min-width: 0; }
-    .detail-label { display: block; margin-bottom: 4px; color: #71808a; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
-    .detail-value { color: #243640; font-size: 14px; overflow-wrap: anywhere; }
-    .request-detail { grid-column: 1 / -1; }
-    .action-panel { align-self: start; padding: 17px; border-radius: 10px; background: #f4f8f7; }
-    .action-panel h3 { margin: 0 0 14px; font-size: 15px; }
+    .workspace { display: grid; grid-template-columns: minmax(275px, 350px) minmax(0, 1fr); gap: 16px; align-items: stretch; min-height: 560px; }
+    .queue-panel, .detail-panel { min-width: 0; overflow: hidden; border: 1px solid #dce5e9; border-radius: 13px; background: #fff; box-shadow: 0 3px 12px #19384a0b; }
+    .queue-panel { display: flex; flex-direction: column; }
+    .panel-heading { margin: 0; padding: 17px 18px 14px; border-bottom: 1px solid #e7edef; color: #52616b; font-size: 12px; font-weight: 750; letter-spacing: .07em; text-transform: uppercase; }
+    .quote-list { display: grid; align-content: start; overflow-y: auto; }
+    .quote-option { width: 100%; display: block; border: 0; border-radius: 0; border-bottom: 1px solid #edf1f2; padding: 15px 17px; background: #fff; color: #243640; text-align: left; }
+    .quote-option:hover { background: #f5faf8; }
+    .quote-option[aria-current="true"] { background: #edf7f3; box-shadow: inset 3px 0 #16805e; }
+    .option-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+    .option-customer { margin: 0; font-size: 14px; font-weight: 750; }
+    .option-request { display: block; margin-top: 7px; color: #63727d; font-size: 12px; line-height: 1.4; }
+    .status { display: inline-flex; flex-shrink: 0; padding: 5px 8px; border-radius: 999px; background: #fff2de; color: #80520d; font-size: 10px; font-weight: 750; }
+    .empty-state, .detail-placeholder { display: grid; min-height: 220px; place-items: center; padding: 25px; color: #63727d; text-align: center; }
+    .empty-state strong { color: #243640; }
+    .detail-panel { display: flex; flex-direction: column; }
+    .detail-placeholder { flex: 1; min-height: 500px; font-size: 15px; }
+    .detail-content { min-height: 0; display: flex; flex-direction: column; }
+    .detail-toolbar { display: flex; align-items: center; gap: 12px; padding: 14px 20px; border-bottom: 1px solid #e7edef; }
+    .back-button { display: none; padding: 8px 10px; background: #eaf1f3; color: #26424e; font-size: 13px; }
+    .back-button:hover:not(:disabled) { background: #dce8eb; }
+    .detail-title { min-width: 0; flex: 1; margin: 0; font-size: 17px; }
+    .detail-status { display: inline-flex; padding: 6px 9px; border-radius: 999px; background: #fff2de; color: #80520d; font-size: 11px; font-weight: 750; }
+    .detail-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; padding: 16px 20px; border-bottom: 1px solid #e7edef; }
+    .info-block { min-width: 0; padding: 13px; border-radius: 9px; background: #f6f8f9; }
+    .info-block h3 { margin: 0 0 10px; color: #52616b; font-size: 11px; letter-spacing: .07em; text-transform: uppercase; }
+    .info-value { margin: 5px 0 0; color: #243640; font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
+    .info-label { color: #71808a; font-size: 11px; }
+    .request-block { grid-column: 1 / -1; }
+    .history-heading { margin: 0; padding: 15px 20px 10px; font-size: 14px; }
+    .history-loading, .history-error, .history-empty { margin: 0; padding: 10px 20px 18px; color: #63727d; font-size: 13px; }
+    .history-error { color: #8a2d25; }
+    .history-error button { margin-left: 9px; padding: 7px 10px; font-size: 12px; }
+    .conversation-history { display: grid; gap: 9px; max-height: 300px; overflow-y: auto; padding: 8px 20px 18px; list-style: none; }
+    .message { max-width: 88%; padding: 10px 12px; border: 1px solid #e3e9eb; border-radius: 10px; background: #f5f7f8; }
+    .message[data-sender="CUSTOMER"] { justify-self: start; border-left: 3px solid #6f8792; background: #f2f5f6; }
+    .message[data-sender="ASSISTANT"] { justify-self: end; border-color: #cce6da; border-right: 3px solid #16805e; background: #eef8f3; }
+    .message[data-sender="HUMAN_AGENT"] { justify-self: end; border-right: 3px solid #527aa2; background: #eef3f8; }
+    .message[data-sender="SYSTEM"] { justify-self: center; max-width: 96%; border-style: dashed; background: #fafafa; }
+    .message-meta { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 5px; color: #61717b; font-size: 10px; font-weight: 700; }
+    .message-time { font-weight: 400; white-space: nowrap; }
+    .message-content { margin: 0; color: #263943; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; white-space: pre-wrap; }
+    .action-panel { margin: 0 20px 20px; padding: 16px; border: 1px solid #d7e6df; border-radius: 10px; background: #f3f8f5; }
+    .action-panel h3 { margin: 0 0 12px; font-size: 14px; }
     .price-label { display: block; margin-bottom: 7px; color: #44545d; font-size: 13px; font-weight: 650; }
-    .price-control { display: flex; align-items: center; margin-bottom: 12px; border: 1px solid #b9c9c7; border-radius: 8px; background: #fff; }
+    .price-control { display: flex; align-items: center; max-width: 290px; margin-bottom: 11px; border: 1px solid #b9c9c7; border-radius: 8px; background: #fff; }
     .price-prefix { padding-left: 12px; color: #52616b; }
-    input { width: 100%; min-width: 0; border: 0; border-radius: 8px; padding: 11px 10px; color: #17212b; font: inherit; background: transparent; }
-    .send-button { width: 100%; }
-    .card-message { min-height: 20px; margin: 10px 0 0; color: #52616b; font-size: 12px; line-height: 1.5; }
-    .card-message[data-kind="error"] { color: #8a2d25; }
-    .card-message[data-kind="success"] { color: #145b3d; }
-    @media (max-width: 720px) {
-      .header-inner, main { width: min(100% - 28px, 560px); }
-      .header-inner { min-height: 72px; }
-      .brand-caption { font-size: 11px; }
-      .business-name { max-width: 42%; font-size: 12px; }
-      main { padding-top: 27px; }
+    input { width: 100%; min-width: 0; border: 0; border-radius: 8px; padding: 10px; color: #17212b; font: inherit; background: transparent; }
+    .send-button { min-width: 190px; }
+    .action-message { min-height: 20px; margin: 9px 0 0; color: #52616b; font-size: 12px; line-height: 1.5; }
+    .action-message[data-kind="error"] { color: #8a2d25; }
+    .action-message[data-kind="success"] { color: #145b3d; }
+    @media (max-width: 850px) {
+      .header-inner, main { width: min(100% - 28px, 680px); }
+      .workspace { display: block; min-height: 0; }
+      .detail-panel { display: none; }
+      body.detail-open > header { display: none; }
+      body.detail-open .page-heading, body.detail-open .overview { display: none; }
+      body.detail-open main { width: 100%; padding: 0; }
+      body.detail-open .feedback { margin: 0; border-radius: 0; }
+      body.detail-open .workspace { min-height: 100dvh; }
+      body.detail-open .queue-panel { display: none; }
+      body.detail-open .detail-panel { display: flex; min-height: 100dvh; border: 0; border-radius: 0; box-shadow: none; }
+      body.detail-open .back-button { display: inline-block; }
+      body.detail-open .detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      body.detail-open .conversation-history { max-height: none; }
+      body.detail-open .detail-content { min-height: 100dvh; }
+    }
+    @media (max-width: 500px) {
+      .header-inner { min-height: 68px; }
+      .business-name { max-width: 42%; font-size: 11px; }
+      main { padding-top: 22px; }
       .page-heading { align-items: flex-start; flex-direction: column; }
       .page-heading button { width: 100%; }
-      .quote-card { grid-template-columns: 1fr; gap: 17px; padding: 17px; }
-      .action-panel { width: 100%; }
-    }
-    @media (max-width: 430px) {
-      .brand-mark { width: 34px; height: 34px; }
-      .brand-name { font-size: 16px; }
-      .business-name { max-width: 38%; font-size: 11px; }
-      .details { grid-template-columns: 1fr; gap: 12px; }
-      .request-detail { grid-column: auto; }
-      .card-top { flex-direction: column; }
+      .detail-toolbar { padding: 11px 13px; }
+      .detail-title { font-size: 15px; }
+      .detail-grid, body.detail-open .detail-grid { grid-template-columns: 1fr 1fr; gap: 8px; padding: 12px; }
+      .info-block { padding: 10px; }
+      .request-block { grid-column: 1 / -1; }
+      .history-heading { padding-left: 13px; }
+      .conversation-history { padding-right: 13px; padding-left: 13px; }
+      .message { max-width: 94%; }
+      .action-panel { margin: 0 12px 14px; }
+      .send-button { width: 100%; }
     }
   </style>
 </head>
@@ -105,20 +147,33 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
       <div><h1 id="page-title">Orçamentos</h1><p class="subtitle">Solicitações que precisam de atenção</p></div>
       <button id="refresh-button" type="button">Atualizar</button>
     </section>
-    <section class="summary" aria-label="Resumo da fila">
-      <span id="queue-count" class="summary-count">—</span>
-      <span class="summary-label">orçamentos na fila</span>
-    </section>
     <div id="feedback" class="feedback" role="status" aria-live="polite" hidden></div>
-    <section id="queue" aria-label="Orçamentos pendentes"></section>
+    <div class="workspace">
+      <aside id="queue-panel" class="queue-panel" aria-label="Fila de orçamentos">
+        <div class="overview">
+          <span id="queue-count" class="summary-count">—</span>
+          <span class="summary-label">solicitações pendentes</span>
+        </div>
+        <h2 class="panel-heading">Solicitações</h2>
+        <div id="queue-list" class="quote-list"></div>
+      </aside>
+      <section id="detail-panel" class="detail-panel" aria-label="Detalhe do atendimento" aria-live="polite">
+        <p id="detail-placeholder" class="detail-placeholder">Selecione um atendimento para ver os detalhes.</p>
+      </section>
+    </div>
   </main>
   <script>
     "use strict";
     const operator = ${safeConfig};
-    const queue = document.getElementById("queue");
-    const count = document.getElementById("queue-count");
+    const queueList = document.getElementById("queue-list");
+    const queueCount = document.getElementById("queue-count");
+    const detailPanel = document.getElementById("detail-panel");
     const feedback = document.getElementById("feedback");
     const refreshButton = document.getElementById("refresh-button");
+    let items = [];
+    let selectedQuoteId = null;
+    let selectedQuoteStatus = null;
+    let historyRequest = 0;
     let sending = false;
     let loading = false;
 
@@ -128,94 +183,315 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
       feedback.hidden = !message;
     }
 
-    function text(value) {
+    function display(value) {
       if (typeof value === "string" && value.trim()) return value;
       if (typeof value === "number" && Number.isFinite(value)) return String(value);
       return "—";
     }
 
-    function addDetail(parent, label, value, extraClass) {
-      const wrapper = document.createElement("div");
-      wrapper.className = extraClass ? "detail " + extraClass : "detail";
-      const labelNode = document.createElement("span");
-      labelNode.className = "detail-label";
-      labelNode.textContent = label;
-      const valueNode = document.createElement("span");
-      valueNode.className = "detail-value";
-      valueNode.textContent = text(value);
-      wrapper.append(labelNode, valueNode);
-      parent.append(wrapper);
-    }
-
     function statusLabel(status) {
       if (status === "WAITING_BUSINESS") return "Aguardando orçamento";
       if (status === "WAITING_INFORMATION") return "Aguardando informações do cliente";
-      if (status === "REQUESTED") return "Solicitado";
+      if (status === "REQUESTED") return "Solicitação recebida";
       return "—";
     }
 
-    function dateLabel(value) {
+    function senderLabel(senderType) {
+      if (senderType === "CUSTOMER") return "Cliente";
+      if (senderType === "ASSISTANT") return "Atendente IA";
+      if (senderType === "HUMAN_AGENT") return "Atendente";
+      if (senderType === "SYSTEM") return "Sistema";
+      return "—";
+    }
+
+    function dateTime(value) {
       if (typeof value !== "string" || !value) return "—";
       const date = new Date(value);
       return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString("pt-BR");
     }
 
+    function addInfo(block, label, value) {
+      const line = document.createElement("p");
+      line.className = "info-value";
+      const labelNode = document.createElement("span");
+      labelNode.className = "info-label";
+      labelNode.textContent = label + ": ";
+      const valueNode = document.createElement("span");
+      valueNode.textContent = display(value);
+      line.append(labelNode, valueNode);
+      block.append(line);
+    }
+
+    function makeInfoBlock(title, pairs, className) {
+      const block = document.createElement("section");
+      block.className = className ? "info-block " + className : "info-block";
+      const heading = document.createElement("h3");
+      heading.textContent = title;
+      block.append(heading);
+      for (const [label, value] of pairs) addInfo(block, label, value);
+      return block;
+    }
+
+    function makeQueueButton(item, index) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "quote-option";
+      button.setAttribute("aria-current", item.quote.id === selectedQuoteId ? "true" : "false");
+      button.setAttribute("aria-controls", "detail-panel");
+      button.id = "quote-option-" + index;
+      const top = document.createElement("span");
+      top.className = "option-heading";
+      const name = document.createElement("span");
+      name.className = "option-customer";
+      name.textContent = display(item.customer && item.customer.name);
+      const status = document.createElement("span");
+      status.className = "status";
+      status.textContent = statusLabel(item.quote.status);
+      top.append(name, status);
+      const request = document.createElement("span");
+      request.className = "option-request";
+      request.textContent = display(item.quote.requestDescription);
+      button.append(top, request);
+      button.addEventListener("click", () => {
+        selectedQuoteId = item.quote.id;
+        selectedQuoteStatus = item.quote.status;
+        renderQueue();
+        renderDetail(item, true);
+      });
+      return button;
+    }
+
+    function renderQueue() {
+      queueCount.textContent = String(items.length);
+      queueList.replaceChildren();
+      if (items.length === 0) {
+        const empty = document.createElement("p");
+        empty.className = "empty-state";
+        empty.textContent = "Nenhum orçamento aguardando atendimento.";
+        queueList.append(empty);
+        return;
+      }
+      items.forEach((item, index) => queueList.append(makeQueueButton(item, index)));
+    }
+
+    function showPlaceholder() {
+      detailPanel.replaceChildren();
+      const placeholder = document.createElement("p");
+      placeholder.id = "detail-placeholder";
+      placeholder.className = "detail-placeholder";
+      placeholder.textContent = "Selecione um atendimento para ver os detalhes.";
+      detailPanel.append(placeholder);
+      document.body.classList.remove("detail-open");
+    }
+
+    function makeBackButton() {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "back-button";
+      button.textContent = "Voltar para orçamentos";
+      button.addEventListener("click", () => {
+        selectedQuoteId = null;
+        selectedQuoteStatus = null;
+        showPlaceholder();
+        renderQueue();
+        const firstOption = queueList.querySelector("button");
+        if (firstOption) firstOption.focus();
+        else refreshButton.focus();
+      });
+      return button;
+    }
+
+    function makeHistoryMessage(message) {
+      const item = document.createElement("li");
+      item.className = "message";
+      item.dataset.sender = ["CUSTOMER", "ASSISTANT", "HUMAN_AGENT", "SYSTEM"].includes(message.senderType)
+        ? message.senderType
+        : "SYSTEM";
+      const meta = document.createElement("div");
+      meta.className = "message-meta";
+      const author = document.createElement("span");
+      author.textContent = senderLabel(message.senderType);
+      const time = document.createElement("time");
+      time.className = "message-time";
+      time.textContent = dateTime(message.createdAt);
+      meta.append(author, time);
+      const content = document.createElement("p");
+      content.className = "message-content";
+      content.textContent = display(message.content);
+      item.append(meta, content);
+      return item;
+    }
+
+    async function loadHistory(item, historyList, historyArea, retryButton) {
+      const currentRequest = ++historyRequest;
+      historyArea.replaceChildren();
+      const loadingMessage = document.createElement("p");
+      loadingMessage.className = "history-loading";
+      loadingMessage.textContent = "Carregando atendimento...";
+      historyArea.append(loadingMessage);
+      try {
+        const path = "/v1/businesses/" + encodeURIComponent(operator.businessId) +
+          "/conversations/" + encodeURIComponent(item.quote.conversationId) + "/messages";
+        const response = await fetch(path);
+        if (!response.ok) throw new Error("history unavailable");
+        const data = await response.json();
+        if (currentRequest !== historyRequest || selectedQuoteId !== item.quote.id) return;
+        const messages = Array.isArray(data && data.messages) ? data.messages : [];
+        historyArea.replaceChildren();
+        if (messages.length === 0) {
+          const empty = document.createElement("p");
+          empty.className = "history-empty";
+          empty.textContent = "Nenhuma mensagem registrada.";
+          historyArea.append(empty);
+        } else {
+          for (const message of messages) historyList.append(makeHistoryMessage(message));
+          historyArea.append(historyList);
+        }
+      } catch {
+        if (currentRequest !== historyRequest || selectedQuoteId !== item.quote.id) return;
+        historyArea.replaceChildren();
+        const error = document.createElement("p");
+        error.className = "history-error";
+        error.setAttribute("role", "alert");
+        error.textContent = "Não foi possível carregar o histórico.";
+        const retry = retryButton();
+        error.append(retry);
+        historyArea.append(error);
+      }
+    }
+
     function priceToCents(value) {
-      const normalized = value.trim();
-      const match = /^(\d+)(?:[,.](\d{1,2}))?$/.exec(normalized);
+      const match = /^(\d+)(?:[,.](\d{1,2}))?$/.exec(value.trim());
       if (!match) return null;
       try {
-        const whole = BigInt(match[1]);
-        const fraction = BigInt((match[2] || "").padEnd(2, "0"));
-        const cents = whole * 100n + fraction;
+        const cents = BigInt(match[1]) * 100n + BigInt((match[2] || "").padEnd(2, "0"));
         if (cents > BigInt(Number.MAX_SAFE_INTEGER)) return null;
-        const result = Number(cents);
-        return Number.isSafeInteger(result) ? result : null;
+        const amount = Number(cents);
+        return Number.isSafeInteger(amount) ? amount : null;
       } catch {
         return null;
       }
     }
 
-    function makeCard(item) {
-      const quote = item.quote || {};
+    async function authorizeAndPublish(item, input, button, message) {
+      const amountCents = priceToCents(input.value);
+      if (amountCents === null) {
+        message.textContent = "Informe um valor válido.";
+        message.dataset.kind = "error";
+        input.focus();
+        return;
+      }
+      if (sending) return;
+      sending = true;
+      button.disabled = true;
+      button.textContent = "Processando...";
+      message.textContent = "Processando...";
+      message.dataset.kind = "info";
+      let priceAuthorized = false;
+      let keepActionDisabled = false;
+      let refreshAfterSuccess = false;
+      const base = "/v1/businesses/" + encodeURIComponent(operator.businessId) +
+        "/quotes/" + encodeURIComponent(item.quote.id);
+      try {
+        const respond = await fetch(base + "/respond", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ amountCents, currency: "BRL" }),
+        });
+        if (!respond.ok) {
+          message.textContent = "Não foi possível autorizar o preço. Verifique os dados e tente novamente.";
+          message.dataset.kind = "error";
+          return;
+        }
+        priceAuthorized = true;
+        const publish = await fetch(base + "/publish", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "{}",
+        });
+        if (!publish.ok) throw new Error("publish failed");
+        setFeedback("Orçamento enviado com sucesso.", "success");
+        refreshAfterSuccess = true;
+      } catch {
+        const error = priceAuthorized
+          ? "Preço autorizado, mas o envio não foi concluído. Não autorize novamente. Verifique o atendimento."
+          : "Não foi possível concluir a operação. Verifique sua conexão e tente novamente.";
+        keepActionDisabled = priceAuthorized;
+        message.textContent = error;
+        message.dataset.kind = "error";
+        setFeedback(error, "error");
+      } finally {
+        sending = false;
+        button.disabled = keepActionDisabled;
+        button.textContent = keepActionDisabled ? "Preço autorizado" : "Autorizar e enviar";
+      }
+      if (refreshAfterSuccess) await loadQueue();
+    }
+
+    function renderDetail(item, moveFocus) {
+      document.body.classList.add("detail-open");
+      const content = document.createElement("div");
+      content.className = "detail-content";
+      const toolbar = document.createElement("div");
+      toolbar.className = "detail-toolbar";
+      toolbar.append(makeBackButton());
+      const title = document.createElement("h2");
+      title.className = "detail-title";
+      title.tabIndex = -1;
+      title.textContent = display(item.customer && item.customer.name);
+      const status = document.createElement("span");
+      status.className = "detail-status";
+      status.textContent = statusLabel(item.quote.status);
+      toolbar.append(title, status);
+
       const customer = item.customer;
       const vehicle = item.vehicle;
-      const card = document.createElement("article");
-      card.className = "quote-card";
-      const details = document.createElement("div");
-      const top = document.createElement("div");
-      top.className = "card-top";
-      const identity = document.createElement("div");
-      const customerName = document.createElement("h2");
-      customerName.className = "customer-name";
-      customerName.textContent = text(customer && customer.name);
-      const contact = document.createElement("p");
-      contact.className = "contact";
-      contact.textContent = text(customer && customer.primaryPhone);
-      identity.append(customerName, contact);
-      const status = document.createElement("span");
-      status.className = "status";
-      status.textContent = statusLabel(quote.status);
-      top.append(identity, status);
-      details.append(top);
+      const grid = document.createElement("div");
+      grid.className = "detail-grid";
+      grid.append(
+        makeInfoBlock("Cliente", [
+          ["Nome", customer && customer.name],
+          ["Telefone", customer && customer.primaryPhone],
+          ["E-mail", customer && customer.email],
+        ]),
+        makeInfoBlock("Veículo", [
+          ["Marca", vehicle && vehicle.brand],
+          ["Modelo", vehicle && vehicle.model],
+          ["Versão", vehicle && vehicle.version],
+          ["Ano", vehicle && vehicle.year],
+          ["Placa", vehicle && vehicle.licensePlate],
+          ["Quilometragem", vehicle && vehicle.mileage],
+        ]),
+        makeInfoBlock("Solicitação", [
+          ["Descrição", item.quote.requestDescription],
+          ["Sintoma", item.quote.symptomDescription],
+          ["Status", statusLabel(item.quote.status)],
+          ["Data/hora", dateTime(item.quote.requestedAt)],
+        ], "request-block"),
+      );
 
-      const fields = document.createElement("div");
-      fields.className = "details";
-      const vehicleName = vehicle ? [vehicle.brand, vehicle.model].filter((part) => typeof part === "string" && part.trim()).join(" ") : "";
-      addDetail(fields, "Veículo", vehicleName || "—");
-      addDetail(fields, "Ano", vehicle && vehicle.year);
-      addDetail(fields, "Versão", vehicle && vehicle.version);
-      addDetail(fields, "Solicitação", quote.requestDescription, "request-detail");
-      addDetail(fields, "Sintoma", quote.symptomDescription, "request-detail");
-      addDetail(fields, "Solicitado em", dateLabel(quote.requestedAt));
-      details.append(fields);
+      const historyHeading = document.createElement("h3");
+      historyHeading.className = "history-heading";
+      historyHeading.textContent = "Histórico do atendimento";
+      const historyArea = document.createElement("div");
+      historyArea.id = "conversation-history";
+      const historyList = document.createElement("ol");
+      historyList.className = "conversation-history";
+      const retryButton = () => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = "Tentar novamente";
+        button.addEventListener("click", () => void loadHistory(item, historyList, historyArea, retryButton));
+        return button;
+      };
 
-      if (quote.status === "WAITING_BUSINESS") {
-        const panel = document.createElement("form");
-        panel.className = "action-panel";
-        const heading = document.createElement("h3");
-        heading.textContent = "Autorizar valor";
-        const inputId = "authorized-price-" + String(quote.id || "quote").replace(/[^a-zA-Z0-9_-]/g, "-");
+      content.append(toolbar, grid, historyHeading, historyArea);
+      if (item.quote.status === "WAITING_BUSINESS") {
+        const action = document.createElement("form");
+        action.className = "action-panel";
+        const actionTitle = document.createElement("h3");
+        actionTitle.textContent = "Autorizar valor";
+        const inputId = "authorized-price";
         const label = document.createElement("label");
         label.className = "price-label";
         label.htmlFor = inputId;
@@ -236,99 +512,50 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
         submit.type = "submit";
         submit.className = "send-button";
         submit.textContent = "Autorizar e enviar";
-        const message = document.createElement("p");
-        message.className = "card-message";
-        message.setAttribute("aria-live", "polite");
-        panel.append(heading, label, control, submit, message);
-        panel.addEventListener("submit", (event) => {
+        const actionMessage = document.createElement("p");
+        actionMessage.className = "action-message";
+        actionMessage.setAttribute("aria-live", "polite");
+        action.append(actionTitle, label, control, submit, actionMessage);
+        action.addEventListener("submit", (event) => {
           event.preventDefault();
-          void authorizeAndPublish(String(quote.id || ""), input, submit, message);
+          void authorizeAndPublish(item, input, submit, actionMessage);
         });
-        card.append(details, panel);
-      } else {
-        card.append(details);
+        content.append(action);
+      } else if (item.quote.status === "WAITING_INFORMATION" || item.quote.status === "REQUESTED") {
+        const statusMessage = document.createElement("p");
+        statusMessage.className = "history-empty";
+        statusMessage.textContent = statusLabel(item.quote.status);
+        content.append(statusMessage);
       }
-      return card;
-    }
-
-    async function authorizeAndPublish(quoteId, input, button, message) {
-      const amountCents = priceToCents(input.value);
-      if (amountCents === null) {
-        message.textContent = "Informe um valor válido.";
-        message.dataset.kind = "error";
-        input.focus();
-        return;
-      }
-      if (!quoteId || sending) return;
-      sending = true;
-      button.disabled = true;
-      button.textContent = "Processando...";
-      message.textContent = "Processando...";
-      message.dataset.kind = "info";
-      let priceAuthorized = false;
-      const base = "/v1/businesses/" + encodeURIComponent(operator.businessId) + "/quotes/" + encodeURIComponent(quoteId);
-      try {
-        const respond = await fetch(base + "/respond", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ amountCents, currency: "BRL" })
-        });
-        if (!respond.ok) {
-          message.textContent = "Não foi possível autorizar o preço. Verifique os dados e tente novamente.";
-          message.dataset.kind = "error";
-          return;
-        }
-        priceAuthorized = true;
-        const publish = await fetch(base + "/publish", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: "{}"
-        });
-        if (!publish.ok) throw new Error("publish failed");
-        message.textContent = "Orçamento enviado com sucesso.";
-        message.dataset.kind = "success";
-        setFeedback("Orçamento enviado com sucesso.", "success");
-        await loadQueue();
-      } catch {
-        const error = priceAuthorized
-          ? "Preço autorizado, mas o envio não foi concluído. Não autorize novamente. Verifique o atendimento."
-          : "Não foi possível concluir a operação. Verifique sua conexão e tente novamente.";
-        message.textContent = error;
-        message.dataset.kind = "error";
-        setFeedback(error, "error");
-      } finally {
-        sending = false;
-        button.disabled = false;
-        button.textContent = "Autorizar e enviar";
-      }
+      detailPanel.replaceChildren(content);
+      void loadHistory(item, historyList, historyArea, retryButton);
+      if (moveFocus) title.focus({ preventScroll: true });
     }
 
     async function loadQueue() {
       if (loading || sending) return;
       loading = true;
       refreshButton.disabled = true;
-      const previousKind = feedback.dataset.kind;
+      const previousFeedbackKind = feedback.dataset.kind;
       try {
-        const response = await fetch("/v1/businesses/" + encodeURIComponent(operator.businessId) + "/quotes/pending");
-        if (!response.ok) throw new Error("load failed");
+        const path = "/v1/businesses/" + encodeURIComponent(operator.businessId) + "/quotes/pending";
+        const response = await fetch(path);
+        if (!response.ok) throw new Error("queue unavailable");
         const data = await response.json();
-        const items = Array.isArray(data && data.items) ? data.items : [];
-        count.textContent = String(items.length);
-        queue.replaceChildren();
-        if (items.length === 0) {
-          const empty = document.createElement("div");
-          empty.className = "empty-state";
-          const title = document.createElement("strong");
-          title.textContent = "Nenhum orçamento aguardando atendimento.";
-          empty.append(title);
-          queue.append(empty);
-        } else {
-          const list = document.createElement("div");
-          list.className = "quote-list";
-          for (const item of items) list.append(makeCard(item));
-          queue.append(list);
+        items = Array.isArray(data && data.items) ? data.items : [];
+        renderQueue();
+        const selected = items.find((item) => item.quote.id === selectedQuoteId);
+        if (selected) {
+          if (selected.quote.status !== selectedQuoteStatus) {
+            selectedQuoteStatus = selected.quote.status;
+            renderDetail(selected, false);
+          }
+        } else if (selectedQuoteId !== null) {
+          selectedQuoteId = null;
+          selectedQuoteStatus = null;
+          showPlaceholder();
         }
-        if (previousKind === "load-error") setFeedback("", "info");
+        if (previousFeedbackKind === "load-error") setFeedback("", "info");
       } catch {
         setFeedback("Não foi possível carregar os orçamentos.", "load-error");
         const retry = document.createElement("button");
@@ -343,6 +570,7 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
     }
 
     refreshButton.addEventListener("click", () => void loadQueue());
+    renderQueue();
     void loadQueue();
     window.setInterval(() => {
       if (!sending) void loadQueue();

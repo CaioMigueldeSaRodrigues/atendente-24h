@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { AddressInfo } from "node:net";
+import { Script } from "node:vm";
 import type { AutomotiveBusiness } from "../../src/core/domain/entities.js";
 import { BusinessType, Channel, Intent, SenderType, QuoteRequestStatus } from "../../src/core/domain/enums.js";
 import type { AIInterpretation } from "../../src/core/domain/types.js";
@@ -81,8 +82,17 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
     assert.match(operatorHtml, /Ampliview/);
     assert.match(operatorHtml, /Oficina A/);
     assert.match(operatorHtml, /Orçamentos/);
+    assert.match(operatorHtml, /id="queue-panel"/);
+    assert.match(operatorHtml, /id="detail-panel"/);
+    assert.match(operatorHtml, /historyArea\.id = "conversation-history"/);
+    assert.match(operatorHtml, /Carregando atendimento/);
+    assert.match(operatorHtml, /Atendente IA/);
+    assert.doesNotMatch(operatorHtml, /innerHTML/);
     assert.doesNotMatch(operatorHtml, /super-secret-test-key|GROQ_API_KEY/);
     assert.match(operatorHtml, /meta name="viewport"/);
+    const operatorScript = operatorHtml.match(/<script>([\s\S]*?)<\/script>/)?.[1];
+    assert.ok(operatorScript);
+    assert.doesNotThrow(() => new Script(operatorScript));
 
     const maliciousNameServer = createBasicPlanHttpServer({
       ...serverDependencies,
@@ -97,6 +107,9 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
       const maliciousHtml = await (await fetch(`http://127.0.0.1:${maliciousAddress.port}/operator`)).text();
       assert.equal(maliciousHtml.includes("<script>alert(1)</script>"), false);
       assert.match(maliciousHtml, /\\u003c\/script\\u003e/);
+      const maliciousScript = maliciousHtml.match(/<script>([\s\S]*?)<\/script>/)?.[1];
+      assert.ok(maliciousScript);
+      assert.doesNotThrow(() => new Script(maliciousScript));
     } finally {
       await new Promise<void>((resolve) => {
         if (!maliciousNameServer.listening) return resolve();
