@@ -1,11 +1,32 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { resolve } from "node:path";
 import { QuoteRequestStatus } from "../core/domain/enums.js";
+import { renderAmpliviewAdminUi, type AmpliviewAdminDemoData } from "../infrastructure/http/ampliview-admin-ui.js";
+import { renderBasicPlanAuthUi } from "../infrastructure/http/basic-plan-auth-ui.js";
 import { renderBasicPlanOperatorUi } from "../infrastructure/http/basic-plan-operator-ui.js";
 
 const HOST = "127.0.0.1";
 const PORT = 3001;
 const BUSINESS_ID = "preview-business";
 const MAX_BODY_BYTES = 1024 * 1024;
+
+const adminDemoData: AmpliviewAdminDemoData = {
+  overview: { attendances: 1284, requestedQuotes: 382, respondedQuotes: 291, authorizedAmountCents: 18475000, activeBusinesses: 12 },
+  conversations: [
+    { business: "Oficina Prime", channel: "WhatsApp", customer: "Carlos Almeida", vehicle: "Toyota Corolla 2020", intent: "Orçamento", requestedItem: "Pastilhas de freio", outcome: "Orçamento respondido", occurredAt: "24 set, 10:15" },
+    { business: "Auto Glass Campinas", channel: "Web", customer: "Mariana Souza", vehicle: "Volkswagen T-Cross 2023", intent: "Serviço", requestedItem: "Revisão do ar-condicionado", outcome: "Aguardando informações", occurredAt: "24 set, 10:30" },
+    { business: "ClimaCar", channel: "WhatsApp", customer: "Roberto Lima", vehicle: "Chevrolet Onix 2021", intent: "Orçamento", requestedItem: "Película automotiva", outcome: "Solicitação recebida", occurredAt: "24 set, 11:00" },
+    { business: "Oficina Prime", channel: "Web", customer: "Ana Costa", vehicle: "Honda Fit 2019", intent: "Serviço", requestedItem: "Higienização de ar-condicionado", outcome: "Atendimento concluído", occurredAt: "23 set, 16:42" },
+  ],
+  recurringProblems: [
+    { category: "Ar-condicionado", items: [{ label: "Não gela", count: 38 }, { label: "Gela pouco", count: 24 }, { label: "Mau cheiro", count: 17 }, { label: "Ruído", count: 11 }] },
+    { category: "Freios", items: [{ label: "Barulho ao frear", count: 31 }, { label: "Trepidação", count: 15 }, { label: "Pedal baixo", count: 12 }] },
+  ],
+  demand: [{ item: "Película automotiva", count: 185 }, { item: "Pastilhas de freio", count: 142 }, { item: "Higienização de ar-condicionado", count: 96 }, { item: "Baterias", count: 81 }, { item: "Pneus", count: 74 }],
+  merchandising: [{ item: "Higienização A/C", interests: 74, offers: 18, opportunities: 56 }, { item: "Palhetas", interests: 61, offers: 9, opportunities: 52 }, { item: "Película premium", interests: 48, offers: 12, opportunities: 36 }],
+  insights: [{ title: "Demanda não explorada", description: "Clientes que procuram serviços de ar-condicionado demonstram interesse recorrente em higienização." }],
+  businesses: [{ name: "Oficina Prime", type: "AUTO_CENTER", attendances: 316, quotes: 92, lastActivity: "Hoje, 10:15" }, { name: "Auto Glass Campinas", type: "AUTO_GLASS", attendances: 204, quotes: 48, lastActivity: "Hoje, 09:42" }, { name: "ClimaCar", type: "AIR_CONDITIONING", attendances: 178, quotes: 61, lastActivity: "Ontem, 17:20" }],
+};
 
 type PreviewQuoteItem = {
   quote: {
@@ -175,7 +196,7 @@ function createSampleHistories(): Map<string, Array<{
 
 const sampleHistories = createSampleHistories();
 
-const server = createServer((request, response) => {
+export const server = createServer((request, response) => {
   void handleRequest(request, response).catch(() => {
     sendJson(response, 500, { error: "Internal server error" });
   });
@@ -183,6 +204,27 @@ const server = createServer((request, response) => {
 
 async function handleRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
   const pathname = new URL(request.url ?? "/", `http://${HOST}:${PORT}`).pathname;
+  if (request.method === "GET" && pathname === "/") {
+    response.writeHead(302, { Location: "/login" });
+    response.end();
+    return;
+  }
+  if (request.method === "GET" && pathname === "/login") {
+    sendHtml(response, renderBasicPlanAuthUi("login"));
+    return;
+  }
+  if (request.method === "GET" && pathname === "/cadastro") {
+    sendHtml(response, renderBasicPlanAuthUi("register"));
+    return;
+  }
+  if (request.method === "GET" && pathname === "/admin/login") {
+    sendHtml(response, renderBasicPlanAuthUi("admin-login"));
+    return;
+  }
+  if (request.method === "GET" && pathname === "/admin") {
+    sendHtml(response, renderAmpliviewAdminUi(adminDemoData));
+    return;
+  }
   if (request.method === "GET" && pathname === "/operator") {
     items = createSampleItems();
     response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
@@ -306,6 +348,11 @@ function sendJson(response: ServerResponse, statusCode: number, value: unknown):
   response.end(JSON.stringify(value));
 }
 
+function sendHtml(response: ServerResponse, html: string): void {
+  response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+  response.end(html);
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -319,12 +366,11 @@ function decodePathPart(value: string | undefined): string | null {
   }
 }
 
-server.listen(PORT, HOST, () => {
-  console.log(`Operator preview: http://${HOST}:${PORT}/operator`);
-});
-
-const close = (): void => {
-  server.close();
-};
-process.once("SIGINT", close);
-process.once("SIGTERM", close);
+if (process.argv[1] && resolve(process.argv[1]) === resolve(__filename)) {
+  server.listen(PORT, HOST, () => {
+    console.log(`Operator preview: http://${HOST}:${PORT}/operator`);
+  });
+  const close = (): void => { server.close(); };
+  process.once("SIGINT", close);
+  process.once("SIGTERM", close);
+}
