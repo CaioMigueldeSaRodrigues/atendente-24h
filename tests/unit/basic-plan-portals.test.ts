@@ -49,11 +49,17 @@ test("preview serves the workshop portals and internal Ampliview portal", async 
     const adminHtml = await admin.text();
     assert.equal(admin.status, 200);
     assert.match(admin.headers.get("content-type") ?? "", /text\/html/);
-    for (const section of ["Visão Geral", "Atendimentos", "Problemas Recorrentes", "Demanda", "Merchandising", "Empresas"]) {
+    for (const section of ["Visão Geral", "Atendimentos", "Saúde do Atendente", "Adesão e Cobertura", "Demanda", "Merchandising", "Empresas"]) {
       assert.ok(adminHtml.includes(section), `missing ${section}`);
     }
     assert.match(adminHtml, /Dados de demonstração/);
     assert.match(adminHtml, /ainda não representam dados reais da operação/);
+    assert.match(adminHtml, /Baixa confiança/);
+    assert.match(adminHtml, /Falha de integração/);
+    assert.match(adminHtml, /Déficits de cobertura/);
+    assert.match(adminHtml, /Demandas em crescimento/);
+    assert.match(adminHtml, /Gap comercial/);
+    assert.doesNotMatch(adminHtml, /Barulho ao frear|Não gela|Pedal baixo/);
     assert.doesNotMatch(adminHtml, /GROQ_API_KEY|dummy-secret|stack trace|localStorage|sessionStorage/);
 
     const operator = await fetch(`${base}/operator`);
@@ -70,13 +76,26 @@ test("preview serves the workshop portals and internal Ampliview portal", async 
 test("admin renderer safely serializes untrusted demo values", () => {
   const maliciousName = "</script><script>alert(1)</script>";
   const demo: AmpliviewAdminDemoData = {
-    overview: { attendances: 1, requestedQuotes: 1, respondedQuotes: 1, authorizedAmountCents: 0, activeBusinesses: 1 },
-    conversations: [],
-    recurringProblems: [],
+    overview: {
+      activeBusinesses: 1,
+      attendances: 1,
+      commercialRequests: 1,
+      respondedQuotes: 1,
+      authorizedAmountCents: 0,
+      aiResolutionPercent: 0,
+      attendancePeriods: [],
+      businessesByRegion: [],
+      channels: [],
+      commercialResults: [],
+      operationalAlerts: [],
+    },
+    attendances: [],
+    assistantHealth: { issues: [], causes: [] },
+    regionalAdoption: [],
+    coverageDeficits: [],
     demand: [],
-    merchandising: [],
-    insights: [],
-    businesses: [{ name: maliciousName, type: "OTHER", attendances: 0, quotes: 0, lastActivity: "—" }],
+    merchandising: { unexploredDemand: [], opportunitiesByRegion: [], opportunitiesBySegment: [], productTrends: [] },
+    businesses: [{ name: maliciousName, type: "OTHER", city: "", state: "", region: "", attendances: 0, requests: 0, conversion: "—", lastActivity: "—" }],
   };
   const html = renderAmpliviewAdminUi(demo);
   assert.ok(html.includes("\\u003c/script>\\u003cscript>alert(1)\\u003c/script>"));

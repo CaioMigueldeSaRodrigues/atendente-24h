@@ -11,21 +11,67 @@ const BUSINESS_ID = "preview-business";
 const MAX_BODY_BYTES = 1024 * 1024;
 
 const adminDemoData: AmpliviewAdminDemoData = {
-  overview: { attendances: 1284, requestedQuotes: 382, respondedQuotes: 291, authorizedAmountCents: 18475000, activeBusinesses: 12 },
-  conversations: [
+  overview: {
+    activeBusinesses: 12,
+    attendances: 1284,
+    commercialRequests: 382,
+    respondedQuotes: 291,
+    authorizedAmountCents: 18475000,
+    aiResolutionPercent: 72,
+    attendancePeriods: [{ label: "Seg", count: 164 }, { label: "Ter", count: 188 }, { label: "Qua", count: 205 }, { label: "Qui", count: 193 }, { label: "Sex", count: 231 }, { label: "Sáb", count: 147 }],
+    businessesByRegion: [{ region: "Sudeste", count: 7 }, { region: "Sul", count: 2 }, { region: "Nordeste", count: 1 }, { region: "Centro-Oeste", count: 1 }, { region: "Norte", count: 1 }],
+    channels: [{ channel: "WhatsApp", count: 746 }, { channel: "Web", count: 412 }, { channel: "Voz", count: 126 }],
+    commercialResults: [{ result: "Orçamentos respondidos", count: 291 }, { result: "Aguardando empresa", count: 54 }, { result: "Transferidos para atendente", count: 37 }],
+    operationalAlerts: [{ label: "Atendimentos com baixa confiança", count: 7 }, { label: "Falhas de integração", count: 3 }, { label: "Handoffs por informação indisponível", count: 5 }, { label: "Falhas de publicação de orçamento", count: 2 }],
+  },
+  attendances: [
     { business: "Oficina Prime", channel: "WhatsApp", customer: "Carlos Almeida", vehicle: "Toyota Corolla 2020", intent: "Orçamento", requestedItem: "Pastilhas de freio", outcome: "Orçamento respondido", occurredAt: "24 set, 10:15" },
     { business: "Auto Glass Campinas", channel: "Web", customer: "Mariana Souza", vehicle: "Volkswagen T-Cross 2023", intent: "Serviço", requestedItem: "Revisão do ar-condicionado", outcome: "Aguardando informações", occurredAt: "24 set, 10:30" },
     { business: "ClimaCar", channel: "WhatsApp", customer: "Roberto Lima", vehicle: "Chevrolet Onix 2021", intent: "Orçamento", requestedItem: "Película automotiva", outcome: "Solicitação recebida", occurredAt: "24 set, 11:00" },
     { business: "Oficina Prime", channel: "Web", customer: "Ana Costa", vehicle: "Honda Fit 2019", intent: "Serviço", requestedItem: "Higienização de ar-condicionado", outcome: "Atendimento concluído", occurredAt: "23 set, 16:42" },
   ],
-  recurringProblems: [
-    { category: "Ar-condicionado", items: [{ label: "Não gela", count: 38 }, { label: "Gela pouco", count: 24 }, { label: "Mau cheiro", count: 17 }, { label: "Ruído", count: 11 }] },
-    { category: "Freios", items: [{ label: "Barulho ao frear", count: 31 }, { label: "Trepidação", count: 15 }, { label: "Pedal baixo", count: 12 }] },
+  assistantHealth: {
+    issues: [
+      { issue: "Baixa confiança", occurrences: 18, percent: "1,4%", businessesAffected: 6, trend: "↓ 12%" },
+      { issue: "Falha da IA", occurrences: 9, percent: "0,7%", businessesAffected: 4, trend: "↓ 5%" },
+      { issue: "Falha de integração", occurrences: 6, percent: "0,5%", businessesAffected: 3, trend: "—" },
+      { issue: "Informação indisponível", occurrences: 14, percent: "1,1%", businessesAffected: 8, trend: "↑ 8%" },
+      { issue: "Preço indisponível", occurrences: 11, percent: "0,9%", businessesAffected: 5, trend: "↑ 3%" },
+      { issue: "Transferência para humano", occurrences: 22, percent: "1,7%", businessesAffected: 7, trend: "↓ 2%" },
+      { issue: "Falha ao enviar orçamento", occurrences: 2, percent: "0,2%", businessesAffected: 1, trend: "—" },
+    ],
+    causes: ["Informação de preço não cadastrada", "Integração indisponível", "Mensagem ambígua", "Dados insuficientes do veículo", "Resposta do provedor de IA indisponível"],
+  },
+  regionalAdoption: [
+    { region: "Sudeste", activeBusinesses: 7, newBusinesses: 3, segments: ["AUTO_CENTER", "WORKSHOP", "WINDOW_TINT"], penetrationPercent: 58, trend: "↑ 9%" },
+    { region: "Sul", activeBusinesses: 2, newBusinesses: 1, segments: ["AUTO_GLASS", "WORKSHOP"], penetrationPercent: 18, trend: "↑ 5%" },
+    { region: "Nordeste", activeBusinesses: 1, newBusinesses: 1, segments: ["BATTERY"], penetrationPercent: 10, trend: "↑ 4%" },
+    { region: "Centro-Oeste", activeBusinesses: 1, newBusinesses: 0, segments: ["AUTO_CENTER"], penetrationPercent: 8, trend: "—" },
+    { region: "Norte", activeBusinesses: 1, newBusinesses: 0, segments: ["AIR_CONDITIONING"], penetrationPercent: 6, trend: "↑ 1%" },
   ],
-  demand: [{ item: "Película automotiva", count: 185 }, { item: "Pastilhas de freio", count: 142 }, { item: "Higienização de ar-condicionado", count: 96 }, { item: "Baterias", count: 81 }, { item: "Pneus", count: 74 }],
-  merchandising: [{ item: "Higienização A/C", interests: 74, offers: 18, opportunities: 56 }, { item: "Palhetas", interests: 61, offers: 9, opportunities: 52 }, { item: "Película premium", interests: 48, offers: 12, opportunities: 36 }],
-  insights: [{ title: "Demanda não explorada", description: "Clientes que procuram serviços de ar-condicionado demonstram interesse recorrente em higienização." }],
-  businesses: [{ name: "Oficina Prime", type: "AUTO_CENTER", attendances: 316, quotes: 92, lastActivity: "Hoje, 10:15" }, { name: "Auto Glass Campinas", type: "AUTO_GLASS", attendances: 204, quotes: 48, lastActivity: "Hoje, 09:42" }, { name: "ClimaCar", type: "AIR_CONDITIONING", attendances: 178, quotes: 61, lastActivity: "Ontem, 17:20" }],
+  coverageDeficits: [
+    { area: "Interior de SP", signal: "Alta demanda", coverage: "Cobertura moderada" },
+    { area: "Sul de Minas", signal: "Demanda crescente", coverage: "Baixa cobertura" },
+    { area: "Campinas e região", signal: "Boa cobertura", coverage: "Crescimento acelerado" },
+    { area: "Curitiba e região", signal: "Procura por vidraçarias automotivas", coverage: "Cobertura baixa" },
+  ],
+  demand: [
+    { item: "Película automotiva", volume: 185, changePercent: 18, regions: ["Sudeste"], segments: ["WINDOW_TINT", "AUTO_CENTER"] },
+    { item: "Baterias", volume: 81, changePercent: 11, regions: ["Sudeste", "Sul"], segments: ["BATTERY", "AUTO_CENTER"] },
+    { item: "Ar-condicionado", volume: 96, changePercent: 24, regions: ["Sudeste"], segments: ["AIR_CONDITIONING", "WORKSHOP"] },
+    { item: "Pneus", volume: 74, changePercent: 7, regions: ["Sul", "Sudeste"], segments: ["TIRES_WHEELS"] },
+  ],
+  merchandising: {
+    unexploredDemand: [{ item: "Higienização A/C", interests: 74, offers: 18, conversions: 9, gap: 56 }, { item: "Palhetas", interests: 61, offers: 9, conversions: 4, gap: 52 }, { item: "Película premium", interests: 48, offers: 12, conversions: 7, gap: 36 }],
+    opportunitiesByRegion: [{ region: "Sul de Minas", segment: "Ar-condicionado", demand: "Demanda crescente", coverage: "Cobertura baixa" }, { region: "Interior de SP", segment: "Películas", demand: "Demanda alta", coverage: "Cobertura média" }, { region: "Campinas", segment: "Auto Glass", demand: "Procura crescente", coverage: "Cobertura baixa" }],
+    opportunitiesBySegment: [{ segment: "AUTO_CENTER", signal: "Alta demanda / boa adesão" }, { segment: "AIR_CONDITIONING", signal: "Demanda crescente / cobertura moderada" }, { segment: "AUTO_GLASS", signal: "Demanda crescente / baixa adesão" }, { segment: "WINDOW_TINT", signal: "Alta procura / conversão abaixo da média" }],
+    productTrends: [{ item: "Ar-condicionado", changePercent: 24 }, { item: "Película", changePercent: 18 }, { item: "Baterias", changePercent: 11 }, { item: "Pneus", changePercent: 7 }],
+  },
+  businesses: [
+    { name: "Oficina Prime", type: "AUTO_CENTER", city: "Campinas", state: "SP", region: "Sudeste", attendances: 316, requests: 92, conversion: "68%", lastActivity: "Hoje, 10:15" },
+    { name: "Auto Glass Campinas", type: "AUTO_GLASS", city: "Campinas", state: "SP", region: "Sudeste", attendances: 204, requests: 48, conversion: "61%", lastActivity: "Hoje, 09:42" },
+    { name: "ClimaCar", type: "AIR_CONDITIONING", city: "Belo Horizonte", state: "MG", region: "Sudeste", attendances: 178, requests: 61, conversion: "73%", lastActivity: "Ontem, 17:20" },
+  ],
 };
 
 type PreviewQuoteItem = {
