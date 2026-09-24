@@ -1,8 +1,10 @@
 import type {
   Appointment,
+  AssistantHealthEvent,
   AutomotiveBusiness,
   CatalogItem,
   Conversation,
+  CommercialEvent,
   Customer,
   HumanHandoff,
   Message,
@@ -12,9 +14,11 @@ import type {
 } from "./domain/entities.js";
 import type {
   AppointmentRepository,
+  AssistantHealthEventRepository,
   AutomotiveBusinessRepository,
   CatalogItemRepository,
   ConversationRepository,
+  CommercialEventRepository,
   CustomerRepository,
   HumanHandoffRepository,
   MessageRepository,
@@ -22,6 +26,74 @@ import type {
   QuoteRequestRepository,
   VehicleRepository,
 } from "./repositories.js";
+
+function compareEventOrder(left: { occurredAt: string; id: string }, right: { occurredAt: string; id: string }): number {
+  if (left.occurredAt !== right.occurredAt) return left.occurredAt < right.occurredAt ? -1 : 1;
+  if (left.id === right.id) return 0;
+  return left.id < right.id ? -1 : 1;
+}
+
+function cloneCommercialEvent(event: CommercialEvent): CommercialEvent {
+  return { ...event, ...(event.amount ? { amount: { ...event.amount } } : {}) };
+}
+
+function cloneAssistantHealthEvent(event: AssistantHealthEvent): AssistantHealthEvent {
+  return { ...event };
+}
+
+export class InMemoryCommercialEventRepository implements CommercialEventRepository {
+  private readonly events = new Map<string, Map<string, CommercialEvent>>();
+
+  async append(event: CommercialEvent): Promise<void> {
+    if (event.amount !== undefined &&
+      (!Number.isSafeInteger(event.amount.amountCents) || event.amount.amountCents < 0 || event.amount.currency !== "BRL")) {
+      throw new Error("Failed to append CommercialEvent");
+    }
+    let businessEvents = this.events.get(event.businessId);
+    if (!businessEvents) {
+      businessEvents = new Map<string, CommercialEvent>();
+      this.events.set(event.businessId, businessEvents);
+    }
+    if (businessEvents.has(event.id)) throw new Error("Failed to append CommercialEvent");
+    businessEvents.set(event.id, cloneCommercialEvent(event));
+  }
+
+  async listByBusiness(businessId: string): Promise<CommercialEvent[]> {
+    return [...(this.events.get(businessId)?.values() ?? [])]
+      .sort(compareEventOrder).map(cloneCommercialEvent);
+  }
+
+  async listByConversation(businessId: string, conversationId: string): Promise<CommercialEvent[]> {
+    return [...(this.events.get(businessId)?.values() ?? [])]
+      .filter((event) => event.businessId === businessId && event.conversationId === conversationId)
+      .sort(compareEventOrder).map(cloneCommercialEvent);
+  }
+}
+
+export class InMemoryAssistantHealthEventRepository implements AssistantHealthEventRepository {
+  private readonly events = new Map<string, Map<string, AssistantHealthEvent>>();
+
+  async append(event: AssistantHealthEvent): Promise<void> {
+    let businessEvents = this.events.get(event.businessId);
+    if (!businessEvents) {
+      businessEvents = new Map<string, AssistantHealthEvent>();
+      this.events.set(event.businessId, businessEvents);
+    }
+    if (businessEvents.has(event.id)) throw new Error("Failed to append AssistantHealthEvent");
+    businessEvents.set(event.id, cloneAssistantHealthEvent(event));
+  }
+
+  async listByBusiness(businessId: string): Promise<AssistantHealthEvent[]> {
+    return [...(this.events.get(businessId)?.values() ?? [])]
+      .sort(compareEventOrder).map(cloneAssistantHealthEvent);
+  }
+
+  async listByConversation(businessId: string, conversationId: string): Promise<AssistantHealthEvent[]> {
+    return [...(this.events.get(businessId)?.values() ?? [])]
+      .filter((event) => event.businessId === businessId && event.conversationId === conversationId)
+      .sort(compareEventOrder).map(cloneAssistantHealthEvent);
+  }
+}
 
 export class InMemoryAutomotiveBusinessRepository
   implements AutomotiveBusinessRepository

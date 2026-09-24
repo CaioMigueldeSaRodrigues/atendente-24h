@@ -2,7 +2,9 @@ import type {
   BusinessType,
   CatalogItemKind,
   Channel,
+  CommercialEventType,
   CommercialOutcome,
+  AssistantHealthEventType,
   ConversationStatus,
   AppointmentStatus,
   HandoffReason,
@@ -154,4 +156,50 @@ export type HumanHandoff = {
   resolvedAt?: string;
   createdAt: string;
   updatedAt: string;
+};
+
+export type CommercialEvent = {
+  id: string;
+  businessId: string;
+  eventType: CommercialEventType;
+  conversationId?: string;
+  customerId?: string;
+  vehicleId?: string;
+  opportunityId?: string;
+  quoteRequestId?: string;
+  channel?: Channel;
+  intent?: Intent;
+  commercialOutcome?: CommercialOutcome;
+  businessType?: BusinessType;
+  country?: string;
+  state?: string;
+  city?: string;
+  region?: string;
+  category?: string;
+  requestedItem?: string;
+  symptom?: string;
+  vehicleBrand?: string;
+  vehicleModel?: string;
+  vehicleYear?: number;
+  amount?: Money;
+  occurredAt: string;
+};
+
+export type AssistantHealthEvent = {
+  id: string;
+  businessId: string;
+  eventType: AssistantHealthEventType;
+  conversationId?: string;
+  opportunityId?: string;
+  quoteRequestId?: string;
+  channel?: Channel;
+  businessType?: BusinessType;
+  country?: string;
+  state?: string;
+  city?: string;
+  region?: string;
+  provider?: string;
+  model?: string;
+  reason?: string;
+  occurredAt: string;
 };

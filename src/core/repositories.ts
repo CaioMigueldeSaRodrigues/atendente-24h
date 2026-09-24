@@ -1,8 +1,10 @@
 import type {
   Appointment,
+  AssistantHealthEvent,
   AutomotiveBusiness,
   CatalogItem,
   Conversation,
+  CommercialEvent,
   Customer,
   HumanHandoff,
   Message,
@@ -10,6 +12,18 @@ import type {
   QuoteRequest,
   Vehicle,
 } from "./domain/entities.js";
+
+export interface CommercialEventRepository {
+  append(event: CommercialEvent): Promise<void>;
+  listByBusiness(businessId: string): Promise<CommercialEvent[]>;
+  listByConversation(businessId: string, conversationId: string): Promise<CommercialEvent[]>;
+}
+
+export interface AssistantHealthEventRepository {
+  append(event: AssistantHealthEvent): Promise<void>;
+  listByBusiness(businessId: string): Promise<AssistantHealthEvent[]>;
+  listByConversation(businessId: string, conversationId: string): Promise<AssistantHealthEvent[]>;
+}
 
 export interface AutomotiveBusinessRepository {
   findById(id: string): Promise<AutomotiveBusiness | null>;

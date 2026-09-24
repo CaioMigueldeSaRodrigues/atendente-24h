@@ -14,7 +14,9 @@ test("creates an in-memory database and initializes the schema", () => {
     `).all().map((table) => ({ ...table }));
 
     assert.deepEqual(tables, [
+      { name: "assistant_health_events" },
       { name: "automotive_businesses" },
+      { name: "commercial_events" },
       { name: "conversations" },
       { name: "customers" },
       { name: "messages" },

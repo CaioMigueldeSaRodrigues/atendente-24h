@@ -175,6 +175,93 @@ const INITIAL_SCHEMA = `
     ON quote_requests (business_id, vehicle_id);
   CREATE INDEX IF NOT EXISTS quote_requests_business_status_idx
     ON quote_requests (business_id, status);
+
+  CREATE TABLE IF NOT EXISTS commercial_events (
+    id TEXT NOT NULL,
+    business_id TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    conversation_id TEXT,
+    customer_id TEXT,
+    vehicle_id TEXT,
+    opportunity_id TEXT,
+    quote_request_id TEXT,
+    channel TEXT,
+    intent TEXT,
+    commercial_outcome TEXT,
+    business_type TEXT,
+    country TEXT,
+    state TEXT,
+    city TEXT,
+    region TEXT,
+    category TEXT,
+    requested_item TEXT,
+    symptom TEXT,
+    vehicle_brand TEXT,
+    vehicle_model TEXT,
+    vehicle_year INTEGER,
+    amount_cents INTEGER CHECK (
+      amount_cents IS NULL OR
+      (typeof(amount_cents) = 'integer' AND amount_cents >= 0 AND amount_cents <= 9007199254740991)
+    ),
+    currency TEXT CHECK (currency IS NULL OR currency = 'BRL'),
+    occurred_at TEXT NOT NULL,
+    CHECK (
+      (amount_cents IS NULL AND currency IS NULL)
+      OR
+      (amount_cents IS NOT NULL AND currency IS NOT NULL)
+    ),
+    PRIMARY KEY (business_id, id),
+    FOREIGN KEY (business_id) REFERENCES automotive_businesses(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS commercial_events_business_occurred_idx
+    ON commercial_events (business_id, occurred_at);
+  CREATE INDEX IF NOT EXISTS commercial_events_business_type_occurred_idx
+    ON commercial_events (business_id, event_type, occurred_at);
+  CREATE INDEX IF NOT EXISTS commercial_events_business_conversation_occurred_idx
+    ON commercial_events (business_id, conversation_id, occurred_at);
+  CREATE INDEX IF NOT EXISTS commercial_events_business_requested_item_occurred_idx
+    ON commercial_events (business_id, requested_item, occurred_at);
+  CREATE INDEX IF NOT EXISTS commercial_events_business_category_occurred_idx
+    ON commercial_events (business_id, category, occurred_at);
+  CREATE INDEX IF NOT EXISTS commercial_events_business_state_occurred_idx
+    ON commercial_events (business_id, state, occurred_at);
+  CREATE INDEX IF NOT EXISTS commercial_events_business_region_occurred_idx
+    ON commercial_events (business_id, region, occurred_at);
+  CREATE INDEX IF NOT EXISTS commercial_events_business_business_type_occurred_idx
+    ON commercial_events (business_id, business_type, occurred_at);
+
+  CREATE TABLE IF NOT EXISTS assistant_health_events (
+    id TEXT NOT NULL,
+    business_id TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    conversation_id TEXT,
+    opportunity_id TEXT,
+    quote_request_id TEXT,
+    channel TEXT,
+    business_type TEXT,
+    country TEXT,
+    state TEXT,
+    city TEXT,
+    region TEXT,
+    provider TEXT,
+    model TEXT,
+    reason TEXT,
+    occurred_at TEXT NOT NULL,
+    PRIMARY KEY (business_id, id),
+    FOREIGN KEY (business_id) REFERENCES automotive_businesses(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS assistant_health_events_business_occurred_idx
+    ON assistant_health_events (business_id, occurred_at);
+  CREATE INDEX IF NOT EXISTS assistant_health_events_business_type_occurred_idx
+    ON assistant_health_events (business_id, event_type, occurred_at);
+  CREATE INDEX IF NOT EXISTS assistant_health_events_business_conversation_occurred_idx
+    ON assistant_health_events (business_id, conversation_id, occurred_at);
+  CREATE INDEX IF NOT EXISTS assistant_health_events_business_business_type_occurred_idx
+    ON assistant_health_events (business_id, business_type, occurred_at);
+  CREATE INDEX IF NOT EXISTS assistant_health_events_business_region_occurred_idx
+    ON assistant_health_events (business_id, region, occurred_at);
 `;
 
 export function createSqliteDatabase({ filename }: SqliteDatabaseOptions) {
