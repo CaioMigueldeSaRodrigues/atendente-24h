@@ -79,8 +79,15 @@ type AmpliviewAdminMarketData = {
     sourceKind: "PUBLIC_MAP_LISTING" | "PUBLIC_DIRECTORY";
     sourceName: string;
     sourceUrl?: string;
-    verificationStatus: string;
+    verificationStatus: "PUBLIC_LISTING_ONLY" | "CNPJ_VALIDATED" | "CNPJ_NOT_FOUND" | "CNPJ_AMBIGUOUS";
     mappedAt: string;
+    cnpj?: string;
+    legalName?: string;
+    cadastralStatus?: string;
+    cadastralSourceName?: string;
+    cadastralSourceUrl?: string;
+    validatedAt?: string;
+    validationNote?: string;
   }[];
 };
 
@@ -92,8 +99,9 @@ export function renderAmpliviewAdminUi(data: AmpliviewAdminDemoData, marketMappi
   const safeMarketMapping = JSON.stringify({
     regions: marketMapping.regions,
     clusters: marketMapping.clusters,
-    mappedBusinesses: marketMapping.mappedBusinesses.map(({ name, region, cluster, neighborhood, address, segments, sourceKind, sourceName, sourceUrl, verificationStatus, mappedAt }) => ({
+    mappedBusinesses: marketMapping.mappedBusinesses.map(({ name, region, cluster, neighborhood, address, segments, sourceKind, sourceName, sourceUrl, verificationStatus, mappedAt, cnpj, legalName, cadastralStatus, cadastralSourceName, cadastralSourceUrl, validatedAt, validationNote }) => ({
       name, region, cluster, neighborhood, address, segments, sourceKind, sourceName, sourceUrl, verificationStatus, mappedAt,
+      cnpj, legalName, cadastralStatus, cadastralSourceName, cadastralSourceUrl, validatedAt, validationNote,
     })),
   })
     .replace(/</g, "\\u003c")
@@ -147,12 +155,13 @@ function renderMappedMarket(){
   function isValidHttpsUrl(value){if(!value)return false;try{return new URL(value).protocol==="https:";}catch{return false;}}
   const mapped=market.mappedBusinesses;
   const quality=el("div",undefined,"metric-grid");
-  for(const entry of [["Registros públicos",mapped.length],["Com fonte rastreável",mapped.filter(business=>isValidHttpsUrl(business.sourceUrl)).length],["CNPJ validado",mapped.filter(business=>business.verificationStatus==="CNPJ_VALIDATED").length],["Aguardando validação cadastral",mapped.filter(business=>business.verificationStatus==="PUBLIC_LISTING_ONLY").length]]){const metric=el("article",undefined,"metric-card");metric.append(el("p",entry[0],"metric-label"),el("strong",Number(entry[1]).toLocaleString("pt-BR"),"metric-value"));quality.append(metric);}
+  for(const entry of [["Registros públicos",mapped.length],["Com fonte rastreável",mapped.filter(business=>isValidHttpsUrl(business.sourceUrl)).length],["CNPJ validado",mapped.filter(business=>business.verificationStatus==="CNPJ_VALIDATED").length],["Aguardando validação cadastral",mapped.filter(business=>business.verificationStatus==="PUBLIC_LISTING_ONLY").length],["Validação inconclusiva",mapped.filter(business=>business.verificationStatus==="CNPJ_NOT_FOUND"||business.verificationStatus==="CNPJ_AMBIGUOUS").length]]){const metric=el("article",undefined,"metric-card");metric.append(el("p",entry[0],"metric-label"),el("strong",Number(entry[1]).toLocaleString("pt-BR"),"metric-value"));quality.append(metric);}
   content.append(el("h2","Qualidade do levantamento","section-heading"),quality,el("p","Qualidade da base refere-se à rastreabilidade e validação dos registros incorporados, não ao tamanho do mercado automotivo de Manaus.","view-subtitle"));
   const listings=table(["Empresa","Segmento","Bairro","Endereço","Conglomerado","Macrorregião","Fonte","Mapeado em","Status da validação"],[]);const listingBody=listings.querySelector("tbody");
   function updateClusterOptions(){const selected=clusterSelect.value;const region=regionSelect.value;clusterSelect.replaceChildren();const all=el("option","Todos");all.value="";clusterSelect.append(all);for(const cluster of market.clusters){if(!region||cluster.region===region){const option=el("option",cluster.name);option.value=cluster.name;clusterSelect.append(option);}}clusterSelect.value=[...clusterSelect.options].some(option=>option.value===selected)?selected:"";}
-  function statusLabel(status){if(status==="PUBLIC_LISTING_ONLY")return "Listagem pública — CNPJ ainda não validado";return "Status de validação não reconhecido";}
-  function formatMappedDate(value){const match=/^(\d{4})-(\d{2})-(\d{2})$/.exec(value);if(!match)return value;const parsed=new Date(match[1]+"-"+match[2]+"-"+match[3]+"T00:00:00.000Z");if(parsed.getUTCFullYear()!==Number(match[1])||parsed.getUTCMonth()+1!==Number(match[2])||parsed.getUTCDate()!==Number(match[3]))return value;return match[3]+"/"+match[2]+"/"+match[1];}
+  function statusLabel(status){return status==="PUBLIC_LISTING_ONLY"?"Listagem pública — CNPJ ainda não validado":status==="CNPJ_VALIDATED"?"CNPJ validado":status==="CNPJ_NOT_FOUND"?"CNPJ não localizado":status==="CNPJ_AMBIGUOUS"?"Validação cadastral inconclusiva":"Status de validação não reconhecido";}
+  function formatCnpj(value){if(typeof value!=="string"||!/^\\d{14}$/.test(value))return value;return value.slice(0,2)+"."+value.slice(2,5)+"."+value.slice(5,8)+"/"+value.slice(8,12)+"-"+value.slice(12,14);}
+  function formatMappedDate(value){const match=/^(\\d{4})-(\\d{2})-(\\d{2})$/.exec(value);if(!match)return value;const parsed=new Date(match[1]+"-"+match[2]+"-"+match[3]+"T00:00:00.000Z");if(parsed.getUTCFullYear()!==Number(match[1])||parsed.getUTCMonth()+1!==Number(match[2])||parsed.getUTCDate()!==Number(match[3]))return value;return match[3]+"/"+match[2]+"/"+match[1];}
   function renderRows(){const query=searchInput.value.trim().toLocaleLowerCase("pt-BR");const region=regionSelect.value;const cluster=clusterSelect.value;const segment=segmentSelect.value;const filtered=mapped.filter(business=>(!query||[business.name,business.neighborhood,business.address,business.cluster].some(value=>value.toLocaleLowerCase("pt-BR").includes(query)))&&(!region||business.region===region)&&(!cluster||business.cluster===cluster)&&(!segment||business.segments.includes(segment)));resultCount.textContent="Exibindo "+filtered.length+" de "+mapped.length+" registros mapeados";listingBody.replaceChildren();if(filtered.length===0){const row=document.createElement("tr");const cell=el("td","Nenhum estabelecimento encontrado com os filtros selecionados.");cell.colSpan=9;row.append(cell);listingBody.append(row);return;}for(const business of filtered){const row=document.createElement("tr");for(const value of [business.name,business.segments.join(" / "),business.neighborhood,business.address,business.cluster,business.region])row.append(el("td",value));const sourceCell=el("td");if(isValidHttpsUrl(business.sourceUrl)){const link=document.createElement("a");link.textContent=business.sourceName;link.setAttribute("href",business.sourceUrl);link.setAttribute("target","_blank");link.setAttribute("rel","noopener noreferrer");sourceCell.append(link);}else{sourceCell.textContent=business.sourceName;}row.append(sourceCell,el("td",formatMappedDate(business.mappedAt)));const statusCell=el("td");statusCell.append(el("span",statusLabel(business.verificationStatus),"validation-status"));row.append(statusCell);listingBody.append(row);}}
   searchInput.addEventListener("input",renderRows);regionSelect.addEventListener("change",()=>{updateClusterOptions();renderRows();});clusterSelect.addEventListener("change",renderRows);segmentSelect.addEventListener("change",renderRows);clearButton.addEventListener("click",()=>{searchInput.value="";regionSelect.value="";clusterSelect.value="";segmentSelect.value="";updateClusterOptions();renderRows();});updateClusterOptions();renderRows();content.append(listings);
 }function renderDemand(){heading("Demanda","Tendências agregadas demonstrativas do mercado atendido.");content.append(table(["Produto/serviço","Volume identificado","Variação no período","Regiões com maior procura","Segmentos predominantes"],demo.demand.map(x=>[x.item,x.volume,"+"+x.changePercent+"%",x.regions.join(" / "),x.segments.join(" / ")])),el("h2","Demandas em crescimento","section-heading"));const sorted=[...demo.demand].sort((a,b)=>b.changePercent-a.changePercent).map(x=>({item:x.item,count:x.changePercent}));content.append(card("Demandas em crescimento",bars(sorted,"item","count","%")));}

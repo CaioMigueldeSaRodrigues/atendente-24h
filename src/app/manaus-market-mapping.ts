@@ -10,7 +10,13 @@ export type ManausCommercialCluster = {
   neighborhoods: string[];
 };
 
-export type ManausMappedBusiness = {
+export type ManausMarketVerificationStatus =
+  | "PUBLIC_LISTING_ONLY"
+  | "CNPJ_VALIDATED"
+  | "CNPJ_NOT_FOUND"
+  | "CNPJ_AMBIGUOUS";
+
+type ManausMappedBusinessCommon = {
   name: string;
   region: ManausCommercialRegion;
   cluster: string;
@@ -20,9 +26,52 @@ export type ManausMappedBusiness = {
   sourceKind: "PUBLIC_MAP_LISTING" | "PUBLIC_DIRECTORY";
   sourceName: string;
   sourceUrl?: string;
-  verificationStatus: "PUBLIC_LISTING_ONLY";
   mappedAt: string;
 };
+
+type CadastralValidationDate = `${number}${number}${number}${number}-${number}${number}-${number}${number}`;
+
+export type ManausMappedBusiness =
+  | (ManausMappedBusinessCommon & {
+      verificationStatus: "PUBLIC_LISTING_ONLY";
+      cnpj?: never;
+      legalName?: never;
+      cadastralStatus?: never;
+      cadastralSourceName?: never;
+      cadastralSourceUrl?: never;
+      validatedAt?: never;
+      validationNote?: never;
+    })
+  | (ManausMappedBusinessCommon & {
+      verificationStatus: "CNPJ_VALIDATED";
+      cnpj: string;
+      legalName: string;
+      cadastralStatus: string;
+      cadastralSourceName: string;
+      cadastralSourceUrl: string;
+      validatedAt: CadastralValidationDate;
+      validationNote?: never;
+    })
+  | (ManausMappedBusinessCommon & {
+      verificationStatus: "CNPJ_NOT_FOUND";
+      cnpj?: never;
+      legalName?: never;
+      cadastralStatus?: never;
+      cadastralSourceName: string;
+      cadastralSourceUrl?: string;
+      validatedAt: CadastralValidationDate;
+      validationNote?: string;
+    })
+  | (ManausMappedBusinessCommon & {
+      verificationStatus: "CNPJ_AMBIGUOUS";
+      cnpj?: never;
+      legalName?: never;
+      cadastralStatus?: never;
+      cadastralSourceName: string;
+      cadastralSourceUrl?: string;
+      validatedAt: CadastralValidationDate;
+      validationNote: string;
+    });
 
 export const MANAUS_COMMERCIAL_REGIONS: ManausCommercialRegion[] = ["Norte", "Sul", "Leste", "Oeste"];
 
@@ -45,7 +94,7 @@ export const MANAUS_COMMERCIAL_CLUSTERS: ManausCommercialCluster[] = [
   { region: "Leste", name: "Colônia Antônio Aleixo / Puraquequara", neighborhoods: ["Colônia Antônio Aleixo", "Puraquequara"] },
 ];
 
-type MappedBusinessInput = Omit<ManausMappedBusiness, "sourceKind" | "sourceName" | "sourceUrl" | "verificationStatus" | "mappedAt">;
+type MappedBusinessInput = Omit<ManausMappedBusinessCommon, "sourceKind" | "sourceName" | "sourceUrl" | "mappedAt">;
 
 const mappedAt = "2026-09-25";
 const mapListing = (business: MappedBusinessInput): ManausMappedBusiness => ({
