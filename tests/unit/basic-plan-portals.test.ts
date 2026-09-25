@@ -23,6 +23,7 @@ test("preview serves the workshop portals and internal Ampliview portal", async 
     assert.match(login.headers.get("content-type") ?? "", /text\/html/);
     assert.match(loginHtml, /E-mail/);
     assert.match(loginHtml, /Senha/);
+    assert.match(loginHtml, /Ambiente de demonstração: este acesso não valida credenciais reais\./);
     assert.match(loginHtml, /type="password"/);
     assert.match(loginHtml, /Criar minha conta/);
     assert.doesNotMatch(loginHtml, /localStorage|sessionStorage/);
