@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { server } from "../../src/app/run-operator-preview.js";
+import { MANAUS_COMMERCIAL_CLUSTERS, MANAUS_COMMERCIAL_REGIONS, MANAUS_MAPPED_BUSINESSES } from "../../src/app/manaus-market-mapping.js";
 import { renderAmpliviewAdminUi, type AmpliviewAdminDemoData } from "../../src/infrastructure/http/ampliview-admin-ui.js";
 
 test("preview serves the workshop portals and internal Ampliview portal", async () => {
@@ -50,16 +51,28 @@ test("preview serves the workshop portals and internal Ampliview portal", async 
     const adminHtml = await admin.text();
     assert.equal(admin.status, 200);
     assert.match(admin.headers.get("content-type") ?? "", /text\/html/);
+    assert.ok(adminHtml.includes("Mercado Mapeado"));
     for (const section of ["Visão Geral", "Atendimentos", "Saúde do Atendente", "Adesão e Cobertura", "Demanda", "Merchandising", "Empresas"]) {
       assert.ok(adminHtml.includes(section), `missing ${section}`);
     }
     assert.match(adminHtml, /Dados de demonstração/);
-    assert.match(adminHtml, /ainda não representam dados reais da operação/);
+    assert.match(adminHtml, /não representam clientes Ampliview/);
     assert.match(adminHtml, /Baixa confiança/);
     assert.match(adminHtml, /Falha de integração/);
-    assert.match(adminHtml, /Déficits de cobertura/);
+    assert.match(adminHtml, /Simulação de cobertura Ampliview/);
     assert.match(adminHtml, /Demandas em crescimento/);
     assert.match(adminHtml, /Gap comercial/);
+    assert.ok(adminHtml.includes("Ponta Negra / Tarumã") && adminHtml.includes("Colônia Antônio Aleixo / Puraquequara"));
+    assert.ok(adminHtml.includes("Empresas encontradas neste levantamento são estabelecimentos do mercado e não representam clientes Ampliview"));
+    assert.ok(adminHtml.includes("Empresas mapeadas") && adminHtml.includes('"mappedBusinessCount":0'));
+    assert.ok(adminHtml.includes("Carga de estabelecimentos validada ainda não integrada."));
+    assert.ok(adminHtml.includes("Alvorada / Dom Pedro / Redenção / Planalto"));
+    assert.deepEqual(MANAUS_COMMERCIAL_REGIONS, ["Norte", "Sul", "Leste", "Oeste"]);
+    assert.equal(MANAUS_COMMERCIAL_CLUSTERS.length, 16);
+    assert.deepEqual(new Set(MANAUS_COMMERCIAL_CLUSTERS.map(({ region }) => region)), new Set(["Norte", "Sul", "Leste", "Oeste"]));
+    assert.ok(MANAUS_COMMERCIAL_CLUSTERS.every((cluster) => !("demoSignal" in cluster)));
+    assert.deepEqual(MANAUS_MAPPED_BUSINESSES, []);
+    assert.ok(adminHtml.includes('"city":"Manaus"') && adminHtml.includes('"state":"AM"'));
     assert.doesNotMatch(adminHtml, /Barulho ao frear|Não gela|Pedal baixo/);
     assert.doesNotMatch(adminHtml, /GROQ_API_KEY|dummy-secret|stack trace|localStorage|sessionStorage/);
 
@@ -98,7 +111,11 @@ test("admin renderer safely serializes untrusted demo values", () => {
     merchandising: { unexploredDemand: [], opportunitiesByRegion: [], opportunitiesBySegment: [], productTrends: [] },
     businesses: [{ name: maliciousName, type: "OTHER", city: "", state: "", region: "", attendances: 0, requests: 0, conversion: "—", lastActivity: "—" }],
   };
-  const html = renderAmpliviewAdminUi(demo);
+  const html = renderAmpliviewAdminUi(demo, {
+    regions: MANAUS_COMMERCIAL_REGIONS,
+    clusters: MANAUS_COMMERCIAL_CLUSTERS,
+    mappedBusinessCount: MANAUS_MAPPED_BUSINESSES.length,
+  });
   assert.ok(html.includes("\\u003c/script>\\u003cscript>alert(1)\\u003c/script>"));
   assert.ok(!html.includes(maliciousName));
   assert.doesNotMatch(html, /innerHTML/);

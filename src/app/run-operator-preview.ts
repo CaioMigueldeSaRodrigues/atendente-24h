@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { resolve } from "node:path";
 import { QuoteRequestStatus } from "../core/domain/enums.js";
+import { MANAUS_COMMERCIAL_CLUSTERS, MANAUS_COMMERCIAL_REGIONS, MANAUS_MAPPED_BUSINESSES } from "./manaus-market-mapping.js";
 import { renderAmpliviewAdminUi, type AmpliviewAdminDemoData } from "../infrastructure/http/ampliview-admin-ui.js";
 import { renderBasicPlanAuthUi } from "../infrastructure/http/basic-plan-auth-ui.js";
 import { renderBasicPlanOperatorUi } from "../infrastructure/http/basic-plan-operator-ui.js";
@@ -19,14 +20,14 @@ const adminDemoData: AmpliviewAdminDemoData = {
     authorizedAmountCents: 18475000,
     aiResolutionPercent: 72,
     attendancePeriods: [{ label: "Seg", count: 164 }, { label: "Ter", count: 188 }, { label: "Qua", count: 205 }, { label: "Qui", count: 193 }, { label: "Sex", count: 231 }, { label: "Sáb", count: 147 }],
-    businessesByRegion: [{ region: "Sudeste", count: 7 }, { region: "Sul", count: 2 }, { region: "Nordeste", count: 1 }, { region: "Centro-Oeste", count: 1 }, { region: "Norte", count: 1 }],
+    businessesByRegion: [{ region: "Norte", count: 3 }, { region: "Sul", count: 4 }, { region: "Leste", count: 3 }, { region: "Oeste", count: 2 }],
     channels: [{ channel: "WhatsApp", count: 746 }, { channel: "Web", count: 412 }, { channel: "Voz", count: 126 }],
     commercialResults: [{ result: "Orçamentos respondidos", count: 291 }, { result: "Aguardando empresa", count: 54 }, { result: "Transferidos para atendente", count: 37 }],
     operationalAlerts: [{ label: "Atendimentos com baixa confiança", count: 7 }, { label: "Falhas de integração", count: 3 }, { label: "Handoffs por informação indisponível", count: 5 }, { label: "Falhas de publicação de orçamento", count: 2 }],
   },
   attendances: [
     { business: "Oficina Prime", channel: "WhatsApp", customer: "Carlos Almeida", vehicle: "Toyota Corolla 2020", intent: "Orçamento", requestedItem: "Pastilhas de freio", outcome: "Orçamento respondido", occurredAt: "24 set, 10:15" },
-    { business: "Auto Glass Campinas", channel: "Web", customer: "Mariana Souza", vehicle: "Volkswagen T-Cross 2023", intent: "Serviço", requestedItem: "Revisão do ar-condicionado", outcome: "Aguardando informações", occurredAt: "24 set, 10:30" },
+    { business: "Auto Glass Manaus", channel: "Web", customer: "Mariana Souza", vehicle: "Volkswagen T-Cross 2023", intent: "Serviço", requestedItem: "Revisão do ar-condicionado", outcome: "Aguardando informações", occurredAt: "24 set, 10:30" },
     { business: "ClimaCar", channel: "WhatsApp", customer: "Roberto Lima", vehicle: "Chevrolet Onix 2021", intent: "Orçamento", requestedItem: "Película automotiva", outcome: "Solicitação recebida", occurredAt: "24 set, 11:00" },
     { business: "Oficina Prime", channel: "Web", customer: "Ana Costa", vehicle: "Honda Fit 2019", intent: "Serviço", requestedItem: "Higienização de ar-condicionado", outcome: "Atendimento concluído", occurredAt: "23 set, 16:42" },
   ],
@@ -43,34 +44,38 @@ const adminDemoData: AmpliviewAdminDemoData = {
     causes: ["Informação de preço não cadastrada", "Integração indisponível", "Mensagem ambígua", "Dados insuficientes do veículo", "Resposta do provedor de IA indisponível"],
   },
   regionalAdoption: [
-    { region: "Sudeste", activeBusinesses: 7, newBusinesses: 3, segments: ["AUTO_CENTER", "WORKSHOP", "WINDOW_TINT"], penetrationPercent: 58, trend: "↑ 9%" },
-    { region: "Sul", activeBusinesses: 2, newBusinesses: 1, segments: ["AUTO_GLASS", "WORKSHOP"], penetrationPercent: 18, trend: "↑ 5%" },
-    { region: "Nordeste", activeBusinesses: 1, newBusinesses: 1, segments: ["BATTERY"], penetrationPercent: 10, trend: "↑ 4%" },
-    { region: "Centro-Oeste", activeBusinesses: 1, newBusinesses: 0, segments: ["AUTO_CENTER"], penetrationPercent: 8, trend: "—" },
-    { region: "Norte", activeBusinesses: 1, newBusinesses: 0, segments: ["AIR_CONDITIONING"], penetrationPercent: 6, trend: "↑ 1%" },
+    { region: "Norte", activeBusinesses: 3, newBusinesses: 1, segments: ["AUTO_CENTER", "WORKSHOP"], penetrationPercent: 24, trend: "↑ 3%" },
+    { region: "Sul", activeBusinesses: 4, newBusinesses: 2, segments: ["AUTO_GLASS", "WORKSHOP", "WINDOW_TINT"], penetrationPercent: 34, trend: "↑ 5%" },
+    { region: "Leste", activeBusinesses: 3, newBusinesses: 1, segments: ["BATTERY", "AUTO_CENTER"], penetrationPercent: 26, trend: "↑ 4%" },
+    { region: "Oeste", activeBusinesses: 2, newBusinesses: 1, segments: ["AIR_CONDITIONING", "WORKSHOP"], penetrationPercent: 16, trend: "↑ 2%" },
   ],
   coverageDeficits: [
-    { area: "Interior de SP", signal: "Alta demanda", coverage: "Cobertura moderada" },
-    { area: "Sul de Minas", signal: "Demanda crescente", coverage: "Baixa cobertura" },
-    { area: "Campinas e região", signal: "Boa cobertura", coverage: "Crescimento acelerado" },
-    { area: "Curitiba e região", signal: "Procura por vidraçarias automotivas", coverage: "Cobertura baixa" },
+    { area: "Norte", signal: "Simulação de cobertura Ampliview", coverage: "Exemplo demonstrativo sem relação com o levantamento público" },
+    { area: "Sul", signal: "Simulação de cobertura Ampliview", coverage: "Exemplo demonstrativo sem relação com o levantamento público" },
+    { area: "Leste", signal: "Simulação de cobertura Ampliview", coverage: "Exemplo demonstrativo sem relação com o levantamento público" },
+    { area: "Oeste", signal: "Simulação de cobertura Ampliview", coverage: "Exemplo demonstrativo sem relação com o levantamento público" },
   ],
   demand: [
-    { item: "Película automotiva", volume: 185, changePercent: 18, regions: ["Sudeste"], segments: ["WINDOW_TINT", "AUTO_CENTER"] },
-    { item: "Baterias", volume: 81, changePercent: 11, regions: ["Sudeste", "Sul"], segments: ["BATTERY", "AUTO_CENTER"] },
-    { item: "Ar-condicionado", volume: 96, changePercent: 24, regions: ["Sudeste"], segments: ["AIR_CONDITIONING", "WORKSHOP"] },
-    { item: "Pneus", volume: 74, changePercent: 7, regions: ["Sul", "Sudeste"], segments: ["TIRES_WHEELS"] },
+    { item: "Película automotiva", volume: 185, changePercent: 18, regions: ["Sul", "Leste"], segments: ["WINDOW_TINT", "AUTO_CENTER"] },
+    { item: "Baterias", volume: 81, changePercent: 11, regions: ["Sul", "Oeste"], segments: ["BATTERY", "AUTO_CENTER"] },
+    { item: "Ar-condicionado", volume: 96, changePercent: 24, regions: ["Sul", "Leste"], segments: ["AIR_CONDITIONING", "WORKSHOP"] },
+    { item: "Pneus", volume: 74, changePercent: 7, regions: ["Norte", "Oeste"], segments: ["TIRES_WHEELS"] },
   ],
   merchandising: {
     unexploredDemand: [{ item: "Higienização A/C", interests: 74, offers: 18, conversions: 9, gap: 56 }, { item: "Palhetas", interests: 61, offers: 9, conversions: 4, gap: 52 }, { item: "Película premium", interests: 48, offers: 12, conversions: 7, gap: 36 }],
-    opportunitiesByRegion: [{ region: "Sul de Minas", segment: "Ar-condicionado", demand: "Demanda crescente", coverage: "Cobertura baixa" }, { region: "Interior de SP", segment: "Películas", demand: "Demanda alta", coverage: "Cobertura média" }, { region: "Campinas", segment: "Auto Glass", demand: "Procura crescente", coverage: "Cobertura baixa" }],
+    opportunitiesByRegion: [
+      { region: "Sul", segment: "Ar-condicionado", demand: "Sinal de demanda demonstrativo", coverage: "Cobertura simulada Ampliview" },
+      { region: "Oeste", segment: "Películas", demand: "Sinal de demanda demonstrativo", coverage: "Cobertura simulada Ampliview" },
+      { region: "Norte", segment: "Auto Glass", demand: "Sinal de demanda demonstrativo", coverage: "Cobertura simulada Ampliview" },
+      { region: "Leste", segment: "Baterias", demand: "Sinal de demanda demonstrativo", coverage: "Cobertura simulada Ampliview" },
+    ],
     opportunitiesBySegment: [{ segment: "AUTO_CENTER", signal: "Alta demanda / boa adesão" }, { segment: "AIR_CONDITIONING", signal: "Demanda crescente / cobertura moderada" }, { segment: "AUTO_GLASS", signal: "Demanda crescente / baixa adesão" }, { segment: "WINDOW_TINT", signal: "Alta procura / conversão abaixo da média" }],
     productTrends: [{ item: "Ar-condicionado", changePercent: 24 }, { item: "Película", changePercent: 18 }, { item: "Baterias", changePercent: 11 }, { item: "Pneus", changePercent: 7 }],
   },
   businesses: [
-    { name: "Oficina Prime", type: "AUTO_CENTER", city: "Campinas", state: "SP", region: "Sudeste", attendances: 316, requests: 92, conversion: "68%", lastActivity: "Hoje, 10:15" },
-    { name: "Auto Glass Campinas", type: "AUTO_GLASS", city: "Campinas", state: "SP", region: "Sudeste", attendances: 204, requests: 48, conversion: "61%", lastActivity: "Hoje, 09:42" },
-    { name: "ClimaCar", type: "AIR_CONDITIONING", city: "Belo Horizonte", state: "MG", region: "Sudeste", attendances: 178, requests: 61, conversion: "73%", lastActivity: "Ontem, 17:20" },
+    { name: "Oficina Prime", type: "AUTO_CENTER", city: "Manaus", state: "AM", region: "Sul", attendances: 316, requests: 92, conversion: "68%", lastActivity: "Hoje, 10:15" },
+    { name: "Auto Glass Manaus", type: "AUTO_GLASS", city: "Manaus", state: "AM", region: "Sul", attendances: 204, requests: 48, conversion: "61%", lastActivity: "Hoje, 09:42" },
+    { name: "ClimaCar", type: "AIR_CONDITIONING", city: "Manaus", state: "AM", region: "Sul", attendances: 178, requests: 61, conversion: "73%", lastActivity: "Ontem, 17:20" },
   ],
 };
 
@@ -268,7 +273,7 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse)
     return;
   }
   if (request.method === "GET" && pathname === "/admin") {
-    sendHtml(response, renderAmpliviewAdminUi(adminDemoData));
+    sendHtml(response, renderAmpliviewAdminUi(adminDemoData, { regions: MANAUS_COMMERCIAL_REGIONS, clusters: MANAUS_COMMERCIAL_CLUSTERS, mappedBusinessCount: MANAUS_MAPPED_BUSINESSES.length }));
     return;
   }
   if (request.method === "GET" && pathname === "/operator") {
