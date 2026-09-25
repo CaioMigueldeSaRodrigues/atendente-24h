@@ -75,6 +75,22 @@ test("preview serves the workshop portals and internal Ampliview portal", async 
       assert.ok(adminHtml.includes(filterLabel), `missing market filter/table label: ${filterLabel}`);
     }
     assert.ok(adminHtml.includes("market-search") && adminHtml.includes("market-region") && adminHtml.includes("market-cluster") && adminHtml.includes("market-segment"));
+    for (const label of ["Qualidade do levantamento", "Registros públicos", "Com fonte rastreável", "CNPJ validado", "Aguardando validação cadastral", "Mapeado em"]) {
+      assert.ok(adminHtml.includes(label), `missing market quality/date label: ${label}`);
+    }
+    assert.ok(adminScript.includes("business.verificationStatus"));
+    assert.ok(adminScript.includes("statusLabel(business.verificationStatus)"));
+    assert.ok(adminScript.includes("Status de validação não reconhecido"));
+    assert.ok(adminScript.includes("business.sourceUrl"));
+    assert.ok(adminScript.includes('new URL(value).protocol==="https:"'));
+    assert.ok(adminScript.includes('if(isValidHttpsUrl(business.sourceUrl)){const link=document.createElement("a")'));
+    assert.ok(adminScript.includes('}else{sourceCell.textContent=business.sourceName;}'));
+    assert.ok(adminScript.includes('link.setAttribute("href",business.sourceUrl)'));
+    assert.ok(adminScript.includes('link.setAttribute("target","_blank")'));
+    assert.ok(adminScript.includes('link.setAttribute("rel","noopener noreferrer")'));
+    assert.ok(adminScript.includes("function formatMappedDate(value)"));
+    assert.ok(adminScript.includes('match[3]+"/"+match[2]+"/"+match[1]'));
+    assert.ok(adminScript.includes("cell.colSpan=9"));
     assert.doesNotMatch(adminHtml, /innerHTML/);
     assert.doesNotMatch(adminHtml, /Carga de estabelecimentos validada ainda não integrada/);
     assert.ok(adminHtml.includes("Alvorada / Dom Pedro / Redenção / Planalto"));
@@ -86,8 +102,15 @@ test("preview serves the workshop portals and internal Ampliview portal", async 
     const serializedMarket = adminHtml.match(/const market=(\{[^;]+\});/);
     const serializedMarketJson = serializedMarket?.[1];
     assert.ok(serializedMarketJson);
-    const htmlMarketData = JSON.parse(serializedMarketJson) as { mappedBusinesses: unknown[] };
+    const htmlMarketData = JSON.parse(serializedMarketJson) as { mappedBusinesses: Array<Record<string, unknown>> };
     assert.equal(htmlMarketData.mappedBusinesses.length, MANAUS_MAPPED_BUSINESSES.length);
+    assert.equal(htmlMarketData.mappedBusinesses.filter((business) => typeof business.sourceUrl === "string").length, 2);
+    assert.equal((adminHtml.match(/https:\/\/www\.solutudo\.com\.br/g) ?? []).length, 2);
+    for (const business of htmlMarketData.mappedBusinesses) {
+      assert.ok("verificationStatus" in business);
+      assert.ok("mappedAt" in business);
+      assert.ok("sourceKind" in business);
+    }
     const mappedClusterKeys = new Set<string>();
     for (const business of MANAUS_MAPPED_BUSINESSES) {
       const cluster = MANAUS_COMMERCIAL_CLUSTERS.find((candidate) => candidate.name === business.cluster);
@@ -120,7 +143,7 @@ test("preview serves the workshop portals and internal Ampliview portal", async 
       ])),
       { Norte: 6, Sul: 10, Leste: 8, Oeste: 7 },
     );
-    assert.ok(!adminHtml.includes("solutudo.com.br"));
+    assert.equal(MANAUS_MAPPED_BUSINESSES.filter((business) => business.sourceUrl && /^https:\/\//i.test(business.sourceUrl)).length, 2);
     assert.ok(adminHtml.includes('"city":"Manaus"') && adminHtml.includes('"state":"AM"'));
     assert.ok(adminHtml.includes("Ambiente de validação"));
     assert.doesNotMatch(adminHtml, /Barulho ao frear|Não gela|Pedal baixo/);
