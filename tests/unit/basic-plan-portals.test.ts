@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { server } from "../../src/app/run-operator-preview.js";
 import { MANAUS_COMMERCIAL_CLUSTERS, MANAUS_COMMERCIAL_REGIONS, MANAUS_MAPPED_BUSINESSES, type ManausMarketVerificationStatus } from "../../src/app/manaus-market-mapping.js";
-import { renderAmpliviewAdminUi, type AmpliviewAdminDemoData } from "../../src/infrastructure/http/ampliview-admin-ui.js";
+import { renderAmpliviewAdminUi, type AmpliviewAdminData } from "../../src/infrastructure/http/ampliview-admin-ui.js";
 
 type Assert<T extends true> = T;
 type IsEqual<Actual, Expected> = (<T>() => T extends Actual ? 1 : 2) extends (<T>() => T extends Expected ? 1 : 2) ? true : false;
@@ -64,13 +64,54 @@ test("preview serves the workshop portals and internal Ampliview portal", async 
     for (const section of ["Visão Geral", "Atendimentos", "Saúde do Atendente", "Adesão e Cobertura", "Demanda", "Merchandising", "Empresas"]) {
       assert.ok(adminHtml.includes(section), `missing ${section}`);
     }
-    assert.match(adminHtml, /Dados de demonstração/);
     assert.match(adminHtml, /não representam clientes Ampliview/);
-    assert.match(adminHtml, /Baixa confiança/);
-    assert.match(adminHtml, /Falha de integração/);
-    assert.match(adminHtml, /Simulação de cobertura Ampliview/);
-    assert.match(adminHtml, /Demandas em crescimento/);
-    assert.match(adminHtml, /Gap comercial/);
+    assert.match(adminHtml, /Dados operacionais/);
+    assert.match(adminHtml, /Este painel exibe somente dados reais disponíveis\. Onde ainda não houver operação registrada, as áreas permanecem vazias\. Dados de Mercado Mapeado pertencem a levantamento público externo e não representam clientes Ampliview\./);
+    for (const emptyState of [
+      "Ainda não há atendimentos reais registrados.",
+      "Ainda não há clientes Ampliview ativos por região.",
+      "Ainda não há utilização real de canais registrada.",
+      "Ainda não há resultados comerciais reais registrados.",
+      "Nenhum evento operacional real registrado até o momento.",
+      "Nenhum atendimento real registrado até o momento.",
+      "Nenhum evento técnico real registrado até o momento.",
+      "Ainda não há causas técnicas reais consolidadas.",
+      "Nenhum cliente Ampliview ativo ainda.",
+      "A cobertura comercial será calculada quando houver clientes reais suficientes.",
+      "Ainda não há dados operacionais suficientes para consolidar demanda real.",
+      "Ainda não há dados comerciais suficientes para identificar oportunidades de merchandising.",
+      "Nenhuma empresa cliente Ampliview ativa ainda.",
+    ]) assert.ok(adminHtml.includes(emptyState), `missing empty state: ${emptyState}`);
+    assert.doesNotMatch(adminHtml, /Dados de demonstração|indicadores demonstrativos|exemplos demonstrativos|simulação/i);
+    for (const fakeValue of ["Oficina Prime", "Auto Glass Manaus", "ClimaCar", "Carlos Almeida", "Mariana Souza", "Roberto Lima", "1284", "382", "291", "18475000"]) {
+      assert.ok(!adminHtml.includes(fakeValue), `fictitious operational value leaked into admin: ${fakeValue}`);
+    }
+    const serializedOperational = adminHtml.match(/const operational=(\{[^;]+\});/);
+    assert.ok(serializedOperational?.[1]);
+    const operationalData = JSON.parse(serializedOperational[1]) as AmpliviewAdminData;
+    assert.deepEqual(operationalData, {
+      overview: {
+        activeBusinesses: 0,
+        attendances: 0,
+        commercialRequests: 0,
+        respondedQuotes: 0,
+        authorizedAmountCents: 0,
+        aiResolutionPercent: 0,
+        attendancePeriods: [],
+        businessesByRegion: [],
+        channels: [],
+        commercialResults: [],
+        operationalAlerts: [],
+      },
+      attendances: [],
+      assistantHealth: { issues: [], causes: [] },
+      regionalAdoption: [],
+      coverageDeficits: [],
+      demand: [],
+      merchandising: { unexploredDemand: [], opportunitiesByRegion: [], opportunitiesBySegment: [], productTrends: [] },
+      businesses: [],
+    });
+    assert.match((0 / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }), /^R\$\s0,00$/);
     assert.ok(adminHtml.includes("Ponta Negra / Tarumã") && adminHtml.includes("Colônia Antônio Aleixo / Puraquequara"));
     assert.ok(adminHtml.includes("Empresas encontradas neste levantamento são estabelecimentos do mercado e não representam clientes Ampliview"));
     assert.ok(adminHtml.includes("Empresas mapeadas") && adminHtml.includes("market.mappedBusinesses.length"));
@@ -167,7 +208,6 @@ test("preview serves the workshop portals and internal Ampliview portal", async 
       { Norte: 6, Sul: 10, Leste: 8, Oeste: 7 },
     );
     assert.equal(MANAUS_MAPPED_BUSINESSES.filter((business) => business.sourceUrl && /^https:\/\//i.test(business.sourceUrl)).length, 2);
-    assert.ok(adminHtml.includes('"city":"Manaus"') && adminHtml.includes('"state":"AM"'));
     assert.ok(adminHtml.includes("Ambiente de validação"));
     assert.doesNotMatch(adminHtml, /Barulho ao frear|Não gela|Pedal baixo/);
     assert.doesNotMatch(adminHtml, /GROQ_API_KEY|dummy-secret|stack trace|localStorage|sessionStorage/);
@@ -185,7 +225,7 @@ test("preview serves the workshop portals and internal Ampliview portal", async 
 
 test("admin renderer safely serializes untrusted demo values", () => {
   const maliciousName = "</script><script>alert(1)</script>";
-  const demo: AmpliviewAdminDemoData = {
+  const demo: AmpliviewAdminData = {
     overview: {
       activeBusinesses: 1,
       attendances: 1,
