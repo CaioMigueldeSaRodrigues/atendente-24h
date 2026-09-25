@@ -71,6 +71,11 @@ test("preview serves the workshop portals and internal Ampliview portal", async 
     assert.ok(adminHtml.includes("Conglomerados com registros") && adminHtml.includes("mappedClusters.length"));
     assert.ok(adminHtml.includes("Estabelecimentos encontrados"));
     assert.ok(adminHtml.includes("Listagem pública — CNPJ ainda não validado"));
+    for (const filterLabel of ["Buscar estabelecimento", "Macrorregião", "Conglomerado", "Segmento", "Limpar filtros", "Exibindo", "Endereço", "Nenhum estabelecimento encontrado com os filtros selecionados."]) {
+      assert.ok(adminHtml.includes(filterLabel), `missing market filter/table label: ${filterLabel}`);
+    }
+    assert.ok(adminHtml.includes("market-search") && adminHtml.includes("market-region") && adminHtml.includes("market-cluster") && adminHtml.includes("market-segment"));
+    assert.doesNotMatch(adminHtml, /innerHTML/);
     assert.doesNotMatch(adminHtml, /Carga de estabelecimentos validada ainda não integrada/);
     assert.ok(adminHtml.includes("Alvorada / Dom Pedro / Redenção / Planalto"));
     assert.deepEqual(MANAUS_COMMERCIAL_REGIONS, ["Norte", "Sul", "Leste", "Oeste"]);
