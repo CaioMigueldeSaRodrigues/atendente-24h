@@ -49,6 +49,9 @@ test("preview serves the workshop portals and internal Ampliview portal", async 
 
     const admin = await fetch(`${base}/admin`);
     const adminHtml = await admin.text();
+    const adminScript = adminHtml.match(/<script>([\s\S]*?)<\/script>/)?.[1];
+    assert.ok(adminScript);
+    assert.doesNotThrow(() => new Function(adminScript));
     assert.equal(admin.status, 200);
     assert.match(admin.headers.get("content-type") ?? "", /text\/html/);
     assert.ok(adminHtml.includes("Mercado Mapeado"));
@@ -64,15 +67,57 @@ test("preview serves the workshop portals and internal Ampliview portal", async 
     assert.match(adminHtml, /Gap comercial/);
     assert.ok(adminHtml.includes("Ponta Negra / Tarumã") && adminHtml.includes("Colônia Antônio Aleixo / Puraquequara"));
     assert.ok(adminHtml.includes("Empresas encontradas neste levantamento são estabelecimentos do mercado e não representam clientes Ampliview"));
-    assert.ok(adminHtml.includes("Empresas mapeadas") && adminHtml.includes('"mappedBusinessCount":0'));
-    assert.ok(adminHtml.includes("Carga de estabelecimentos validada ainda não integrada."));
+    assert.ok(adminHtml.includes("Empresas mapeadas") && adminHtml.includes("market.mappedBusinesses.length"));
+    assert.ok(adminHtml.includes("Conglomerados com registros") && adminHtml.includes("mappedClusters.length"));
+    assert.ok(adminHtml.includes("Estabelecimentos encontrados"));
+    assert.ok(adminHtml.includes("Listagem pública — CNPJ ainda não validado"));
+    assert.doesNotMatch(adminHtml, /Carga de estabelecimentos validada ainda não integrada/);
     assert.ok(adminHtml.includes("Alvorada / Dom Pedro / Redenção / Planalto"));
     assert.deepEqual(MANAUS_COMMERCIAL_REGIONS, ["Norte", "Sul", "Leste", "Oeste"]);
     assert.equal(MANAUS_COMMERCIAL_CLUSTERS.length, 16);
     assert.deepEqual(new Set(MANAUS_COMMERCIAL_CLUSTERS.map(({ region }) => region)), new Set(["Norte", "Sul", "Leste", "Oeste"]));
     assert.ok(MANAUS_COMMERCIAL_CLUSTERS.every((cluster) => !("demoSignal" in cluster)));
-    assert.deepEqual(MANAUS_MAPPED_BUSINESSES, []);
+    assert.equal(MANAUS_MAPPED_BUSINESSES.length, 31);
+    const serializedMarket = adminHtml.match(/const market=(\{[^;]+\});/);
+    const serializedMarketJson = serializedMarket?.[1];
+    assert.ok(serializedMarketJson);
+    const htmlMarketData = JSON.parse(serializedMarketJson) as { mappedBusinesses: unknown[] };
+    assert.equal(htmlMarketData.mappedBusinesses.length, MANAUS_MAPPED_BUSINESSES.length);
+    const mappedClusterKeys = new Set<string>();
+    for (const business of MANAUS_MAPPED_BUSINESSES) {
+      const cluster = MANAUS_COMMERCIAL_CLUSTERS.find((candidate) => candidate.name === business.cluster);
+      assert.ok(cluster, "unknown cluster: " + business.cluster);
+      assert.equal(cluster.region, business.region);
+      assert.ok(business.name.trim());
+      assert.ok(business.address.trim());
+      assert.ok(business.neighborhood.trim());
+      assert.ok(business.segments.length > 0);
+      assert.equal(business.mappedAt, "2026-09-25");
+      assert.equal(business.verificationStatus, "PUBLIC_LISTING_ONLY");
+      assert.ok(["PUBLIC_MAP_LISTING", "PUBLIC_DIRECTORY"].includes(business.sourceKind));
+      assert.ok(!business.name.includes("Ampliview"));
+      assert.ok(!("businessId" in business) && !("customerId" in business));
+      if (business.sourceKind === "PUBLIC_DIRECTORY") assert.ok(business.sourceUrl);
+      if (business.sourceKind === "PUBLIC_MAP_LISTING") {
+        assert.equal(business.sourceName, "Listagem pública de mapa");
+        assert.equal(business.sourceUrl, undefined);
+      }
+      mappedClusterKeys.add(business.region + "|" + business.cluster);
+    }
+    assert.equal(MANAUS_MAPPED_BUSINESSES.filter(({ sourceKind }) => sourceKind === "PUBLIC_DIRECTORY").length, 2);
+    assert.ok(MANAUS_MAPPED_BUSINESSES.filter(({ sourceKind }) => sourceKind === "PUBLIC_DIRECTORY").every((business) => business.sourceName === "Solutudo" && business.sourceUrl));
+    assert.equal(mappedClusterKeys.size, 16);
+    assert.equal(MANAUS_COMMERCIAL_CLUSTERS.filter((cluster) => mappedClusterKeys.has(cluster.region + "|" + cluster.name)).length, 16);
+    assert.deepEqual(
+      Object.fromEntries(MANAUS_COMMERCIAL_REGIONS.map((region) => [
+        region,
+        MANAUS_MAPPED_BUSINESSES.filter((business) => business.region === region).length,
+      ])),
+      { Norte: 6, Sul: 10, Leste: 8, Oeste: 7 },
+    );
+    assert.ok(!adminHtml.includes("solutudo.com.br"));
     assert.ok(adminHtml.includes('"city":"Manaus"') && adminHtml.includes('"state":"AM"'));
+    assert.ok(adminHtml.includes("Ambiente de validação"));
     assert.doesNotMatch(adminHtml, /Barulho ao frear|Não gela|Pedal baixo/);
     assert.doesNotMatch(adminHtml, /GROQ_API_KEY|dummy-secret|stack trace|localStorage|sessionStorage/);
 
@@ -114,7 +159,7 @@ test("admin renderer safely serializes untrusted demo values", () => {
   const html = renderAmpliviewAdminUi(demo, {
     regions: MANAUS_COMMERCIAL_REGIONS,
     clusters: MANAUS_COMMERCIAL_CLUSTERS,
-    mappedBusinessCount: MANAUS_MAPPED_BUSINESSES.length,
+    mappedBusinesses: [],
   });
   assert.ok(html.includes("\\u003c/script>\\u003cscript>alert(1)\\u003c/script>"));
   assert.ok(!html.includes(maliciousName));

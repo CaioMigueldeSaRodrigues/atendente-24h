@@ -273,7 +273,11 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse)
     return;
   }
   if (request.method === "GET" && pathname === "/admin") {
-    sendHtml(response, renderAmpliviewAdminUi(adminDemoData, { regions: MANAUS_COMMERCIAL_REGIONS, clusters: MANAUS_COMMERCIAL_CLUSTERS, mappedBusinessCount: MANAUS_MAPPED_BUSINESSES.length }));
+    sendHtml(response, renderAmpliviewAdminUi(adminDemoData, {
+      regions: MANAUS_COMMERCIAL_REGIONS,
+      clusters: MANAUS_COMMERCIAL_CLUSTERS,
+      mappedBusinesses: MANAUS_MAPPED_BUSINESSES,
+    }));
     return;
   }
   if (request.method === "GET" && pathname === "/operator") {
