@@ -48,14 +48,21 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
 
   let sequence = 0;
   let clockTick = 0;
+  let interpreterCalls = 0;
+  const webhookCredential = {
+    instanceName: "instancia-ficticia",
+    instanceToken: "token-compartilhado-de-teste-ficticio",
+    businessId: "business-a",
+  };
   const serverDependencies = {
     conversationRepository, messageRepository, customerRepository, vehicleRepository,
     opportunityRepository, quoteRequestRepository,
     commercialEventRepository,
+    evolutionGoWebhookCredentials: [webhookCredential],
     appointmentRepository: new InMemoryAppointmentRepository(),
     humanHandoffRepository: new InMemoryHumanHandoffRepository(),
     operator: { businessId: "business-a", businessName: "Oficina A" },
-    interpreter: { interpret: async () => interpretation },
+    interpreter: { interpret: async () => { interpreterCalls += 1; return interpretation; } },
     now: () => new Date(Date.parse(timestamp) + clockTick++).toISOString(),
     generateId: (prefix: string) => `${prefix}-${++sequence}`,
   };
@@ -73,6 +80,104 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
     const post = (path: string, body: unknown) => request(path, {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
     });
+
+    const webhookPath = "/v1/channels/whatsapp/evolution-go/webhook";
+    const webhookPayload = {
+      event: "Message",
+      instanceName: "instancia-ficticia",
+      instanceToken: webhookCredential.instanceToken,
+      data: {
+        Info: {
+          ID: "mensagem-ficticia-123",
+          Type: "text",
+          Sender: "5511999990000@s.whatsapp.net",
+          Chat: "5511999990000@s.whatsapp.net",
+          PushName: "Contato Fictício",
+          Timestamp: "2026-09-24T12:00:00.000Z",
+          IsFromMe: false,
+          IsGroup: false,
+        },
+        Message: { conversation: "Mensagem de teste fictícia" },
+      },
+    };
+
+    const serverWithoutWebhookCredentials = createBasicPlanHttpServer({
+      ...serverDependencies,
+      evolutionGoWebhookCredentials: [],
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        serverWithoutWebhookCredentials.once("error", reject);
+        serverWithoutWebhookCredentials.listen(0, "127.0.0.1", resolve);
+      });
+      const noCredentialsAddress = serverWithoutWebhookCredentials.address() as AddressInfo;
+      const noCredentialsResponse = await fetch(
+        `http://127.0.0.1:${noCredentialsAddress.port}${webhookPath}`,
+        { method: "POST", headers: { "content-type": "application/json" }, body: "{}" },
+      );
+      assert.equal(noCredentialsResponse.status, 404);
+      assert.deepEqual(await noCredentialsResponse.json(), { error: "Not found" });
+    } finally {
+      await new Promise<void>((resolve) => {
+        if (!serverWithoutWebhookCredentials.listening) return resolve();
+        serverWithoutWebhookCredentials.close(() => resolve());
+      });
+    }
+
+    const validWebhook = await post(webhookPath, webhookPayload);
+    assert.equal(validWebhook.status, 202);
+    const validWebhookText = await validWebhook.text();
+    assert.equal(validWebhookText.includes(webhookCredential.instanceToken), false);
+    assert.deepEqual(JSON.parse(validWebhookText), {
+      accepted: true,
+      message: {
+        instanceName: "instancia-ficticia",
+        externalMessageId: "mensagem-ficticia-123",
+        senderJid: "5511999990000@s.whatsapp.net",
+        senderName: "Contato Fictício",
+        content: "Mensagem de teste fictícia",
+        occurredAt: "2026-09-24T12:00:00.000Z",
+      },
+    });
+    const incorrectTokenWebhook = await post(webhookPath, {
+      ...webhookPayload,
+      instanceToken: "token-incorreto-de-teste-ficticio",
+    });
+    assert.equal(incorrectTokenWebhook.status, 401);
+    assert.deepEqual(await incorrectTokenWebhook.json(), { error: "Unauthorized" });
+    const unconfiguredInstanceWebhook = await post(webhookPath, {
+      ...webhookPayload,
+      instanceName: "instancia-nao-configurada",
+    });
+    assert.equal(unconfiguredInstanceWebhook.status, 401);
+    assert.deepEqual(await unconfiguredInstanceWebhook.json(), { error: "Unauthorized" });
+    const missingTokenWebhook = await post(webhookPath, {
+      ...webhookPayload,
+      instanceToken: undefined,
+    });
+    assert.equal(missingTokenWebhook.status, 401);
+    assert.deepEqual(await missingTokenWebhook.json(), { error: "Unauthorized" });
+    const fromMeWebhook = await post(webhookPath, {
+      ...webhookPayload,
+      data: { ...webhookPayload.data, Info: { ...webhookPayload.data.Info, IsFromMe: true } },
+    });
+    assert.equal(fromMeWebhook.status, 202);
+    assert.deepEqual(await fromMeWebhook.json(), { accepted: false, reason: "ignored_event" });
+    const reactionWebhook = await post(webhookPath, {
+      ...webhookPayload,
+      data: {
+        ...webhookPayload.data,
+        Info: { ...webhookPayload.data.Info, Type: "reaction" },
+      },
+    });
+    assert.equal(reactionWebhook.status, 202);
+    assert.deepEqual(await reactionWebhook.json(), { accepted: false, reason: "ignored_event" });
+    const invalidWebhookJson = await request(webhookPath, {
+      method: "POST", headers: { "content-type": "application/json" }, body: "{",
+    });
+    assert.equal(invalidWebhookJson.status, 400);
+    assert.deepEqual(await invalidWebhookJson.json(), { error: "Invalid JSON" });
+    assert.equal(interpreterCalls, 0);
 
     const health = await request("/health");
     assert.equal(health.status, 200);

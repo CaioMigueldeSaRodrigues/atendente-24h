@@ -57,6 +57,12 @@ test("ignores messages sent by this instance", () => {
   assert.equal(parseEvolutionGoInboundText(payload({ conversation: "Eco" }, { IsFromMe: true })), null);
 });
 
+test("rejects messages when IsFromMe is absent", () => {
+  const inbound = payload({ conversation: "Sem indicador de origem" });
+  delete (inbound.data.Info as Record<string, unknown>).IsFromMe;
+  assert.equal(parseEvolutionGoInboundText(inbound), null);
+});
+
 test("ignores reactions and other non-text message types", () => {
   assert.equal(
     parseEvolutionGoInboundText(

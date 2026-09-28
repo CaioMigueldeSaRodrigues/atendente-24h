@@ -7,6 +7,11 @@ import type { Conversation } from "../../core/domain/entities.js";
 import { processMessage } from "../../core/process-message.js";
 import { respondToQuote } from "../../core/respond-to-quote.js";
 import { publishAuthorizedQuote } from "../../core/publish-authorized-quote.js";
+import { parseEvolutionGoInboundText } from "../../channels/whatsapp/evolution-go-message-parser.js";
+import {
+  authenticateEvolutionGoWebhook,
+  type EvolutionGoWebhookCredential,
+} from "../../channels/whatsapp/evolution-go-webhook-auth.js";
 import { renderBasicPlanOperatorUi, type BasicPlanOperatorConfig } from "./basic-plan-operator-ui.js";
 
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -21,6 +26,7 @@ export type BasicPlanHttpServerDependencies = {
   appointmentRepository: AppointmentRepository;
   humanHandoffRepository: HumanHandoffRepository;
   commercialEventRepository?: CommercialEventRepository;
+  evolutionGoWebhookCredentials?: EvolutionGoWebhookCredential[];
   operator: BasicPlanOperatorConfig;
   interpreter: MessageInterpreter;
   now: () => string;
@@ -54,6 +60,28 @@ async function handleRequest(
 
   if (request.method === "GET" && pathname === "/health") {
     sendJson(response, 200, { status: "ok" });
+    return;
+  }
+
+  if (request.method === "POST" && pathname === "/v1/channels/whatsapp/evolution-go/webhook") {
+    const credentials = dependencies.evolutionGoWebhookCredentials;
+    if (!credentials || credentials.length === 0) {
+      sendError(response, 404, "Not found");
+      return;
+    }
+    const payload = await readJsonBody(request, response);
+    if (payload === undefined) return;
+    const authenticatedWebhook = authenticateEvolutionGoWebhook(payload, credentials);
+    if (authenticatedWebhook === null) {
+      sendError(response, 401, "Unauthorized");
+      return;
+    }
+    const message = parseEvolutionGoInboundText(payload);
+    if (message === null) {
+      sendJson(response, 202, { accepted: false, reason: "ignored_event" });
+      return;
+    }
+    sendJson(response, 202, { accepted: true, message });
     return;
   }
 

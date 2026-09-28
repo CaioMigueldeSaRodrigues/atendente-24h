@@ -29,7 +29,7 @@ export function parseEvolutionGoInboundText(
   }
 
   const info = data.Info;
-  if (info.Type !== "text" || info.IsFromMe === true || info.IsGroup === true) return null;
+  if (info.Type !== "text" || info.IsFromMe !== false || info.IsGroup === true) return null;
 
   const message = data.Message;
   const content = nonEmptyString(message.conversation)
