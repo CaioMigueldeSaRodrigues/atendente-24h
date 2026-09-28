@@ -15,6 +15,7 @@ import { SqliteMessageRepository } from "../../src/infrastructure/sqlite/sqlite-
 import { SqliteOpportunityRepository } from "../../src/infrastructure/sqlite/sqlite-opportunity-repository.js";
 import { SqliteQuoteRequestRepository } from "../../src/infrastructure/sqlite/sqlite-quote-request-repository.js";
 import { SqliteVehicleRepository } from "../../src/infrastructure/sqlite/sqlite-vehicle-repository.js";
+import { SqliteEvolutionGoWebhookReplayGuard } from "../../src/infrastructure/sqlite/sqlite-evolution-go-webhook-replay-guard.js";
 import { createBasicPlanHttpServer } from "../../src/infrastructure/http/basic-plan-http-server.js";
 
 const timestamp = "2026-09-24T12:00:00.000Z";
@@ -39,6 +40,7 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
   const opportunityRepository = new SqliteOpportunityRepository(database);
   const quoteRequestRepository = new SqliteQuoteRequestRepository(database);
   const commercialEventRepository = new SqliteCommercialEventRepository(database);
+  const evolutionGoWebhookReplayGuard = new SqliteEvolutionGoWebhookReplayGuard(database);
   const business: AutomotiveBusiness = {
     id: "business-a", name: "Oficina A", businessType: BusinessType.WORKSHOP,
     timezone: "America/Sao_Paulo", active: true, createdAt: timestamp, updatedAt: timestamp,
@@ -59,6 +61,7 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
     opportunityRepository, quoteRequestRepository,
     commercialEventRepository,
     evolutionGoWebhookCredentials: [webhookCredential],
+    evolutionGoWebhookReplayGuard,
     appointmentRepository: new InMemoryAppointmentRepository(),
     humanHandoffRepository: new InMemoryHumanHandoffRepository(),
     operator: { businessId: "business-a", businessName: "Oficina A" },
@@ -80,6 +83,9 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
     const post = (path: string, body: unknown) => request(path, {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
     });
+    const assertWebhookTokenOmitted = async (response: Response) => {
+      assert.equal((await response.clone().text()).includes(webhookCredential.instanceToken), false);
+    };
 
     const webhookPath = "/v1/channels/whatsapp/evolution-go/webhook";
     const webhookPayload = {
@@ -116,6 +122,7 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
         { method: "POST", headers: { "content-type": "application/json" }, body: "{}" },
       );
       assert.equal(noCredentialsResponse.status, 404);
+      await assertWebhookTokenOmitted(noCredentialsResponse);
       assert.deepEqual(await noCredentialsResponse.json(), { error: "Not found" });
     } finally {
       await new Promise<void>((resolve) => {
@@ -123,6 +130,14 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
         serverWithoutWebhookCredentials.close(() => resolve());
       });
     }
+
+    const incorrectTokenWebhook = await post(webhookPath, {
+      ...webhookPayload,
+      instanceToken: "token-incorreto-de-teste-ficticio",
+    });
+    assert.equal(incorrectTokenWebhook.status, 401);
+    await assertWebhookTokenOmitted(incorrectTokenWebhook);
+    assert.deepEqual(await incorrectTokenWebhook.json(), { error: "Unauthorized" });
 
     const validWebhook = await post(webhookPath, webhookPayload);
     assert.equal(validWebhook.status, 202);
@@ -139,30 +154,57 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
         occurredAt: "2026-09-24T12:00:00.000Z",
       },
     });
-    const incorrectTokenWebhook = await post(webhookPath, {
-      ...webhookPayload,
-      instanceToken: "token-incorreto-de-teste-ficticio",
+    const duplicateWebhook = await post(webhookPath, webhookPayload);
+    assert.equal(duplicateWebhook.status, 202);
+    await assertWebhookTokenOmitted(duplicateWebhook);
+    assert.deepEqual(await duplicateWebhook.json(), {
+      accepted: false,
+      reason: "duplicate_message",
     });
-    assert.equal(incorrectTokenWebhook.status, 401);
-    assert.deepEqual(await incorrectTokenWebhook.json(), { error: "Unauthorized" });
     const unconfiguredInstanceWebhook = await post(webhookPath, {
       ...webhookPayload,
       instanceName: "instancia-nao-configurada",
     });
     assert.equal(unconfiguredInstanceWebhook.status, 401);
+    await assertWebhookTokenOmitted(unconfiguredInstanceWebhook);
     assert.deepEqual(await unconfiguredInstanceWebhook.json(), { error: "Unauthorized" });
     const missingTokenWebhook = await post(webhookPath, {
       ...webhookPayload,
       instanceToken: undefined,
     });
     assert.equal(missingTokenWebhook.status, 401);
+    await assertWebhookTokenOmitted(missingTokenWebhook);
     assert.deepEqual(await missingTokenWebhook.json(), { error: "Unauthorized" });
     const fromMeWebhook = await post(webhookPath, {
       ...webhookPayload,
-      data: { ...webhookPayload.data, Info: { ...webhookPayload.data.Info, IsFromMe: true } },
+      data: {
+        ...webhookPayload.data,
+        Info: { ...webhookPayload.data.Info, ID: "mensagem-ignorada-ficticia", IsFromMe: true },
+      },
     });
     assert.equal(fromMeWebhook.status, 202);
+    await assertWebhookTokenOmitted(fromMeWebhook);
     assert.deepEqual(await fromMeWebhook.json(), { accepted: false, reason: "ignored_event" });
+    const retryIgnoredWebhook = await post(webhookPath, {
+      ...webhookPayload,
+      data: {
+        ...webhookPayload.data,
+        Info: { ...webhookPayload.data.Info, ID: "mensagem-ignorada-ficticia" },
+      },
+    });
+    assert.equal(retryIgnoredWebhook.status, 202);
+    await assertWebhookTokenOmitted(retryIgnoredWebhook);
+    assert.deepEqual(await retryIgnoredWebhook.json(), {
+      accepted: true,
+      message: {
+        instanceName: "instancia-ficticia",
+        externalMessageId: "mensagem-ignorada-ficticia",
+        senderJid: "5511999990000@s.whatsapp.net",
+        senderName: "Contato Fictício",
+        content: "Mensagem de teste fictícia",
+        occurredAt: "2026-09-24T12:00:00.000Z",
+      },
+    });
     const reactionWebhook = await post(webhookPath, {
       ...webhookPayload,
       data: {
@@ -171,11 +213,46 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
       },
     });
     assert.equal(reactionWebhook.status, 202);
+    await assertWebhookTokenOmitted(reactionWebhook);
     assert.deepEqual(await reactionWebhook.json(), { accepted: false, reason: "ignored_event" });
+
+    const { evolutionGoWebhookReplayGuard: _replayGuard, ...serverDependenciesWithoutReplayGuard } = serverDependencies;
+    const serverWithoutReplayGuard = createBasicPlanHttpServer(serverDependenciesWithoutReplayGuard);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        serverWithoutReplayGuard.once("error", reject);
+        serverWithoutReplayGuard.listen(0, "127.0.0.1", resolve);
+      });
+      const noReplayGuardAddress = serverWithoutReplayGuard.address() as AddressInfo;
+      const noReplayGuardResponse = await fetch(
+        `http://127.0.0.1:${noReplayGuardAddress.port}${webhookPath}`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            ...webhookPayload,
+            data: {
+              ...webhookPayload.data,
+              Info: { ...webhookPayload.data.Info, ID: "mensagem-sem-guard-ficticia" },
+            },
+          }),
+        },
+      );
+      assert.equal(noReplayGuardResponse.status, 503);
+      await assertWebhookTokenOmitted(noReplayGuardResponse);
+      assert.deepEqual(await noReplayGuardResponse.json(), { error: "Service unavailable" });
+    } finally {
+      await new Promise<void>((resolve) => {
+        if (!serverWithoutReplayGuard.listening) return resolve();
+        serverWithoutReplayGuard.close(() => resolve());
+      });
+    }
+
     const invalidWebhookJson = await request(webhookPath, {
       method: "POST", headers: { "content-type": "application/json" }, body: "{",
     });
     assert.equal(invalidWebhookJson.status, 400);
+    await assertWebhookTokenOmitted(invalidWebhookJson);
     assert.deepEqual(await invalidWebhookJson.json(), { error: "Invalid JSON" });
     assert.equal(interpreterCalls, 0);
 

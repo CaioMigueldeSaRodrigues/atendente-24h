@@ -11,6 +11,7 @@ import {
 } from "../core/in-memory-repositories.js";
 import { createBasicPlanHttpServer } from "../infrastructure/http/basic-plan-http-server.js";
 import { createSqliteDatabase } from "../infrastructure/sqlite/sqlite-database.js";
+import { SqliteEvolutionGoWebhookReplayGuard } from "../infrastructure/sqlite/sqlite-evolution-go-webhook-replay-guard.js";
 import { SqliteAutomotiveBusinessRepository } from "../infrastructure/sqlite/sqlite-automotive-business-repository.js";
 import { SqliteConversationRepository } from "../infrastructure/sqlite/sqlite-conversation-repository.js";
 import { SqliteCommercialEventRepository } from "../infrastructure/sqlite/sqlite-commercial-event-repository.js";
@@ -81,6 +82,7 @@ export async function createBasicPlanRuntime(
     const opportunityRepository = new SqliteOpportunityRepository(database);
     const quoteRequestRepository = new SqliteQuoteRequestRepository(database);
     const commercialEventRepository = new SqliteCommercialEventRepository(database);
+    const evolutionGoWebhookReplayGuard = new SqliteEvolutionGoWebhookReplayGuard(database);
 
     server = createBasicPlanHttpServer({
       conversationRepository,
@@ -90,6 +92,7 @@ export async function createBasicPlanRuntime(
       opportunityRepository,
       quoteRequestRepository,
       commercialEventRepository,
+      evolutionGoWebhookReplayGuard,
       appointmentRepository: new InMemoryAppointmentRepository(),
       humanHandoffRepository: new InMemoryHumanHandoffRepository(),
       operator: {

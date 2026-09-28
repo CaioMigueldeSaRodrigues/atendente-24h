@@ -12,6 +12,7 @@ import {
   authenticateEvolutionGoWebhook,
   type EvolutionGoWebhookCredential,
 } from "../../channels/whatsapp/evolution-go-webhook-auth.js";
+import type { EvolutionGoWebhookReplayGuard } from "../../channels/whatsapp/evolution-go-webhook-replay-guard.js";
 import { renderBasicPlanOperatorUi, type BasicPlanOperatorConfig } from "./basic-plan-operator-ui.js";
 
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -27,6 +28,7 @@ export type BasicPlanHttpServerDependencies = {
   humanHandoffRepository: HumanHandoffRepository;
   commercialEventRepository?: CommercialEventRepository;
   evolutionGoWebhookCredentials?: EvolutionGoWebhookCredential[];
+  evolutionGoWebhookReplayGuard?: EvolutionGoWebhookReplayGuard;
   operator: BasicPlanOperatorConfig;
   interpreter: MessageInterpreter;
   now: () => string;
@@ -79,6 +81,21 @@ async function handleRequest(
     const message = parseEvolutionGoInboundText(payload);
     if (message === null) {
       sendJson(response, 202, { accepted: false, reason: "ignored_event" });
+      return;
+    }
+    const replayGuard = dependencies.evolutionGoWebhookReplayGuard;
+    if (!replayGuard) {
+      sendError(response, 503, "Service unavailable");
+      return;
+    }
+    const claimed = replayGuard.claim({
+      businessId: authenticatedWebhook.businessId,
+      instanceName: authenticatedWebhook.instanceName,
+      externalMessageId: message.externalMessageId,
+      receivedAt: dependencies.now(),
+    });
+    if (!claimed) {
+      sendJson(response, 202, { accepted: false, reason: "duplicate_message" });
       return;
     }
     sendJson(response, 202, { accepted: true, message });

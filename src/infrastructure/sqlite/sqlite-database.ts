@@ -19,6 +19,15 @@ const INITIAL_SCHEMA = `
     updated_at TEXT NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS evolution_go_webhook_receipts (
+    business_id TEXT NOT NULL,
+    instance_name TEXT NOT NULL,
+    external_message_id TEXT NOT NULL,
+    received_at TEXT NOT NULL,
+    PRIMARY KEY (business_id, instance_name, external_message_id),
+    FOREIGN KEY (business_id) REFERENCES automotive_businesses(id)
+  );
+
   CREATE TABLE IF NOT EXISTS customers (
     id TEXT NOT NULL,
     business_id TEXT NOT NULL,
