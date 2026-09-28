@@ -5,6 +5,7 @@ import type { Server } from "node:http";
 import type { AutomotiveBusiness } from "../core/domain/entities.js";
 import type { BusinessType } from "../core/domain/enums.js";
 import type { MessageInterpreter } from "../core/message-interpreter.js";
+import type { EvolutionGoWebhookCredential } from "../channels/whatsapp/evolution-go-webhook-auth.js";
 import {
   InMemoryAppointmentRepository,
   InMemoryHumanHandoffRepository,
@@ -32,6 +33,7 @@ export type BasicPlanRuntimeOptions = {
   databasePath: string;
   interpreter: MessageInterpreter;
   business: BasicPlanBusinessConfig;
+  evolutionGoWebhookCredential?: EvolutionGoWebhookCredential;
   now?: () => string;
 };
 
@@ -44,6 +46,13 @@ export type BasicPlanRuntime = {
 export async function createBasicPlanRuntime(
   options: BasicPlanRuntimeOptions,
 ): Promise<BasicPlanRuntime> {
+  if (
+    options.evolutionGoWebhookCredential &&
+    options.evolutionGoWebhookCredential.businessId !== options.business.businessId
+  ) {
+    throw new Error("Evolution Go webhook business does not match the configured business");
+  }
+
   if (options.databasePath !== ":memory:") {
     mkdirSync(dirname(resolve(options.databasePath)), { recursive: true });
   }
@@ -93,6 +102,9 @@ export async function createBasicPlanRuntime(
       quoteRequestRepository,
       commercialEventRepository,
       evolutionGoWebhookReplayGuard,
+      ...(options.evolutionGoWebhookCredential
+        ? { evolutionGoWebhookCredentials: [options.evolutionGoWebhookCredential] }
+        : {}),
       appointmentRepository: new InMemoryAppointmentRepository(),
       humanHandoffRepository: new InMemoryHumanHandoffRepository(),
       operator: {

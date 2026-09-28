@@ -4,6 +4,7 @@ import { dirname, resolve } from "node:path";
 import { BusinessType } from "../core/domain/enums.js";
 import { GroqMessageInterpreter } from "../integrations/groq-message-interpreter.js";
 import { createBasicPlanRuntime } from "./basic-plan-runtime.js";
+import { readEvolutionGoWebhookCredential } from "./evolution-go-webhook-environment.js";
 
 async function main(): Promise<void> {
   const config = readEnvironment(process.env);
@@ -23,6 +24,9 @@ async function main(): Promise<void> {
       businessType: config.businessType,
       timezone: config.timezone,
     },
+    ...(config.evolutionGoWebhookCredential
+      ? { evolutionGoWebhookCredential: config.evolutionGoWebhookCredential }
+      : {}),
   });
 
   let shutdownPromise: Promise<void> | undefined;
@@ -72,6 +76,7 @@ type RuntimeEnvironment = {
   port: number;
   groqApiKey: string;
   groqModel: string;
+  evolutionGoWebhookCredential?: ReturnType<typeof readEvolutionGoWebhookCredential>;
 };
 
 function readEnvironment(environment: NodeJS.ProcessEnv): RuntimeEnvironment {
@@ -92,6 +97,7 @@ function readEnvironment(environment: NodeJS.ProcessEnv): RuntimeEnvironment {
     throw new Error("PORT must be an integer between 1 and 65535");
   }
 
+  const evolutionGoWebhookCredential = readEvolutionGoWebhookCredential(environment, businessId);
   return {
     databasePath: environment.BASIC_PLAN_DB_PATH?.trim() || "./data/atendente.db",
     businessId,
@@ -102,6 +108,7 @@ function readEnvironment(environment: NodeJS.ProcessEnv): RuntimeEnvironment {
     port,
     groqApiKey: required(environment.GROQ_API_KEY, "GROQ_API_KEY"),
     groqModel: required(environment.GROQ_MODEL, "GROQ_MODEL"),
+    ...(evolutionGoWebhookCredential ? { evolutionGoWebhookCredential } : {}),
   };
 }
 

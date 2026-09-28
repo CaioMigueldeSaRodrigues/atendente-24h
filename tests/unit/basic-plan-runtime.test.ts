@@ -15,6 +15,31 @@ const business = {
   businessType: BusinessType.WORKSHOP,
   timezone: "America/Sao_Paulo",
 };
+const webhookCredential = {
+  instanceName: "instance-synthetic-1",
+  instanceToken: "fake-evolution-token-for-runtime-test-only",
+  businessId: business.businessId,
+};
+
+test("rejects an Evolution Go credential configured for another business", async () => {
+  await assert.rejects(
+    createBasicPlanRuntime({
+      databasePath: ":memory:",
+      business,
+      interpreter: { interpret: async () => { throw new Error("Interpreter should not be called"); } },
+      evolutionGoWebhookCredential: {
+        ...webhookCredential,
+        businessId: "business-synthetic-other",
+      },
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal(error.message, "Evolution Go webhook business does not match the configured business");
+      assert.equal(error.message.includes(webhookCredential.instanceToken), false);
+      return true;
+    },
+  );
+});
 
 test("creates and reuses the pilot business and persists conversations across runtimes", async () => {
   const directory = mkdtempSync(join(tmpdir(), "basic-plan-runtime-"));
@@ -42,6 +67,16 @@ test("creates and reuses the pilot business and persists conversations across ru
     const operatorPage = await fetch(`http://127.0.0.1:${firstAddress.port}/operator`);
     assert.equal(operatorPage.status, 200);
     assert.match(await operatorPage.text(), /Oficina Piloto/);
+    const closedWebhook = await fetch(
+      `http://127.0.0.1:${firstAddress.port}/v1/channels/whatsapp/evolution-go/webhook`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      },
+    );
+    assert.equal(closedWebhook.status, 404);
+    assert.deepEqual(await closedWebhook.json(), { error: "Not found" });
 
     const createConversation = async (port: number) => {
       const response = await fetch(`http://127.0.0.1:${port}/v1/businesses/${business.businessId}/conversations`, {
@@ -63,7 +98,11 @@ test("creates and reuses the pilot business and persists conversations across ru
     firstRuntime = undefined;
 
     secondRuntime = await createBasicPlanRuntime({
-      databasePath, business, interpreter, now: () => "2026-09-25T12:00:00.000Z",
+      databasePath,
+      business,
+      interpreter,
+      evolutionGoWebhookCredential: webhookCredential,
+      now: () => "2026-09-25T12:00:00.000Z",
     });
     const businessRepository = new SqliteAutomotiveBusinessRepository(secondRuntime.database);
     const savedBusiness = await businessRepository.findById(business.businessId);
@@ -95,6 +134,50 @@ test("creates and reuses the pilot business and persists conversations across ru
       secondRuntime!.server.listen(0, "127.0.0.1", resolve);
     });
     const secondAddress = secondRuntime.server.address() as AddressInfo;
+    const webhookUrl = `http://127.0.0.1:${secondAddress.port}/v1/channels/whatsapp/evolution-go/webhook`;
+    const webhookPayload = {
+      event: "Message",
+      instanceName: webhookCredential.instanceName,
+      instanceToken: webhookCredential.instanceToken,
+      data: {
+        Info: {
+          ID: "runtime-message-synthetic-1",
+          Type: "text",
+          IsFromMe: false,
+          IsGroup: false,
+          Sender: "15550000001@s.whatsapp.net",
+          Timestamp: "2026-09-25T12:00:00.000Z",
+        },
+        Message: { conversation: "Texto sintético para webhook" },
+      },
+    };
+    const webhookResponse = await fetch(webhookUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(webhookPayload),
+    });
+    assert.equal(webhookResponse.status, 202);
+    assert.deepEqual(await webhookResponse.json(), {
+      accepted: true,
+      message: {
+        instanceName: webhookCredential.instanceName,
+        externalMessageId: "runtime-message-synthetic-1",
+        senderJid: "15550000001@s.whatsapp.net",
+        content: "Texto sintético para webhook",
+        occurredAt: "2026-09-25T12:00:00.000Z",
+      },
+    });
+    const duplicateWebhookResponse = await fetch(webhookUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(webhookPayload),
+    });
+    assert.equal(duplicateWebhookResponse.status, 202);
+    assert.deepEqual(await duplicateWebhookResponse.json(), {
+      accepted: false,
+      reason: "duplicate_message",
+    });
+
     const secondConversation = await createConversation(secondAddress.port);
     assert.notEqual(secondConversation.conversationId, firstId);
 
