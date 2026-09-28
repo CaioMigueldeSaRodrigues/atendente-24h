@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import { GroqMessageInterpreter } from "../../src/integrations/groq-message-interpreter.js";
+import { OpenAIMessageInterpreter } from "../../src/integrations/openai-message-interpreter.js";
 import {
   InMemoryAppointmentRepository,
   InMemoryConversationRepository,
@@ -14,22 +14,21 @@ import { processMessage } from "../../src/core/process-message.js";
 import { Channel, ConversationStatus } from "../../src/core/domain/enums.js";
 
 async function main(): Promise<void> {
-  const apiKey = process.env.GROQ_API_KEY;
-  const model = process.env.GROQ_MODEL;
+  const apiKey = process.env.OPENAI_API_KEY;
+  const model = process.env.OPENAI_MODEL;
 
   if (!apiKey) {
-    throw new Error("GROQ_API_KEY is required");
+    throw new Error("OPENAI_API_KEY is required");
   }
 
   if (!model) {
-    throw new Error("GROQ_MODEL is required");
+    throw new Error("OPENAI_MODEL is required");
   }
 
   const client = new OpenAI({
     apiKey,
-    baseURL: "https://api.groq.com/openai/v1",
   });
-  const interpreter = new GroqMessageInterpreter(client, model);
+  const interpreter = new OpenAIMessageInterpreter(client, model);
 
   const conversationRepository = new InMemoryConversationRepository();
   const customerRepository = new InMemoryCustomerRepository();

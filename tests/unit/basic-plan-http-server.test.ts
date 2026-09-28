@@ -274,7 +274,7 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
     assert.match(operatorHtml, /Carregando atendimento/);
     assert.match(operatorHtml, /Atendente IA/);
     assert.doesNotMatch(operatorHtml, /innerHTML/);
-    assert.doesNotMatch(operatorHtml, /super-secret-test-key|GROQ_API_KEY/);
+    assert.doesNotMatch(operatorHtml, /super-secret-test-key|OPENAI_API_KEY/);
     assert.match(operatorHtml, /meta name="viewport"/);
     const operatorScript = operatorHtml.match(/<script>([\s\S]*?)<\/script>/)?.[1];
     assert.ok(operatorScript);

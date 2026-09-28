@@ -2,7 +2,7 @@ import OpenAI from "openai";
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { BusinessType } from "../core/domain/enums.js";
-import { GroqMessageInterpreter } from "../integrations/groq-message-interpreter.js";
+import { OpenAIMessageInterpreter } from "../integrations/openai-message-interpreter.js";
 import { createBasicPlanRuntime } from "./basic-plan-runtime.js";
 import { readEvolutionGoWebhookCredential } from "./evolution-go-webhook-environment.js";
 
@@ -11,10 +11,9 @@ async function main(): Promise<void> {
   mkdirSync(dirname(resolve(config.databasePath)), { recursive: true });
 
   const client = new OpenAI({
-    apiKey: config.groqApiKey,
-    baseURL: "https://api.groq.com/openai/v1",
+    apiKey: config.openaiApiKey,
   });
-  const interpreter = new GroqMessageInterpreter(client, config.groqModel);
+  const interpreter = new OpenAIMessageInterpreter(client, config.openaiModel);
   const runtime = await createBasicPlanRuntime({
     databasePath: config.databasePath,
     interpreter,
@@ -74,8 +73,8 @@ type RuntimeEnvironment = {
   timezone: string;
   host: string;
   port: number;
-  groqApiKey: string;
-  groqModel: string;
+  openaiApiKey: string;
+  openaiModel: string;
   evolutionGoWebhookCredential?: ReturnType<typeof readEvolutionGoWebhookCredential>;
 };
 
@@ -106,8 +105,8 @@ function readEnvironment(environment: NodeJS.ProcessEnv): RuntimeEnvironment {
     timezone: environment.BASIC_PLAN_TIMEZONE?.trim() || "America/Sao_Paulo",
     host: environment.HOST?.trim() || "127.0.0.1",
     port,
-    groqApiKey: required(environment.GROQ_API_KEY, "GROQ_API_KEY"),
-    groqModel: required(environment.GROQ_MODEL, "GROQ_MODEL"),
+    openaiApiKey: required(environment.OPENAI_API_KEY, "OPENAI_API_KEY"),
+    openaiModel: required(environment.OPENAI_MODEL, "OPENAI_MODEL"),
     ...(evolutionGoWebhookCredential ? { evolutionGoWebhookCredential } : {}),
   };
 }

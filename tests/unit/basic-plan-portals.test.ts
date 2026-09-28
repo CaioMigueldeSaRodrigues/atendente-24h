@@ -210,7 +210,7 @@ test("preview serves the workshop portals and internal Ampliview portal", async 
     assert.equal(MANAUS_MAPPED_BUSINESSES.filter((business) => business.sourceUrl && /^https:\/\//i.test(business.sourceUrl)).length, 2);
     assert.ok(adminHtml.includes("Ambiente de validação"));
     assert.doesNotMatch(adminHtml, /Barulho ao frear|Não gela|Pedal baixo/);
-    assert.doesNotMatch(adminHtml, /GROQ_API_KEY|dummy-secret|stack trace|localStorage|sessionStorage/);
+    assert.doesNotMatch(adminHtml, /OPENAI_API_KEY|dummy-secret|stack trace|localStorage|sessionStorage/);
 
     const operator = await fetch(`${base}/operator`);
     const operatorHtml = await operator.text();
@@ -221,7 +221,7 @@ test("preview serves the workshop portals and internal Ampliview portal", async 
     for (const fictitiousOperatorValue of ["Oficina de Demonstração", "Carlos Almeida", "Mariana Souza", "Roberto Lima", "Toyota Corolla", "Volkswagen T-Cross", "Chevrolet Onix"]) {
       assert.ok(!operatorHtml.includes(fictitiousOperatorValue), `operator preview contains ${fictitiousOperatorValue}`);
     }
-    assert.doesNotMatch(operatorHtml, /GROQ_API_KEY/);
+    assert.doesNotMatch(operatorHtml, /OPENAI_API_KEY/);
 
     const operatorQueue = await fetch(`${base}/v1/businesses/preview-business/quotes/pending`);
     assert.equal(operatorQueue.status, 200);

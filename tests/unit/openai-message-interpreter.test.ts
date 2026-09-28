@@ -37,11 +37,12 @@ const validModelOutput = () => ({
 
 const makeMessage = (overrides: Partial<Message> = {}): Message => ({
   id: "message-internal-id",
-  businessId: "business-1",
-  conversationId: "conversation-1",
+  businessId: "business-internal-id",
+  conversationId: "conversation-internal-id",
   senderType: SenderType.CUSTOMER,
-  channel: Channel.WEB,
+  channel: Channel.WHATSAPP,
   content: "Meu carro precisa de pastilhas.",
+  externalMessageId: "external-message-id",
   createdAt: "2026-01-01T00:00:00.000Z",
   ...overrides,
 });
@@ -58,7 +59,7 @@ const makeInterpreter = (outputParsed: unknown) => {
   } as unknown as OpenAI;
 
   return {
-    interpreter: new OpenAIMessageInterpreter(client, "test-model"),
+    interpreter: new OpenAIMessageInterpreter(client, "configured-test-model"),
     requests,
   };
 };
@@ -72,11 +73,14 @@ const makeInput = () => ({
 
 type CapturedRequest = {
   model: string;
+  instructions: string;
   input: string;
+  store: boolean;
   text: {
     format: {
       name: string;
       type: string;
+      schema: Record<string, unknown>;
     };
   };
 };
@@ -106,33 +110,25 @@ test("maps nullable model fields to absent internal properties", async () => {
   assert.equal(Object.hasOwn(result, "handoffReason"), false);
 });
 
-test("throws when output_parsed is null", async () => {
-  const { interpreter } = makeInterpreter(null);
-
-  await assert.rejects(interpreter.interpret(makeInput()), {
-    message: "AI response could not be parsed",
-  });
-});
-
-test("sends the configured model to Responses API", async () => {
+test("uses Responses API with the configured model and disables response storage", async () => {
   const { interpreter, requests } = makeInterpreter(validModelOutput());
 
   await interpreter.interpret(makeInput());
 
-  assert.equal(capturedRequest(requests).model, "test-model");
+  assert.equal(requests.length, 1);
+  assert.equal(capturedRequest(requests).model, "configured-test-model");
+  assert.equal(capturedRequest(requests).store, false);
 });
 
-test("sends current content and conversation history in the context", async () => {
+test("sends current content and only reduced conversation history", async () => {
   const { interpreter, requests } = makeInterpreter(validModelOutput());
+  const input = makeInput();
 
-  await interpreter.interpret(makeInput());
+  await interpreter.interpret(input);
 
-  const context = JSON.parse(capturedRequest(requests).input) as {
-    businessId: string;
-    conversationId: string;
-    content: string;
-    history: Array<{ senderType: SenderType; content: string }>;
-  };
+  const request = capturedRequest(requests);
+  const context = JSON.parse(request.input) as Record<string, unknown>;
+  assert.deepEqual(Object.keys(context).sort(), ["businessId", "content", "conversationId", "history"]);
   assert.equal(context.businessId, "business-1");
   assert.equal(context.conversationId, "conversation-1");
   assert.equal(context.content, "Quero orçamento para pastilhas.");
@@ -142,20 +138,20 @@ test("sends current content and conversation history in the context", async () =
       content: "Meu carro precisa de pastilhas.",
     },
   ]);
+  for (const excluded of [
+    "message-internal-id",
+    "business-internal-id",
+    "conversation-internal-id",
+    "external-message-id",
+    "2026-01-01T00:00:00.000Z",
+    '"channel"',
+    "WHATSAPP",
+  ]) {
+    assert.equal(request.input.includes(excluded), false);
+  }
 });
 
-test("does not send per-message identifiers in model context", async () => {
-  const { interpreter, requests } = makeInterpreter(validModelOutput());
-
-  await interpreter.interpret(makeInput());
-
-  const request = capturedRequest(requests);
-  assert.equal(request.input.includes("message-internal-id"), false);
-  assert.equal(request.input.includes("createdAt"), false);
-  assert.equal(request.input.includes('"channel"'), false);
-});
-
-test("uses the Structured Output schema format", async () => {
+test("uses Structured Output with the existing Zod schema", async () => {
   const { interpreter, requests } = makeInterpreter(validModelOutput());
 
   await interpreter.interpret(makeInput());
@@ -163,4 +159,29 @@ test("uses the Structured Output schema format", async () => {
   const format = capturedRequest(requests).text.format;
   assert.equal(format.name, "automotive_interpretation");
   assert.equal(format.type, "json_schema");
+  assert.ok(format.schema.properties);
+  assert.equal(format.schema.additionalProperties, false);
+});
+
+test("instructions define extraction, missing-data handling and safety rules", async () => {
+  const { interpreter, requests } = makeInterpreter(validModelOutput());
+
+  await interpreter.interpret(makeInput());
+
+  const instructions = capturedRequest(requests).instructions;
+  assert.match(instructions, /explicitamente declarados/i);
+  assert.match(instructions, /Não infira .* usando conhecimento geral/i);
+  assert.match(instructions, /REQUEST_INFORMATION/i);
+  assert.match(instructions, /UNKNOWN_INFORMATION/i);
+  assert.match(instructions, /Nunca invente preço/i);
+  assert.match(instructions, /Não confirme diagnósticos ou agendamentos/i);
+});
+
+test("throws the parse error when output_parsed is null or undefined", async () => {
+  for (const output of [null, undefined]) {
+    const { interpreter } = makeInterpreter(output);
+    await assert.rejects(interpreter.interpret(makeInput()), {
+      message: "AI response could not be parsed",
+    });
+  }
 });
