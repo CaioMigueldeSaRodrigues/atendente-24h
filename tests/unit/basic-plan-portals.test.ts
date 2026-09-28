@@ -216,8 +216,29 @@ test("preview serves the workshop portals and internal Ampliview portal", async 
     const operatorHtml = await operator.text();
     assert.equal(operator.status, 200);
     assert.match(operatorHtml, /Ampliview/);
-    assert.match(operatorHtml, /Oficina de Demonstração/);
+    assert.match(operatorHtml, /Empresa não configurada/);
+    assert.match(operatorHtml, /Nenhum orçamento aguardando atendimento\./);
+    for (const fictitiousOperatorValue of ["Oficina de Demonstração", "Carlos Almeida", "Mariana Souza", "Roberto Lima", "Toyota Corolla", "Volkswagen T-Cross", "Chevrolet Onix"]) {
+      assert.ok(!operatorHtml.includes(fictitiousOperatorValue), `operator preview contains ${fictitiousOperatorValue}`);
+    }
     assert.doesNotMatch(operatorHtml, /GROQ_API_KEY/);
+
+    const operatorQueue = await fetch(`${base}/v1/businesses/preview-business/quotes/pending`);
+    assert.equal(operatorQueue.status, 200);
+    assert.deepEqual(await operatorQueue.json(), { items: [] });
+
+    const missingHistory = await fetch(`${base}/v1/businesses/preview-business/conversations/unknown-conversation/messages`);
+    assert.equal(missingHistory.status, 404);
+
+    const missingRespond = await fetch(`${base}/v1/businesses/preview-business/quotes/unknown-quote/respond`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ amountCents: 10000, currency: "BRL" }),
+    });
+    assert.equal(missingRespond.status, 404);
+
+    const missingPublish = await fetch(`${base}/v1/businesses/preview-business/quotes/unknown-quote/publish`, { method: "POST" });
+    assert.equal(missingPublish.status, 404);
   } finally {
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }

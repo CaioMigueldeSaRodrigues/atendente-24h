@@ -1,5 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
-import { GeminiMessageInterpreter } from "../integrations/gemini-message-interpreter.js";
+import { GeminiMessageInterpreter } from "../../src/integrations/gemini-message-interpreter.js";
 
 async function main(): Promise<void> {
   const apiKey = process.env.GEMINI_API_KEY;

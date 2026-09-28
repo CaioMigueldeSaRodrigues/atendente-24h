@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import { GroqMessageInterpreter } from "../integrations/groq-message-interpreter.js";
+import { GroqMessageInterpreter } from "../../src/integrations/groq-message-interpreter.js";
 import {
   InMemoryAppointmentRepository,
   InMemoryConversationRepository,
@@ -9,9 +9,9 @@ import {
   InMemoryOpportunityRepository,
   InMemoryQuoteRequestRepository,
   InMemoryVehicleRepository,
-} from "../core/in-memory-repositories.js";
-import { processMessage } from "../core/process-message.js";
-import { Channel, ConversationStatus } from "../core/domain/enums.js";
+} from "../../src/core/in-memory-repositories.js";
+import { processMessage } from "../../src/core/process-message.js";
+import { Channel, ConversationStatus } from "../../src/core/domain/enums.js";
 
 async function main(): Promise<void> {
   const apiKey = process.env.GROQ_API_KEY;
@@ -56,25 +56,45 @@ async function main(): Promise<void> {
     return `${prefix}-${idCounters[prefix]}`;
   };
 
-  const result = await processMessage(
+  const dependencies = {
+    conversationRepository,
+    customerRepository,
+    messageRepository,
+    humanHandoffRepository,
+    opportunityRepository,
+    quoteRequestRepository,
+    appointmentRepository,
+    vehicleRepository,
+    interpreter,
+    now: () => new Date().toISOString(),
+    generateId,
+  };
+
+  const turn1 = await processMessage(
     {
       businessId: "smoke-business",
       conversationId: "smoke-conversation",
-      content: "Tenho um Corolla 2020 e quero orçamento para trocar as pastilhas de freio.",
+      content: "Meu nome é Carlos. Tenho um Corolla 2020 e quero orçamento para pastilhas.",
     },
+    dependencies,
+  );
+
+  const turn2 = await processMessage(
     {
-      conversationRepository,
-      customerRepository,
-      messageRepository,
-      humanHandoffRepository,
-      opportunityRepository,
-      quoteRequestRepository,
-      appointmentRepository,
-      vehicleRepository,
-      interpreter,
-      now: () => timestamp,
-      generateId,
+      businessId: "smoke-business",
+      conversationId: "smoke-conversation",
+      content: "É Toyota XEi. Meu telefone é 11999999999.",
     },
+    dependencies,
+  );
+
+  const turn3 = await processMessage(
+    {
+      businessId: "smoke-business",
+      conversationId: "smoke-conversation",
+      content: "Meu e-mail é carlos@exemplo.com.",
+    },
+    dependencies,
   );
 
   const conversation = await conversationRepository.findById(
@@ -85,25 +105,37 @@ async function main(): Promise<void> {
     "smoke-business",
     "smoke-conversation",
   );
-  const opportunity = await opportunityRepository.findById(
+  const opportunities = await opportunityRepository.listByConversation(
     "smoke-business",
-    "opportunity-1",
+    "smoke-conversation",
   );
-  const quoteRequest = await quoteRequestRepository.findById(
+  const quoteRequests = await quoteRequestRepository.listByConversation(
     "smoke-business",
-    "quote-1",
+    "smoke-conversation",
   );
+  const vehicle = conversation?.vehicleId
+    ? await vehicleRepository.findById("smoke-business", conversation.vehicleId)
+    : null;
+  const customer = conversation?.customerId
+    ? await customerRepository.findById("smoke-business", conversation.customerId)
+    : null;
   const handoff = await humanHandoffRepository.findById(
     "smoke-business",
     "handoff-1",
   );
 
   console.log(JSON.stringify({
-    result,
+    turns: {
+      turn1,
+      turn2,
+      turn3,
+    },
     conversation,
     messages,
-    opportunity,
-    quoteRequest,
+    opportunities,
+    quoteRequests,
+    vehicle,
+    customer,
     handoff,
   }, null, 2));
 }

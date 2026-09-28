@@ -76,136 +76,7 @@ type PreviewQuoteItem = {
   };
 };
 
-function createSampleItems(): PreviewQuoteItem[] {
-  const createdAt = "2026-09-24T12:00:00.000Z";
-  return [
-    {
-      quote: {
-        id: "preview-quote-carlos",
-        businessId: BUSINESS_ID,
-        opportunityId: "preview-opportunity-carlos",
-        conversationId: "preview-conversation-carlos",
-        customerId: "preview-customer-carlos",
-        vehicleId: "preview-vehicle-carlos",
-        requestDescription: "Troca das pastilhas de freio",
-        status: QuoteRequestStatus.WAITING_BUSINESS,
-        requestedAt: "2026-09-24T10:15:00.000Z",
-        createdAt,
-        updatedAt: createdAt,
-      },
-      customer: {
-        id: "preview-customer-carlos",
-        businessId: BUSINESS_ID,
-        name: "Carlos Almeida",
-        primaryPhone: "(19) 99999-1234",
-      },
-      vehicle: {
-        id: "preview-vehicle-carlos",
-        businessId: BUSINESS_ID,
-        brand: "Toyota",
-        model: "Corolla",
-        year: 2020,
-        version: "XEi",
-      },
-      conversation: { id: "preview-conversation-carlos", businessId: BUSINESS_ID, channel: "WEB" },
-    },
-    {
-      quote: {
-        id: "preview-quote-mariana",
-        businessId: BUSINESS_ID,
-        opportunityId: "preview-opportunity-mariana",
-        conversationId: "preview-conversation-mariana",
-        customerId: "preview-customer-mariana",
-        vehicleId: "preview-vehicle-mariana",
-        requestDescription: "Revisão do ar-condicionado",
-        symptomDescription: "Não está gelando",
-        status: QuoteRequestStatus.WAITING_INFORMATION,
-        requestedAt: "2026-09-24T10:30:00.000Z",
-        createdAt,
-        updatedAt: createdAt,
-      },
-      customer: {
-        id: "preview-customer-mariana",
-        businessId: BUSINESS_ID,
-        name: "Mariana Souza",
-      },
-      vehicle: {
-        id: "preview-vehicle-mariana",
-        businessId: BUSINESS_ID,
-        brand: "Volkswagen",
-        model: "T-Cross",
-        year: 2023,
-      },
-      conversation: { id: "preview-conversation-mariana", businessId: BUSINESS_ID, channel: "WEB" },
-    },
-    {
-      quote: {
-        id: "preview-quote-roberto",
-        businessId: BUSINESS_ID,
-        opportunityId: "preview-opportunity-roberto",
-        conversationId: "preview-conversation-roberto",
-        customerId: "preview-customer-roberto",
-        vehicleId: "preview-vehicle-roberto",
-        requestDescription: "Orçamento para película automotiva",
-        status: QuoteRequestStatus.REQUESTED,
-        requestedAt: "2026-09-24T11:00:00.000Z",
-        createdAt,
-        updatedAt: createdAt,
-      },
-      customer: {
-        id: "preview-customer-roberto",
-        businessId: BUSINESS_ID,
-        name: "Roberto Lima",
-      },
-      vehicle: {
-        id: "preview-vehicle-roberto",
-        businessId: BUSINESS_ID,
-        brand: "Chevrolet",
-        model: "Onix",
-        year: 2021,
-      },
-      conversation: { id: "preview-conversation-roberto", businessId: BUSINESS_ID, channel: "WEB" },
-    },
-  ];
-}
-
-let items = createSampleItems();
-
-function createSampleHistories(): Map<string, Array<{
-  id: string;
-  businessId: string;
-  conversationId: string;
-  senderType: "CUSTOMER" | "ASSISTANT";
-  channel: "WEB";
-  content: string;
-  createdAt: string;
-}>> {
-  const message = (
-    conversationId: string,
-    id: string,
-    senderType: "CUSTOMER" | "ASSISTANT",
-    content: string,
-    createdAt: string,
-  ) => ({ id, businessId: BUSINESS_ID, conversationId, senderType, channel: "WEB" as const, content, createdAt });
-
-  return new Map([
-    ["preview-conversation-carlos", [
-      message("preview-conversation-carlos", "preview-carlos-1", "CUSTOMER", "Olá, tenho um Corolla XEi 2020 e preciso trocar as pastilhas de freio.", "2026-09-24T10:12:00.000Z"),
-      message("preview-conversation-carlos", "preview-carlos-2", "ASSISTANT", "Posso registrar seu pedido de orçamento. Vou encaminhar os dados do veículo para a equipe.", "2026-09-24T10:12:08.000Z"),
-      message("preview-conversation-carlos", "preview-carlos-3", "CUSTOMER", "Perfeito, obrigado.", "2026-09-24T10:13:00.000Z"),
-    ]],
-    ["preview-conversation-mariana", [
-      message("preview-conversation-mariana", "preview-mariana-1", "CUSTOMER", "O ar do meu T-Cross parou de gelar.", "2026-09-24T10:28:00.000Z"),
-      message("preview-conversation-mariana", "preview-mariana-2", "ASSISTANT", "Para registrar corretamente, preciso confirmar mais algumas informações. O ar parou de gelar de repente ou foi perdendo a eficiência aos poucos?", "2026-09-24T10:28:10.000Z"),
-    ]],
-    ["preview-conversation-roberto", [
-      message("preview-conversation-roberto", "preview-roberto-1", "CUSTOMER", "Quanto fica para colocar película no meu Onix 2021?", "2026-09-24T10:58:00.000Z"),
-      message("preview-conversation-roberto", "preview-roberto-2", "ASSISTANT", "Vou registrar sua solicitação.", "2026-09-24T10:58:06.000Z"),
-    ]],
-  ]);
-}
-
-const sampleHistories = createSampleHistories();
+let items: PreviewQuoteItem[] = [];
 
 export const server = createServer((request, response) => {
   void handleRequest(request, response).catch(() => {
@@ -241,9 +112,8 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse)
     return;
   }
   if (request.method === "GET" && pathname === "/operator") {
-    items = createSampleItems();
     response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-    response.end(renderBasicPlanOperatorUi({ businessId: BUSINESS_ID, businessName: "Oficina de Demonstração" }));
+    response.end(renderBasicPlanOperatorUi({ businessId: BUSINESS_ID, businessName: "Empresa não configurada" }));
     return;
   }
 
@@ -259,13 +129,7 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse)
 
   const messagesMatch = pathname.match(/^\/v1\/businesses\/preview-business\/conversations\/([^/]+)\/messages$/);
   if (request.method === "GET" && messagesMatch) {
-    const conversationId = decodePathPart(messagesMatch[1]);
-    const messages = conversationId === null ? undefined : sampleHistories.get(conversationId);
-    if (!messages) {
-      sendJson(response, 404, { error: "Conversation not found" });
-      return;
-    }
-    sendJson(response, 200, { messages });
+    sendJson(response, 404, { error: "Conversation not found" });
     return;
   }
 
