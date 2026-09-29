@@ -101,6 +101,18 @@ const INITIAL_SCHEMA = `
   CREATE INDEX IF NOT EXISTS conversations_business_status_idx
     ON conversations (business_id, status);
 
+  CREATE TABLE IF NOT EXISTS evolution_go_conversation_links (
+    business_id TEXT NOT NULL,
+    instance_name TEXT NOT NULL,
+    sender_jid TEXT NOT NULL,
+    conversation_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (business_id, instance_name, sender_jid),
+    FOREIGN KEY (business_id, conversation_id)
+      REFERENCES conversations(business_id, id)
+  );
+
   CREATE TABLE IF NOT EXISTS messages (
     id TEXT NOT NULL,
     business_id TEXT NOT NULL,
