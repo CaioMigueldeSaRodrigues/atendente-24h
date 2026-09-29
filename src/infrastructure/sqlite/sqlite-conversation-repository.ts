@@ -7,6 +7,7 @@ import {
 } from "../../core/domain/enums.js";
 import type { ConversationRepository } from "../../core/repositories.js";
 import type { DatabaseSync } from "node:sqlite";
+import { withSqliteConnectionLock } from "./sqlite-connection-lock.js";
 
 type ConversationRow = {
   id: string;
@@ -27,7 +28,7 @@ export class SqliteConversationRepository implements ConversationRepository {
 
   async save(entity: Conversation): Promise<void> {
     try {
-      this.database.prepare(`
+      await withSqliteConnectionLock(this.database, () => this.database.prepare(`
         INSERT INTO conversations (
           id, business_id, customer_id, vehicle_id, channel, status,
           commercial_outcome, current_intent, started_at, last_message_at,
@@ -55,7 +56,7 @@ export class SqliteConversationRepository implements ConversationRepository {
         entity.startedAt,
         entity.lastMessageAt,
         entity.closedAt ?? null,
-      );
+      ));
     } catch {
       throw new Error("Failed to save Conversation");
     }
@@ -63,9 +64,9 @@ export class SqliteConversationRepository implements ConversationRepository {
 
   async findById(businessId: string, id: string): Promise<Conversation | null> {
     try {
-      const row = this.database.prepare(`
+      const row = await withSqliteConnectionLock(this.database, () => this.database.prepare(`
         SELECT * FROM conversations WHERE business_id = ? AND id = ?
-      `).get(businessId, id) as ConversationRow | undefined;
+      `).get(businessId, id)) as ConversationRow | undefined;
 
       return row ? this.toDomain(row) : null;
     } catch {

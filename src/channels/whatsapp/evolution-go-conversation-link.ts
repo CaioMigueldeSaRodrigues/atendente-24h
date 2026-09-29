@@ -8,6 +8,10 @@ export interface EvolutionGoConversationLink {
 }
 
 export interface EvolutionGoConversationLinkRepository {
+  runAtomically<T>(
+    key: Pick<EvolutionGoConversationLink, "businessId" | "instanceName" | "senderJid">,
+    operation: () => Promise<T>,
+  ): Promise<T>;
   findBySender(
     businessId: string,
     instanceName: string,

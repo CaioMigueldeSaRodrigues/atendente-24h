@@ -1,6 +1,7 @@
 import type { Vehicle } from "../../core/domain/entities.js";
 import type { VehicleRepository } from "../../core/repositories.js";
 import type { DatabaseSync } from "node:sqlite";
+import { withSqliteConnectionLock } from "./sqlite-connection-lock.js";
 
 type VehicleRow = {
   id: string;
@@ -21,7 +22,7 @@ export class SqliteVehicleRepository implements VehicleRepository {
 
   async save(entity: Vehicle): Promise<void> {
     try {
-      this.database.prepare(`
+      await withSqliteConnectionLock(this.database, () => this.database.prepare(`
         INSERT INTO vehicles (
           id, business_id, customer_id, brand, model, year, version,
           license_plate, mileage, created_at, updated_at
@@ -48,7 +49,7 @@ export class SqliteVehicleRepository implements VehicleRepository {
         entity.mileage ?? null,
         entity.createdAt,
         entity.updatedAt,
-      );
+      ));
     } catch {
       throw new Error("Failed to save Vehicle");
     }
@@ -56,9 +57,9 @@ export class SqliteVehicleRepository implements VehicleRepository {
 
   async findById(businessId: string, id: string): Promise<Vehicle | null> {
     try {
-      const row = this.database.prepare(`
+      const row = await withSqliteConnectionLock(this.database, () => this.database.prepare(`
         SELECT * FROM vehicles WHERE business_id = ? AND id = ?
-      `).get(businessId, id) as VehicleRow | undefined;
+      `).get(businessId, id)) as VehicleRow | undefined;
 
       return row ? this.toDomain(row) : null;
     } catch {

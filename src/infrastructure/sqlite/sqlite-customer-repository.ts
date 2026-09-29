@@ -2,6 +2,7 @@ import type { Customer } from "../../core/domain/entities.js";
 import { Channel } from "../../core/domain/enums.js";
 import type { CustomerRepository } from "../../core/repositories.js";
 import type { DatabaseSync } from "node:sqlite";
+import { withSqliteConnectionLock } from "./sqlite-connection-lock.js";
 
 type CustomerRow = {
   id: string;
@@ -19,7 +20,7 @@ export class SqliteCustomerRepository implements CustomerRepository {
 
   async save(entity: Customer): Promise<void> {
     try {
-      this.database.prepare(`
+      await withSqliteConnectionLock(this.database, () => this.database.prepare(`
         INSERT INTO customers (
           id, business_id, name, primary_phone, email,
           preferred_contact_channel, created_at, updated_at
@@ -40,7 +41,7 @@ export class SqliteCustomerRepository implements CustomerRepository {
         entity.preferredContactChannel ?? null,
         entity.createdAt,
         entity.updatedAt,
-      );
+      ));
     } catch {
       throw new Error("Failed to save Customer");
     }
@@ -48,9 +49,9 @@ export class SqliteCustomerRepository implements CustomerRepository {
 
   async findById(businessId: string, id: string): Promise<Customer | null> {
     try {
-      const row = this.database.prepare(`
+      const row = await withSqliteConnectionLock(this.database, () => this.database.prepare(`
         SELECT * FROM customers WHERE business_id = ? AND id = ?
-      `).get(businessId, id) as CustomerRow | undefined;
+      `).get(businessId, id)) as CustomerRow | undefined;
 
       return row ? this.toDomain(row) : null;
     } catch {

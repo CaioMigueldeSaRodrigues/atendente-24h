@@ -2,6 +2,7 @@ import type { AutomotiveBusiness } from "../../core/domain/entities.js";
 import { BusinessType } from "../../core/domain/enums.js";
 import type { AutomotiveBusinessRepository } from "../../core/repositories.js";
 import type { DatabaseSync } from "node:sqlite";
+import { withSqliteConnectionLock } from "./sqlite-connection-lock.js";
 
 type AutomotiveBusinessRow = {
   id: string;
@@ -24,7 +25,7 @@ export class SqliteAutomotiveBusinessRepository
 
   async save(entity: AutomotiveBusiness): Promise<void> {
     try {
-      this.database.prepare(`
+      await withSqliteConnectionLock(this.database, () => this.database.prepare(`
         INSERT INTO automotive_businesses (
           id, name, legal_name, business_type, phone, email, address,
           timezone, active, created_at, updated_at
@@ -52,7 +53,7 @@ export class SqliteAutomotiveBusinessRepository
         entity.active ? 1 : 0,
         entity.createdAt,
         entity.updatedAt,
-      );
+      ));
     } catch {
       throw new Error("Failed to save AutomotiveBusiness");
     }
@@ -60,9 +61,9 @@ export class SqliteAutomotiveBusinessRepository
 
   async findById(id: string): Promise<AutomotiveBusiness | null> {
     try {
-      const row = this.database
+      const row = await withSqliteConnectionLock(this.database, () => this.database
         .prepare("SELECT * FROM automotive_businesses WHERE id = ?")
-        .get(id) as AutomotiveBusinessRow | undefined;
+        .get(id)) as AutomotiveBusinessRow | undefined;
 
       return row ? this.toDomain(row) : null;
     } catch {

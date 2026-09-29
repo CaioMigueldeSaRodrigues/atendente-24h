@@ -13,6 +13,8 @@ import {
   type EvolutionGoWebhookCredential,
 } from "../../channels/whatsapp/evolution-go-webhook-auth.js";
 import type { EvolutionGoWebhookReplayGuard } from "../../channels/whatsapp/evolution-go-webhook-replay-guard.js";
+import type { EvolutionGoConversationLinkRepository } from "../../channels/whatsapp/evolution-go-conversation-link.js";
+import { resolveEvolutionGoConversation } from "../../channels/whatsapp/evolution-go-conversation-resolver.js";
 import { renderBasicPlanOperatorUi, type BasicPlanOperatorConfig } from "./basic-plan-operator-ui.js";
 
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -29,6 +31,7 @@ export type BasicPlanHttpServerDependencies = {
   commercialEventRepository?: CommercialEventRepository;
   evolutionGoWebhookCredentials?: EvolutionGoWebhookCredential[];
   evolutionGoWebhookReplayGuard?: EvolutionGoWebhookReplayGuard;
+  evolutionGoConversationLinkRepository?: EvolutionGoConversationLinkRepository;
   operator: BasicPlanOperatorConfig;
   interpreter: MessageInterpreter;
   now: () => string;
@@ -84,13 +87,14 @@ async function handleRequest(
       return;
     }
     const replayGuard = dependencies.evolutionGoWebhookReplayGuard;
-    if (!replayGuard) {
+    const linkRepository = dependencies.evolutionGoConversationLinkRepository;
+    if (!replayGuard || !linkRepository) {
       sendError(response, 503, "Service unavailable");
       return;
     }
     const receivedAt = dependencies.now();
     const claimToken = dependencies.generateId("webhook-claim");
-    const claim = replayGuard.claim({
+    const claim = await replayGuard.claim({
       businessId: authenticatedWebhook.businessId,
       instanceName: authenticatedWebhook.instanceName,
       externalMessageId: message.externalMessageId,
@@ -107,7 +111,27 @@ async function handleRequest(
       sendError(response, 503, "Service unavailable");
       return;
     }
-    const completed = replayGuard.complete({
+    try {
+      await resolveEvolutionGoConversation({
+        businessId: authenticatedWebhook.businessId,
+        instanceName: authenticatedWebhook.instanceName,
+        senderJid: message.senderJid,
+      }, {
+        conversationRepository: dependencies.conversationRepository,
+        evolutionGoConversationLinkRepository: linkRepository,
+        now: dependencies.now,
+        generateId: dependencies.generateId,
+      });
+    } catch (error) {
+      await replayGuard.release({
+        businessId: authenticatedWebhook.businessId,
+        instanceName: authenticatedWebhook.instanceName,
+        externalMessageId: message.externalMessageId,
+        claimToken: claim.claimToken,
+      });
+      throw error;
+    }
+    const completed = await replayGuard.complete({
       businessId: authenticatedWebhook.businessId,
       instanceName: authenticatedWebhook.instanceName,
       externalMessageId: message.externalMessageId,

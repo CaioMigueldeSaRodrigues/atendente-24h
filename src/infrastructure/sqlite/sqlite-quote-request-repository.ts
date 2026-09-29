@@ -3,6 +3,7 @@ import { QuoteRequestStatus } from "../../core/domain/enums.js";
 import type { Money } from "../../core/domain/types.js";
 import type { QuoteRequestRepository } from "../../core/repositories.js";
 import type { DatabaseSync } from "node:sqlite";
+import { withSqliteConnectionLock } from "./sqlite-connection-lock.js";
 
 type QuoteRequestRow = {
   id: string;
@@ -44,7 +45,7 @@ export class SqliteQuoteRequestRepository implements QuoteRequestRepository {
 
   async save(entity: QuoteRequest): Promise<void> {
     try {
-      this.database.prepare(`
+      await withSqliteConnectionLock(this.database, () => this.database.prepare(`
         INSERT INTO quote_requests (
           id, business_id, opportunity_id, conversation_id, customer_id,
           vehicle_id, request_description, symptom_description, status,
@@ -81,7 +82,7 @@ export class SqliteQuoteRequestRepository implements QuoteRequestRepository {
         entity.authorizedPrice?.currency ?? null,
         entity.createdAt,
         entity.updatedAt,
-      );
+      ));
     } catch {
       throw new Error("Failed to save QuoteRequest");
     }
@@ -89,9 +90,9 @@ export class SqliteQuoteRequestRepository implements QuoteRequestRepository {
 
   async findById(businessId: string, id: string): Promise<QuoteRequest | null> {
     try {
-      const row = this.database.prepare(`
+      const row = await withSqliteConnectionLock(this.database, () => this.database.prepare(`
         SELECT * FROM quote_requests WHERE business_id = ? AND id = ?
-      `).get(businessId, id) as QuoteRequestRow | undefined;
+      `).get(businessId, id)) as QuoteRequestRow | undefined;
 
       return row ? this.toDomain(row) : null;
     } catch {
@@ -102,11 +103,11 @@ export class SqliteQuoteRequestRepository implements QuoteRequestRepository {
   async listByBusiness(businessId: string): Promise<QuoteRequest[]> {
     let rows: QuoteRequestRow[];
     try {
-      rows = this.database.prepare(`
+      rows = await withSqliteConnectionLock(this.database, () => this.database.prepare(`
         SELECT * FROM quote_requests
         WHERE business_id = ?
         ORDER BY requested_at ASC, id ASC
-      `).all(businessId) as QuoteRequestRow[];
+      `).all(businessId)) as QuoteRequestRow[];
     } catch {
       throw new Error("Failed to load QuoteRequests");
     }
@@ -124,11 +125,11 @@ export class SqliteQuoteRequestRepository implements QuoteRequestRepository {
   ): Promise<QuoteRequest[]> {
     let rows: QuoteRequestRow[];
     try {
-      rows = this.database.prepare(`
+      rows = await withSqliteConnectionLock(this.database, () => this.database.prepare(`
         SELECT * FROM quote_requests
         WHERE business_id = ? AND conversation_id = ?
         ORDER BY requested_at ASC, id ASC
-      `).all(businessId, conversationId) as QuoteRequestRow[];
+      `).all(businessId, conversationId)) as QuoteRequestRow[];
     } catch {
       throw new Error("Failed to load QuoteRequests");
     }

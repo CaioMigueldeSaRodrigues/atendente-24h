@@ -2,6 +2,7 @@ import type { Message } from "../../core/domain/entities.js";
 import { Channel, SenderType } from "../../core/domain/enums.js";
 import type { MessageRepository } from "../../core/repositories.js";
 import type { DatabaseSync } from "node:sqlite";
+import { withSqliteConnectionLock } from "./sqlite-connection-lock.js";
 
 type MessageRow = {
   id: string;
@@ -19,7 +20,7 @@ export class SqliteMessageRepository implements MessageRepository {
 
   async save(entity: Message): Promise<void> {
     try {
-      this.database.prepare(`
+      await withSqliteConnectionLock(this.database, () => this.database.prepare(`
         INSERT INTO messages (
           id, business_id, conversation_id, sender_type, channel, content,
           external_message_id, created_at
@@ -40,7 +41,7 @@ export class SqliteMessageRepository implements MessageRepository {
         entity.content,
         entity.externalMessageId ?? null,
         entity.createdAt,
-      );
+      ));
     } catch {
       throw new Error("Failed to save Message");
     }
@@ -52,11 +53,11 @@ export class SqliteMessageRepository implements MessageRepository {
   ): Promise<Message[]> {
     let rows: MessageRow[];
     try {
-      rows = this.database.prepare(`
+      rows = await withSqliteConnectionLock(this.database, () => this.database.prepare(`
         SELECT * FROM messages
         WHERE business_id = ? AND conversation_id = ?
         ORDER BY created_at ASC, id ASC
-      `).all(businessId, conversationId) as MessageRow[];
+      `).all(businessId, conversationId)) as MessageRow[];
     } catch {
       throw new Error("Failed to load Messages");
     }

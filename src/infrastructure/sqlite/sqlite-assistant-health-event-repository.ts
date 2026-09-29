@@ -2,6 +2,7 @@ import type { AssistantHealthEvent } from "../../core/domain/entities.js";
 import { AssistantHealthEventType, BusinessType, Channel } from "../../core/domain/enums.js";
 import type { AssistantHealthEventRepository } from "../../core/repositories.js";
 import type { DatabaseSync } from "node:sqlite";
+import { withSqliteConnectionLock } from "./sqlite-connection-lock.js";
 
 type AssistantHealthEventRow = {
   id: string;
@@ -32,7 +33,7 @@ export class SqliteAssistantHealthEventRepository implements AssistantHealthEven
 
   async append(event: AssistantHealthEvent): Promise<void> {
     try {
-      this.database.prepare(`
+      await withSqliteConnectionLock(this.database, () => this.database.prepare(`
         INSERT INTO assistant_health_events (
           id, business_id, event_type, conversation_id, opportunity_id,
           quote_request_id, channel, business_type, country, state, city,
@@ -44,7 +45,7 @@ export class SqliteAssistantHealthEventRepository implements AssistantHealthEven
         event.businessType ?? null, event.country ?? null, event.state ?? null,
         event.city ?? null, event.region ?? null, event.provider ?? null,
         event.model ?? null, event.reason ?? null, event.occurredAt,
-      );
+      ));
     } catch {
       throw new Error("Failed to append AssistantHealthEvent");
     }
@@ -68,7 +69,8 @@ export class SqliteAssistantHealthEventRepository implements AssistantHealthEven
 
   private async load(sql: string, parameters: string[]): Promise<AssistantHealthEvent[]> {
     try {
-      const rows = this.database.prepare(sql).all(...parameters) as AssistantHealthEventRow[];
+      const rows = await withSqliteConnectionLock(this.database, () =>
+        this.database.prepare(sql).all(...parameters)) as AssistantHealthEventRow[];
       return rows.map((row) => this.toDomain(row));
     } catch {
       throw new Error("Failed to load AssistantHealthEvents");

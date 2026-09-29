@@ -21,7 +21,7 @@ export interface EvolutionGoWebhookReplayClaimKey {
 }
 
 export interface EvolutionGoWebhookReplayGuard {
-  claim(input: EvolutionGoWebhookReplayClaim): EvolutionGoWebhookClaimResult;
-  complete(input: EvolutionGoWebhookReplayClaimKey): boolean;
-  release(input: EvolutionGoWebhookReplayClaimKey): boolean;
+  claim(input: EvolutionGoWebhookReplayClaim): EvolutionGoWebhookClaimResult | Promise<EvolutionGoWebhookClaimResult>;
+  complete(input: EvolutionGoWebhookReplayClaimKey): boolean | Promise<boolean>;
+  release(input: EvolutionGoWebhookReplayClaimKey): boolean | Promise<boolean>;
 }

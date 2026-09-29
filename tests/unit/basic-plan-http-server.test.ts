@@ -16,6 +16,7 @@ import { SqliteOpportunityRepository } from "../../src/infrastructure/sqlite/sql
 import { SqliteQuoteRequestRepository } from "../../src/infrastructure/sqlite/sqlite-quote-request-repository.js";
 import { SqliteVehicleRepository } from "../../src/infrastructure/sqlite/sqlite-vehicle-repository.js";
 import { SqliteEvolutionGoWebhookReplayGuard } from "../../src/infrastructure/sqlite/sqlite-evolution-go-webhook-replay-guard.js";
+import { SqliteEvolutionGoConversationLinkRepository } from "../../src/infrastructure/sqlite/sqlite-evolution-go-conversation-link-repository.js";
 import { createBasicPlanHttpServer } from "../../src/infrastructure/http/basic-plan-http-server.js";
 
 const timestamp = "2026-09-24T12:00:00.000Z";
@@ -41,6 +42,7 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
   const quoteRequestRepository = new SqliteQuoteRequestRepository(database);
   const commercialEventRepository = new SqliteCommercialEventRepository(database);
   const evolutionGoWebhookReplayGuard = new SqliteEvolutionGoWebhookReplayGuard(database);
+  const evolutionGoConversationLinkRepository = new SqliteEvolutionGoConversationLinkRepository(database);
   const business: AutomotiveBusiness = {
     id: "business-a", name: "Oficina A", businessType: BusinessType.WORKSHOP,
     timezone: "America/Sao_Paulo", active: true, createdAt: timestamp, updatedAt: timestamp,
@@ -62,6 +64,7 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
     commercialEventRepository,
     evolutionGoWebhookCredentials: [webhookCredential],
     evolutionGoWebhookReplayGuard,
+    evolutionGoConversationLinkRepository,
     appointmentRepository: new InMemoryAppointmentRepository(),
     humanHandoffRepository: new InMemoryHumanHandoffRepository(),
     operator: { businessId: "business-a", businessName: "Oficina A" },
@@ -156,6 +159,19 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
         occurredAt: "2026-09-24T12:00:00.000Z",
       },
     });
+    const persistedWebhookLink = await evolutionGoConversationLinkRepository.findBySender(
+      "business-a",
+      webhookCredential.instanceName,
+      webhookPayload.data.Info.Sender,
+    );
+    assert.ok(persistedWebhookLink);
+    assert.equal(
+      (await conversationRepository.findById("business-a", persistedWebhookLink.conversationId))?.channel,
+      Channel.WHATSAPP,
+    );
+    assert.equal(database.prepare(
+      "SELECT COUNT(*) AS count FROM evolution_go_conversation_links WHERE business_id = ?",
+    ).get("business-a")?.count, 1);
     const duplicateWebhook = await post(webhookPath, webhookPayload);
     assert.equal(duplicateWebhook.status, 202);
     await assertWebhookTokenOmitted(duplicateWebhook);

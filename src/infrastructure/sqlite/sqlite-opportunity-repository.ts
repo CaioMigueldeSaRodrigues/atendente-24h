@@ -3,6 +3,7 @@ import { OpportunityStatus } from "../../core/domain/enums.js";
 import type { Money, NextAction } from "../../core/domain/types.js";
 import type { OpportunityRepository } from "../../core/repositories.js";
 import type { DatabaseSync } from "node:sqlite";
+import { withSqliteConnectionLock } from "./sqlite-connection-lock.js";
 
 type OpportunityRow = {
   id: string;
@@ -93,7 +94,7 @@ export class SqliteOpportunityRepository implements OpportunityRepository {
 
   async save(entity: Opportunity): Promise<void> {
     try {
-      this.database.prepare(`
+      await withSqliteConnectionLock(this.database, () => this.database.prepare(`
         INSERT INTO opportunities (
           id, business_id, conversation_id, customer_id, vehicle_id,
           request_description, status, next_action,
@@ -133,7 +134,7 @@ export class SqliteOpportunityRepository implements OpportunityRepository {
         entity.createdAt,
         entity.updatedAt,
         entity.closedAt ?? null,
-      );
+      ));
     } catch {
       throw new Error("Failed to save Opportunity");
     }
@@ -141,9 +142,9 @@ export class SqliteOpportunityRepository implements OpportunityRepository {
 
   async findById(businessId: string, id: string): Promise<Opportunity | null> {
     try {
-      const row = this.database.prepare(`
+      const row = await withSqliteConnectionLock(this.database, () => this.database.prepare(`
         SELECT * FROM opportunities WHERE business_id = ? AND id = ?
-      `).get(businessId, id) as OpportunityRow | undefined;
+      `).get(businessId, id)) as OpportunityRow | undefined;
 
       return row ? this.toDomain(row) : null;
     } catch {
@@ -157,11 +158,11 @@ export class SqliteOpportunityRepository implements OpportunityRepository {
   ): Promise<Opportunity[]> {
     let rows: OpportunityRow[];
     try {
-      rows = this.database.prepare(`
+      rows = await withSqliteConnectionLock(this.database, () => this.database.prepare(`
         SELECT * FROM opportunities
         WHERE business_id = ? AND conversation_id = ?
         ORDER BY created_at ASC, id ASC
-      `).all(businessId, conversationId) as OpportunityRow[];
+      `).all(businessId, conversationId)) as OpportunityRow[];
     } catch {
       throw new Error("Failed to load Opportunities");
     }

@@ -4,18 +4,19 @@ import { dirname, resolve } from "node:path";
 import { BusinessType } from "../core/domain/enums.js";
 import { OpenAIMessageInterpreter } from "../integrations/openai-message-interpreter.js";
 import { createBasicPlanRuntime } from "./basic-plan-runtime.js";
+import { createBasicPlanPostgresRuntime } from "./basic-plan-postgres-runtime.js";
+import { postgresConfigFromEnvironment } from "../infrastructure/postgres/postgres-database.js";
 import { readEvolutionGoWebhookCredential } from "./evolution-go-webhook-environment.js";
 
 async function main(): Promise<void> {
   const config = readEnvironment(process.env);
-  mkdirSync(dirname(resolve(config.databasePath)), { recursive: true });
+  if (config.databaseBackend === "sqlite") mkdirSync(dirname(resolve(config.databasePath)), { recursive: true });
 
   const client = new OpenAI({
     apiKey: config.openaiApiKey,
   });
   const interpreter = new OpenAIMessageInterpreter(client, config.openaiModel);
-  const runtime = await createBasicPlanRuntime({
-    databasePath: config.databasePath,
+  const common = {
     interpreter,
     business: {
       businessId: config.businessId,
@@ -23,10 +24,11 @@ async function main(): Promise<void> {
       businessType: config.businessType,
       timezone: config.timezone,
     },
-    ...(config.evolutionGoWebhookCredential
-      ? { evolutionGoWebhookCredential: config.evolutionGoWebhookCredential }
-      : {}),
-  });
+    ...(config.evolutionGoWebhookCredential ? { evolutionGoWebhookCredential: config.evolutionGoWebhookCredential } : {}),
+  };
+  const runtime = config.databaseBackend === "sqlite"
+    ? await createBasicPlanRuntime({ ...common, databasePath: config.databasePath })
+    : await createBasicPlanPostgresRuntime({ ...common, postgres: postgresConfigFromEnvironment(process.env) });
 
   let shutdownPromise: Promise<void> | undefined;
   const shutdown = (): Promise<void> => {
@@ -66,6 +68,7 @@ async function main(): Promise<void> {
 }
 
 type RuntimeEnvironment = {
+  databaseBackend: "sqlite" | "postgres";
   databasePath: string;
   businessId: string;
   businessName: string;
@@ -79,6 +82,10 @@ type RuntimeEnvironment = {
 };
 
 function readEnvironment(environment: NodeJS.ProcessEnv): RuntimeEnvironment {
+  const databaseBackend = environment.DATABASE_BACKEND?.trim();
+  if (databaseBackend !== "sqlite" && databaseBackend !== "postgres") {
+    throw new Error("DATABASE_BACKEND must be explicitly set to sqlite or postgres");
+  }
   const businessId = required(environment.BASIC_PLAN_BUSINESS_ID, "BASIC_PLAN_BUSINESS_ID");
   const businessName = required(environment.BASIC_PLAN_BUSINESS_NAME, "BASIC_PLAN_BUSINESS_NAME");
   const businessTypeValue = required(environment.BASIC_PLAN_BUSINESS_TYPE, "BASIC_PLAN_BUSINESS_TYPE");
@@ -98,6 +105,7 @@ function readEnvironment(environment: NodeJS.ProcessEnv): RuntimeEnvironment {
 
   const evolutionGoWebhookCredential = readEvolutionGoWebhookCredential(environment, businessId);
   return {
+    databaseBackend,
     databasePath: environment.BASIC_PLAN_DB_PATH?.trim() || "./data/atendente.db",
     businessId,
     businessName,

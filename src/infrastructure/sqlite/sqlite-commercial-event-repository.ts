@@ -9,6 +9,7 @@ import {
 import type { Money } from "../../core/domain/types.js";
 import type { CommercialEventRepository } from "../../core/repositories.js";
 import type { DatabaseSync } from "node:sqlite";
+import { withSqliteConnectionLock } from "./sqlite-connection-lock.js";
 
 type CommercialEventRow = {
   id: string;
@@ -63,7 +64,7 @@ export class SqliteCommercialEventRepository implements CommercialEventRepositor
   async append(event: CommercialEvent): Promise<void> {
     try {
       validateMoney(event.amount);
-      this.database.prepare(`
+      await withSqliteConnectionLock(this.database, () => this.database.prepare(`
         INSERT INTO commercial_events (
           id, business_id, event_type, conversation_id, customer_id, vehicle_id,
           opportunity_id, quote_request_id, channel, intent, commercial_outcome,
@@ -80,7 +81,7 @@ export class SqliteCommercialEventRepository implements CommercialEventRepositor
         event.requestedItem ?? null, event.symptom ?? null, event.vehicleBrand ?? null,
         event.vehicleModel ?? null, event.vehicleYear ?? null, event.amount?.amountCents ?? null,
         event.amount?.currency ?? null, event.occurredAt,
-      );
+      ));
     } catch {
       throw new Error("Failed to append CommercialEvent");
     }
@@ -104,7 +105,8 @@ export class SqliteCommercialEventRepository implements CommercialEventRepositor
 
   private async load(sql: string, parameters: string[]): Promise<CommercialEvent[]> {
     try {
-      const rows = this.database.prepare(sql).all(...parameters) as CommercialEventRow[];
+      const rows = await withSqliteConnectionLock(this.database, () =>
+        this.database.prepare(sql).all(...parameters)) as CommercialEventRow[];
       return rows.map((row) => this.toDomain(row));
     } catch {
       throw new Error("Failed to load CommercialEvents");

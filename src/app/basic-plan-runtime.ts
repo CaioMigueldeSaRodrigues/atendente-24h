@@ -13,6 +13,7 @@ import {
 import { createBasicPlanHttpServer } from "../infrastructure/http/basic-plan-http-server.js";
 import { createSqliteDatabase } from "../infrastructure/sqlite/sqlite-database.js";
 import { SqliteEvolutionGoWebhookReplayGuard } from "../infrastructure/sqlite/sqlite-evolution-go-webhook-replay-guard.js";
+import { SqliteEvolutionGoConversationLinkRepository } from "../infrastructure/sqlite/sqlite-evolution-go-conversation-link-repository.js";
 import { SqliteAutomotiveBusinessRepository } from "../infrastructure/sqlite/sqlite-automotive-business-repository.js";
 import { SqliteConversationRepository } from "../infrastructure/sqlite/sqlite-conversation-repository.js";
 import { SqliteCommercialEventRepository } from "../infrastructure/sqlite/sqlite-commercial-event-repository.js";
@@ -92,6 +93,7 @@ export async function createBasicPlanRuntime(
     const quoteRequestRepository = new SqliteQuoteRequestRepository(database);
     const commercialEventRepository = new SqliteCommercialEventRepository(database);
     const evolutionGoWebhookReplayGuard = new SqliteEvolutionGoWebhookReplayGuard(database);
+    const evolutionGoConversationLinkRepository = new SqliteEvolutionGoConversationLinkRepository(database);
 
     server = createBasicPlanHttpServer({
       conversationRepository,
@@ -102,6 +104,7 @@ export async function createBasicPlanRuntime(
       quoteRequestRepository,
       commercialEventRepository,
       evolutionGoWebhookReplayGuard,
+      evolutionGoConversationLinkRepository,
       ...(options.evolutionGoWebhookCredential
         ? { evolutionGoWebhookCredentials: [options.evolutionGoWebhookCredential] }
         : {}),
