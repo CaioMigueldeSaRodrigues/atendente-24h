@@ -19,6 +19,7 @@ test("creates an in-memory database and initializes the schema", () => {
       { name: "commercial_events" },
       { name: "conversations" },
       { name: "customers" },
+      { name: "evolution_go_webhook_claims" },
       { name: "evolution_go_webhook_receipts" },
       { name: "messages" },
       { name: "opportunities" },

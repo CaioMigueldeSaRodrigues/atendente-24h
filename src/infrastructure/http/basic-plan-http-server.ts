@@ -88,14 +88,33 @@ async function handleRequest(
       sendError(response, 503, "Service unavailable");
       return;
     }
-    const claimed = replayGuard.claim({
+    const receivedAt = dependencies.now();
+    const claimToken = dependencies.generateId("webhook-claim");
+    const claim = replayGuard.claim({
       businessId: authenticatedWebhook.businessId,
       instanceName: authenticatedWebhook.instanceName,
       externalMessageId: message.externalMessageId,
-      receivedAt: dependencies.now(),
+      receivedAt,
+      claimedAt: receivedAt,
+      leaseUntil: new Date(Date.parse(receivedAt) + 5 * 60 * 1000).toISOString(),
+      claimToken,
     });
-    if (!claimed) {
+    if (claim.status === "duplicate") {
       sendJson(response, 202, { accepted: false, reason: "duplicate_message" });
+      return;
+    }
+    if (claim.status === "in_progress") {
+      sendError(response, 503, "Service unavailable");
+      return;
+    }
+    const completed = replayGuard.complete({
+      businessId: authenticatedWebhook.businessId,
+      instanceName: authenticatedWebhook.instanceName,
+      externalMessageId: message.externalMessageId,
+      claimToken: claim.claimToken,
+    });
+    if (!completed) {
+      sendError(response, 503, "Service unavailable");
       return;
     }
     sendJson(response, 202, { accepted: true, message });

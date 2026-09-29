@@ -84,7 +84,9 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
     });
     const assertWebhookTokenOmitted = async (response: Response) => {
-      assert.equal((await response.clone().text()).includes(webhookCredential.instanceToken), false);
+      const body = await response.clone().text();
+      assert.equal(body.includes(webhookCredential.instanceToken), false);
+      assert.equal(body.includes("webhook-claim-"), false);
     };
 
     const webhookPath = "/v1/channels/whatsapp/evolution-go/webhook";
@@ -161,6 +163,7 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
       accepted: false,
       reason: "duplicate_message",
     });
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM evolution_go_webhook_claims").get()?.count, 0);
     const unconfiguredInstanceWebhook = await post(webhookPath, {
       ...webhookPayload,
       instanceName: "instancia-nao-configurada",
@@ -215,6 +218,7 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
     assert.equal(reactionWebhook.status, 202);
     await assertWebhookTokenOmitted(reactionWebhook);
     assert.deepEqual(await reactionWebhook.json(), { accepted: false, reason: "ignored_event" });
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM evolution_go_webhook_claims").get()?.count, 0);
 
     const { evolutionGoWebhookReplayGuard: _replayGuard, ...serverDependenciesWithoutReplayGuard } = serverDependencies;
     const serverWithoutReplayGuard = createBasicPlanHttpServer(serverDependenciesWithoutReplayGuard);
@@ -245,6 +249,44 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
       await new Promise<void>((resolve) => {
         if (!serverWithoutReplayGuard.listening) return resolve();
         serverWithoutReplayGuard.close(() => resolve());
+      });
+    }
+
+    const serverWithInProgressClaim = createBasicPlanHttpServer({
+      ...serverDependencies,
+      evolutionGoWebhookReplayGuard: {
+        claim: () => ({ status: "in_progress" }),
+        complete: () => { throw new Error("complete should not be called for an in-progress claim"); },
+        release: () => false,
+      },
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        serverWithInProgressClaim.once("error", reject);
+        serverWithInProgressClaim.listen(0, "127.0.0.1", resolve);
+      });
+      const inProgressAddress = serverWithInProgressClaim.address() as AddressInfo;
+      const inProgressResponse = await fetch(
+        `http://127.0.0.1:${inProgressAddress.port}${webhookPath}`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            ...webhookPayload,
+            data: {
+              ...webhookPayload.data,
+              Info: { ...webhookPayload.data.Info, ID: "mensagem-em-processamento-ficticia" },
+            },
+          }),
+        },
+      );
+      assert.equal(inProgressResponse.status, 503);
+      await assertWebhookTokenOmitted(inProgressResponse);
+      assert.deepEqual(await inProgressResponse.json(), { error: "Service unavailable" });
+    } finally {
+      await new Promise<void>((resolve) => {
+        if (!serverWithInProgressClaim.listening) return resolve();
+        serverWithInProgressClaim.close(() => resolve());
       });
     }
 

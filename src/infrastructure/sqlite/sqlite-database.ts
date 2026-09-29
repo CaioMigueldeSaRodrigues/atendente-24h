@@ -28,6 +28,18 @@ const INITIAL_SCHEMA = `
     FOREIGN KEY (business_id) REFERENCES automotive_businesses(id)
   );
 
+  CREATE TABLE IF NOT EXISTS evolution_go_webhook_claims (
+    business_id TEXT NOT NULL,
+    instance_name TEXT NOT NULL,
+    external_message_id TEXT NOT NULL,
+    claim_token TEXT NOT NULL,
+    received_at TEXT NOT NULL,
+    claimed_at TEXT NOT NULL,
+    lease_until TEXT NOT NULL,
+    PRIMARY KEY (business_id, instance_name, external_message_id),
+    FOREIGN KEY (business_id) REFERENCES automotive_businesses(id)
+  );
+
   CREATE TABLE IF NOT EXISTS customers (
     id TEXT NOT NULL,
     business_id TEXT NOT NULL,
