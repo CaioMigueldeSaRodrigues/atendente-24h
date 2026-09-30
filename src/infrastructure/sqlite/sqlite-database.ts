@@ -24,6 +24,11 @@ const INITIAL_SCHEMA = `
     instance_name TEXT NOT NULL,
     external_message_id TEXT NOT NULL,
     received_at TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'sent',
+    conversation_id TEXT,
+    sender_jid TEXT,
+    reply TEXT,
+    sent_at TEXT,
     PRIMARY KEY (business_id, instance_name, external_message_id),
     FOREIGN KEY (business_id) REFERENCES automotive_businesses(id)
   );
@@ -302,6 +307,7 @@ export function createSqliteDatabase({ filename }: SqliteDatabaseOptions) {
 
   try {
     database.exec("PRAGMA foreign_keys = ON;");
+    database.exec("PRAGMA busy_timeout = 5000;");
     if (filename !== ":memory:") {
       database.exec("PRAGMA journal_mode = WAL;");
     }
@@ -315,4 +321,22 @@ export function createSqliteDatabase({ filename }: SqliteDatabaseOptions) {
 
 export function initializeSqliteSchema(database: DatabaseSync): void {
   database.exec(INITIAL_SCHEMA);
+  migrateEvolutionGoWebhookReceipts(database);
+}
+
+function migrateEvolutionGoWebhookReceipts(database: DatabaseSync): void {
+  const columns = new Set(
+    (database.prepare("PRAGMA table_info(evolution_go_webhook_receipts)").all() as Array<{ name: string }>)
+      .map(({ name }) => name),
+  );
+  const additions = [
+    ["status", "TEXT NOT NULL DEFAULT 'sent'"],
+    ["conversation_id", "TEXT"],
+    ["sender_jid", "TEXT"],
+    ["reply", "TEXT"],
+    ["sent_at", "TEXT"],
+  ] as const;
+  for (const [name, definition] of additions) {
+    if (!columns.has(name)) database.exec(`ALTER TABLE evolution_go_webhook_receipts ADD COLUMN ${name} ${definition}`);
+  }
 }

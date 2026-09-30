@@ -14,6 +14,8 @@ import {
 } from "../../channels/whatsapp/evolution-go-webhook-auth.js";
 import type { EvolutionGoWebhookReplayGuard } from "../../channels/whatsapp/evolution-go-webhook-replay-guard.js";
 import type { EvolutionGoConversationLinkRepository } from "../../channels/whatsapp/evolution-go-conversation-link.js";
+import type { EvolutionGoTextMessage } from "../../channels/whatsapp/evolution-go-text-sender.js";
+import type { EvolutionGoWebhookTransaction } from "../../channels/whatsapp/evolution-go-webhook-transaction.js";
 import { resolveEvolutionGoConversation } from "../../channels/whatsapp/evolution-go-conversation-resolver.js";
 import { renderBasicPlanOperatorUi, type BasicPlanOperatorConfig } from "./basic-plan-operator-ui.js";
 
@@ -32,6 +34,8 @@ export type BasicPlanHttpServerDependencies = {
   evolutionGoWebhookCredentials?: EvolutionGoWebhookCredential[];
   evolutionGoWebhookReplayGuard?: EvolutionGoWebhookReplayGuard;
   evolutionGoConversationLinkRepository?: EvolutionGoConversationLinkRepository;
+  evolutionGoTextSender?: { sendText(message: EvolutionGoTextMessage): Promise<void> };
+  evolutionGoWebhookTransaction: EvolutionGoWebhookTransaction;
   operator: BasicPlanOperatorConfig;
   interpreter: MessageInterpreter;
   now: () => string;
@@ -88,21 +92,31 @@ async function handleRequest(
     }
     const replayGuard = dependencies.evolutionGoWebhookReplayGuard;
     const linkRepository = dependencies.evolutionGoConversationLinkRepository;
-    if (!replayGuard || !linkRepository) {
+    const textSender = dependencies.evolutionGoTextSender;
+    if (!replayGuard || !linkRepository || !textSender) {
       sendError(response, 503, "Service unavailable");
       return;
     }
     const receivedAt = dependencies.now();
     const claimToken = dependencies.generateId("webhook-claim");
-    const claim = await replayGuard.claim({
-      businessId: authenticatedWebhook.businessId,
-      instanceName: authenticatedWebhook.instanceName,
-      externalMessageId: message.externalMessageId,
-      receivedAt,
-      claimedAt: receivedAt,
-      leaseUntil: new Date(Date.parse(receivedAt) + 5 * 60 * 1000).toISOString(),
-      claimToken,
-    });
+    let claim: Awaited<ReturnType<EvolutionGoWebhookReplayGuard["claim"]>>;
+    try {
+      claim = await replayGuard.claim({
+        businessId: authenticatedWebhook.businessId,
+        instanceName: authenticatedWebhook.instanceName,
+        externalMessageId: message.externalMessageId,
+        receivedAt,
+        claimedAt: receivedAt,
+        leaseUntil: new Date(Date.parse(receivedAt) + 5 * 60 * 1000).toISOString(),
+        claimToken,
+      });
+    } catch (cause) {
+      if (cause instanceof Error && /SQLite connection is busy|database is locked/i.test(cause.message)) {
+        sendError(response, 503, "Service unavailable");
+        return;
+      }
+      throw cause;
+    }
     if (claim.status === "duplicate") {
       sendJson(response, 202, { accepted: false, reason: "duplicate_message" });
       return;
@@ -111,33 +125,81 @@ async function handleRequest(
       sendError(response, 503, "Service unavailable");
       return;
     }
-    try {
-      await resolveEvolutionGoConversation({
-        businessId: authenticatedWebhook.businessId,
-        instanceName: authenticatedWebhook.instanceName,
-        senderJid: message.senderJid,
-      }, {
-        conversationRepository: dependencies.conversationRepository,
-        evolutionGoConversationLinkRepository: linkRepository,
-        now: dependencies.now,
-        generateId: dependencies.generateId,
-      });
-    } catch (error) {
-      await replayGuard.release({
-        businessId: authenticatedWebhook.businessId,
-        instanceName: authenticatedWebhook.instanceName,
-        externalMessageId: message.externalMessageId,
-        claimToken: claim.claimToken,
-      });
-      throw error;
+    const activeClaim = claim.status === "claimed" ? claim : undefined;
+    let processed = claim.status === "processed" ? claim.processed : undefined;
+    if (processed === undefined) {
+      if (activeClaim === undefined) {
+        sendError(response, 503, "Service unavailable");
+        return;
+      }
+      try {
+        processed = await dependencies.evolutionGoWebhookTransaction.run(async () => {
+          const locked = await replayGuard.lockForProcessing({
+            businessId: authenticatedWebhook.businessId,
+            instanceName: authenticatedWebhook.instanceName,
+            externalMessageId: message.externalMessageId,
+            claimToken: activeClaim.claimToken,
+          });
+          if (!locked) throw new Error("Evolution Go webhook claim is no longer active");
+
+          const resolved = await resolveEvolutionGoConversation({
+            businessId: authenticatedWebhook.businessId,
+            instanceName: authenticatedWebhook.instanceName,
+            senderJid: message.senderJid,
+          }, {
+            conversationRepository: dependencies.conversationRepository,
+            evolutionGoConversationLinkRepository: linkRepository,
+            now: dependencies.now,
+            generateId: dependencies.generateId,
+          });
+          const result = await processMessage({
+            businessId: authenticatedWebhook.businessId,
+            conversationId: resolved.conversation.id,
+            content: message.content,
+          }, dependencies);
+          const persisted = await replayGuard.markProcessed({
+            businessId: authenticatedWebhook.businessId,
+            instanceName: authenticatedWebhook.instanceName,
+            externalMessageId: message.externalMessageId,
+            claimToken: activeClaim.claimToken,
+            conversationId: resolved.conversation.id,
+            senderJid: message.senderJid,
+            reply: result.reply,
+          });
+          if (!persisted) throw new Error("Unable to persist Evolution Go webhook result");
+          return {
+            conversationId: resolved.conversation.id,
+            senderJid: message.senderJid,
+            reply: result.reply,
+          };
+        });
+      } catch (error) {
+        await replayGuard.release({
+          businessId: authenticatedWebhook.businessId,
+          instanceName: authenticatedWebhook.instanceName,
+          externalMessageId: message.externalMessageId,
+          claimToken: activeClaim.claimToken,
+        });
+        throw error;
+      }
     }
-    const completed = await replayGuard.complete({
+
+    try {
+      await textSender.sendText({
+        recipientJid: processed.senderJid,
+        content: processed.reply,
+      });
+    } catch {
+      sendError(response, 503, "Service unavailable");
+      return;
+    }
+    const sent = await replayGuard.markSent({
       businessId: authenticatedWebhook.businessId,
       instanceName: authenticatedWebhook.instanceName,
       externalMessageId: message.externalMessageId,
-      claimToken: claim.claimToken,
+      sentAt: dependencies.now(),
     });
-    if (!completed) {
+    if (!sent) {
       sendError(response, 503, "Service unavailable");
       return;
     }

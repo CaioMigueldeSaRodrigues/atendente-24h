@@ -112,6 +112,45 @@ test("completed receipts remain duplicates after reopening the database", async 
   }
 });
 
+test("processed receipts preserve the reply for a send retry", async () => {
+  const database = createSqliteDatabase({ filename: ":memory:" });
+  try {
+    await addBusinesses(database);
+    const guard = new SqliteEvolutionGoWebhookReplayGuard(database);
+    const attempt = input();
+    assert.deepEqual(guard.claim(attempt), { status: "claimed", claimToken: attempt.claimToken });
+    const key = {
+      businessId: attempt.businessId,
+      instanceName: attempt.instanceName,
+      externalMessageId: attempt.externalMessageId,
+      claimToken: attempt.claimToken,
+    };
+    assert.equal(await guard.markProcessed({
+      ...key,
+      conversationId: "conversation-1",
+      senderJid: "sender@example.invalid",
+      reply: "reply synthetic",
+    }), true);
+    assert.deepEqual(guard.claim(input({ claimToken: "retry-claim" })), {
+      status: "processed",
+      processed: {
+        conversationId: "conversation-1",
+        senderJid: "sender@example.invalid",
+        reply: "reply synthetic",
+      },
+    });
+    assert.equal(guard.markSent({
+      businessId: attempt.businessId,
+      instanceName: attempt.instanceName,
+      externalMessageId: attempt.externalMessageId,
+      sentAt: "2026-01-02T03:05:00.000Z",
+    }), true);
+    assert.deepEqual(guard.claim(input({ claimToken: "after-sent" })), { status: "duplicate" });
+  } finally {
+    database.close();
+  }
+});
+
 test("release only removes the current claim and permits an immediate retry", async () => {
   const database = createSqliteDatabase({ filename: ":memory:" });
   try {
@@ -173,7 +212,8 @@ test("temporary and final records contain no credentials or message content", as
 
     const receipts = database.prepare("SELECT * FROM evolution_go_webhook_receipts").all();
     assert.deepEqual(Object.keys(receipts[0] ?? {}).sort(), [
-      "business_id", "external_message_id", "instance_name", "received_at",
+      "business_id", "conversation_id", "external_message_id", "instance_name", "received_at",
+      "reply", "sender_jid", "sent_at", "status",
     ]);
     assert.equal(JSON.stringify(receipts).includes(attempt.claimToken), false);
     assert.equal(JSON.stringify(receipts).includes("fake-instance-token"), false);

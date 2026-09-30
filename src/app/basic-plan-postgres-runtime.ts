@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Server } from "node:http";
 import type { MessageInterpreter } from "../core/message-interpreter.js";
 import type { EvolutionGoWebhookCredential } from "../channels/whatsapp/evolution-go-webhook-auth.js";
+import { EvolutionGoTextSender, type EvolutionGoTextMessage } from "../channels/whatsapp/evolution-go-text-sender.js";
 import { createBasicPlanHttpServer } from "../infrastructure/http/basic-plan-http-server.js";
 import { PostgresDatabase, type PostgresEnvironment } from "../infrastructure/postgres/postgres-database.js";
 import {
@@ -18,6 +19,8 @@ export type BasicPlanPostgresRuntimeOptions = {
   business: { businessId: string; businessName: string; businessType: BusinessType; timezone: string };
   interpreter: MessageInterpreter;
   evolutionGoWebhookCredential?: EvolutionGoWebhookCredential;
+  evolutionGoBaseUrl?: string;
+  evolutionGoTextSender?: { sendText(message: EvolutionGoTextMessage): Promise<void> };
   now?: () => string;
   allowInsecureLocalForTests?: boolean;
 };
@@ -25,6 +28,9 @@ export type BasicPlanPostgresRuntimeOptions = {
 export async function createBasicPlanPostgresRuntime(options: BasicPlanPostgresRuntimeOptions) {
   if (options.evolutionGoWebhookCredential && options.evolutionGoWebhookCredential.businessId !== options.business.businessId) {
     throw new Error("Evolution Go webhook business does not match the configured business");
+  }
+  if (options.evolutionGoWebhookCredential && !options.evolutionGoTextSender && !options.evolutionGoBaseUrl) {
+    throw new Error("Evolution Go base URL is required when the webhook is configured");
   }
   const database = new PostgresDatabase(options.postgres, options.allowInsecureLocalForTests === undefined
     ? {} : { allowInsecureLocal: options.allowInsecureLocalForTests });
@@ -53,7 +59,18 @@ export async function createBasicPlanPostgresRuntime(options: BasicPlanPostgresR
       commercialEventRepository: new PostgresCommercialEventRepository(database),
       evolutionGoWebhookReplayGuard: new PostgresEvolutionGoWebhookReplayGuard(database),
       evolutionGoConversationLinkRepository: new PostgresEvolutionGoConversationLinkRepository(database),
+      evolutionGoWebhookTransaction: {
+        run: (operation) => database.transaction(async () => operation()),
+      },
       ...(options.evolutionGoWebhookCredential ? { evolutionGoWebhookCredentials: [options.evolutionGoWebhookCredential] } : {}),
+      ...(options.evolutionGoWebhookCredential
+        ? {
+            evolutionGoTextSender: options.evolutionGoTextSender ?? new EvolutionGoTextSender({
+              baseUrl: options.evolutionGoBaseUrl!,
+              instanceToken: options.evolutionGoWebhookCredential.instanceToken,
+            }),
+          }
+        : {}),
       appointmentRepository: new PostgresAppointmentRepository(database),
       humanHandoffRepository: new PostgresHumanHandoffRepository(database),
       operator: { businessId: options.business.businessId, businessName: options.business.businessName },

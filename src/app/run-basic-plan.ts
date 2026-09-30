@@ -25,6 +25,7 @@ async function main(): Promise<void> {
       timezone: config.timezone,
     },
     ...(config.evolutionGoWebhookCredential ? { evolutionGoWebhookCredential: config.evolutionGoWebhookCredential } : {}),
+    ...(config.evolutionGoBaseUrl ? { evolutionGoBaseUrl: config.evolutionGoBaseUrl } : {}),
   };
   const runtime = config.databaseBackend === "sqlite"
     ? await createBasicPlanRuntime({ ...common, databasePath: config.databasePath })
@@ -79,6 +80,7 @@ type RuntimeEnvironment = {
   openaiApiKey: string;
   openaiModel: string;
   evolutionGoWebhookCredential?: ReturnType<typeof readEvolutionGoWebhookCredential>;
+  evolutionGoBaseUrl?: string;
 };
 
 function readEnvironment(environment: NodeJS.ProcessEnv): RuntimeEnvironment {
@@ -104,6 +106,9 @@ function readEnvironment(environment: NodeJS.ProcessEnv): RuntimeEnvironment {
   }
 
   const evolutionGoWebhookCredential = readEvolutionGoWebhookCredential(environment, businessId);
+  const evolutionGoBaseUrl = evolutionGoWebhookCredential
+    ? required(environment.EVOLUTION_GO_BASE_URL, "EVOLUTION_GO_BASE_URL")
+    : undefined;
   return {
     databaseBackend,
     databasePath: environment.BASIC_PLAN_DB_PATH?.trim() || "./data/atendente.db",
@@ -116,6 +121,7 @@ function readEnvironment(environment: NodeJS.ProcessEnv): RuntimeEnvironment {
     openaiApiKey: required(environment.OPENAI_API_KEY, "OPENAI_API_KEY"),
     openaiModel: required(environment.OPENAI_MODEL, "OPENAI_MODEL"),
     ...(evolutionGoWebhookCredential ? { evolutionGoWebhookCredential } : {}),
+    ...(evolutionGoBaseUrl ? { evolutionGoBaseUrl } : {}),
   };
 }
 

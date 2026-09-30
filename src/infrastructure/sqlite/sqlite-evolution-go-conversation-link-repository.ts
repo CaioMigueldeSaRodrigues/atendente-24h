@@ -3,7 +3,7 @@ import type {
   EvolutionGoConversationLinkRepository,
 } from "../../channels/whatsapp/evolution-go-conversation-link.js";
 import type { DatabaseSync } from "node:sqlite";
-import { withSqliteConnectionLock } from "./sqlite-connection-lock.js";
+import { withSqliteConnectionLock, withSqliteTransaction } from "./sqlite-connection-lock.js";
 
 type EvolutionGoConversationLinkRow = {
   business_id: string;
@@ -21,40 +21,12 @@ export class SqliteEvolutionGoConversationLinkRepository implements EvolutionGoC
     _key: Pick<EvolutionGoConversationLink, "businessId" | "instanceName" | "senderJid">,
     operation: () => Promise<T>,
   ): Promise<T> {
-    return withSqliteConnectionLock(this.database, async () => {
-      let transactionStarted = false;
-      try {
-        await this.beginImmediateWithRetry();
-        transactionStarted = true;
-        const result = await operation();
-        this.database.exec("COMMIT");
-        transactionStarted = false;
-        return result;
-      } catch (cause) {
-        if (transactionStarted) {
-          try {
-            this.database.exec("ROLLBACK");
-          } catch {
-            // Keep database details out of the public error.
-          }
-        }
-        throw new Error("Failed to resolve Evolution Go conversation link", {
-          cause: safeTransactionDiagnostic(cause),
-        });
-      }
-    });
-  }
-
-  private async beginImmediateWithRetry(): Promise<void> {
-    const deadline = Date.now() + 5_000;
-    while (true) {
-      try {
-        this.database.exec("BEGIN IMMEDIATE");
-        return;
-      } catch (error) {
-        if (!isSqliteBusy(error) || Date.now() >= deadline) throw error;
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
+    try {
+      return await withSqliteTransaction(this.database, operation);
+    } catch (cause) {
+      throw new Error("Failed to resolve Evolution Go conversation link", {
+        cause: safeTransactionDiagnostic(cause),
+      });
     }
   }
 
@@ -103,10 +75,6 @@ export class SqliteEvolutionGoConversationLinkRepository implements EvolutionGoC
       throw new Error("Failed to save Evolution Go conversation link");
     }
   }
-}
-
-function isSqliteBusy(error: unknown): boolean {
-  return error instanceof Error && /SQLITE_BUSY|database is locked/i.test(error.message);
 }
 
 function safeTransactionDiagnostic(cause: unknown): Error {

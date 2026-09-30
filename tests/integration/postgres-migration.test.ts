@@ -6,7 +6,8 @@ import type { AddressInfo } from "node:net";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { resolveEvolutionGoConversation } from "../../src/channels/whatsapp/evolution-go-conversation-resolver.js";
-import { AppointmentStatus, AssistantHealthEventType, BusinessType, Channel, CommercialEventType, ConversationStatus, HandoffReason, HandoffStatus, OpportunityStatus, QuoteRequestStatus, SenderType } from "../../src/core/domain/enums.js";
+import { AppointmentStatus, AssistantHealthEventType, BusinessType, Channel, CommercialEventType, ConversationStatus, HandoffReason, HandoffStatus, Intent, OpportunityStatus, QuoteRequestStatus, SenderType } from "../../src/core/domain/enums.js";
+import type { AIInterpretation } from "../../src/core/domain/types.js";
 import { PostgresDatabase, type PostgresEnvironment } from "../../src/infrastructure/postgres/postgres-database.js";
 import { applyPostgresMigrations } from "../../src/infrastructure/postgres/postgres-migrations.js";
 import { initializeSqliteSchema } from "../../src/infrastructure/sqlite/sqlite-database.js";
@@ -29,6 +30,15 @@ const config: PostgresEnvironment = {
   password: process.env.POSTGRES_TEST_PASSWORD ?? "",
 };
 const enabled = Boolean(process.env.POSTGRES_TEST_PASSWORD);
+const runtimeInterpretation: AIInterpretation = {
+  intent: Intent.GENERAL_INFORMATION,
+  extractedCustomerData: {},
+  extractedVehicleData: {},
+  missingData: [],
+  suggestedNextAction: { type: "NONE", description: "Nenhuma ação adicional" },
+  requiresHuman: false,
+  proposedResponse: "Resposta sintética do PostgreSQL",
+};
 
 async function waitForAdvisoryLockWaiters(database: PostgresDatabase, expected: number): Promise<void> {
   const deadline = Date.now() + 5_000;
@@ -51,7 +61,11 @@ test("PostgreSQL migrations and repositories persist tenant data and serialize c
   const businessId = `pg-test-${process.pid}-${Date.now()}`;
   try {
     const first = await applyPostgresMigrations(db);
-    assert.ok(first.every((version)=>["001_initial_schema.sql","002_appointment_and_handoff_repositories.sql"].includes(version)));
+    assert.ok(first.every((version)=>[
+      "001_initial_schema.sql",
+      "002_appointment_and_handoff_repositories.sql",
+      "003_evolution_go_webhook_processing.sql",
+    ].includes(version)));
     assert.deepEqual(await applyPostgresMigrations(db),[]);
     const transferBusinessId=`transfer-test-${businessId}`;
     const directory=mkdtempSync(join(tmpdir(),"att24-pg-transfer-"));
@@ -194,7 +208,8 @@ test("PostgreSQL runtime webhook resolves and reuses a persistent Evolution Go c
     allowInsecureLocalForTests:true,
     business:{businessId,businessName:"PostgreSQL webhook test",businessType:BusinessType.OTHER,timezone:"UTC"},
     evolutionGoWebhookCredential:{businessId,instanceName,instanceToken:"runtime-test-token"},
-    interpreter:{interpret:async()=>{throw new Error("Webhook must not call the message interpreter yet");}},
+    interpreter:{interpret:async()=>runtimeInterpretation},
+    evolutionGoTextSender:{sendText:async()=>undefined},
     now:()=>"2026-01-03T00:00:00.000Z",
   });
   try {
@@ -230,8 +245,18 @@ test("PostgreSQL runtime webhook resolves and reuses a persistent Evolution Go c
     assert.equal(conversations.rowCount,1);
     assert.equal(links.rows[0]?.conversation_id,conversations.rows[0]?.id);
     await runtime.database.query("DELETE FROM evolution_go_webhook_receipts WHERE business_id=$1",[businessId]);
+    await runtime.database.query("DELETE FROM evolution_go_webhook_claims WHERE business_id=$1",[businessId]);
     await runtime.database.query("DELETE FROM evolution_go_conversation_links WHERE business_id=$1",[businessId]);
+    await runtime.database.query("DELETE FROM assistant_health_events WHERE business_id=$1",[businessId]);
+    await runtime.database.query("DELETE FROM commercial_events WHERE business_id=$1",[businessId]);
+    await runtime.database.query("DELETE FROM quote_requests WHERE business_id=$1",[businessId]);
+    await runtime.database.query("DELETE FROM appointments WHERE business_id=$1",[businessId]);
+    await runtime.database.query("DELETE FROM human_handoffs WHERE business_id=$1",[businessId]);
+    await runtime.database.query("DELETE FROM opportunities WHERE business_id=$1",[businessId]);
+    await runtime.database.query("DELETE FROM messages WHERE business_id=$1",[businessId]);
     await runtime.database.query("DELETE FROM conversations WHERE business_id=$1",[businessId]);
+    await runtime.database.query("DELETE FROM vehicles WHERE business_id=$1",[businessId]);
+    await runtime.database.query("DELETE FROM customers WHERE business_id=$1",[businessId]);
     await runtime.database.query("DELETE FROM automotive_businesses WHERE id=$1",[businessId]);
   } finally {
     await runtime.close();

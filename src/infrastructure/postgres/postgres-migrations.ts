@@ -3,7 +3,11 @@ import { resolve } from "node:path";
 import type { PoolClient } from "pg";
 import { PostgresDatabase } from "./postgres-database.js";
 
-const MIGRATIONS = ["001_initial_schema.sql", "002_appointment_and_handoff_repositories.sql"] as const;
+const MIGRATIONS = [
+  "001_initial_schema.sql",
+  "002_appointment_and_handoff_repositories.sql",
+  "003_evolution_go_webhook_processing.sql",
+] as const;
 
 export async function applyPostgresMigrations(database: PostgresDatabase): Promise<string[]> {
   const applied: string[] = [];

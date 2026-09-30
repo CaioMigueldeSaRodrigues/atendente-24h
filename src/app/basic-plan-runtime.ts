@@ -6,6 +6,7 @@ import type { AutomotiveBusiness } from "../core/domain/entities.js";
 import type { BusinessType } from "../core/domain/enums.js";
 import type { MessageInterpreter } from "../core/message-interpreter.js";
 import type { EvolutionGoWebhookCredential } from "../channels/whatsapp/evolution-go-webhook-auth.js";
+import { EvolutionGoTextSender, type EvolutionGoTextMessage } from "../channels/whatsapp/evolution-go-text-sender.js";
 import {
   InMemoryAppointmentRepository,
   InMemoryHumanHandoffRepository,
@@ -13,6 +14,7 @@ import {
 import { createBasicPlanHttpServer } from "../infrastructure/http/basic-plan-http-server.js";
 import { createSqliteDatabase } from "../infrastructure/sqlite/sqlite-database.js";
 import { SqliteEvolutionGoWebhookReplayGuard } from "../infrastructure/sqlite/sqlite-evolution-go-webhook-replay-guard.js";
+import { withSqliteTransaction } from "../infrastructure/sqlite/sqlite-connection-lock.js";
 import { SqliteEvolutionGoConversationLinkRepository } from "../infrastructure/sqlite/sqlite-evolution-go-conversation-link-repository.js";
 import { SqliteAutomotiveBusinessRepository } from "../infrastructure/sqlite/sqlite-automotive-business-repository.js";
 import { SqliteConversationRepository } from "../infrastructure/sqlite/sqlite-conversation-repository.js";
@@ -35,6 +37,8 @@ export type BasicPlanRuntimeOptions = {
   interpreter: MessageInterpreter;
   business: BasicPlanBusinessConfig;
   evolutionGoWebhookCredential?: EvolutionGoWebhookCredential;
+  evolutionGoBaseUrl?: string;
+  evolutionGoTextSender?: { sendText(message: EvolutionGoTextMessage): Promise<void> };
   now?: () => string;
 };
 
@@ -52,6 +56,9 @@ export async function createBasicPlanRuntime(
     options.evolutionGoWebhookCredential.businessId !== options.business.businessId
   ) {
     throw new Error("Evolution Go webhook business does not match the configured business");
+  }
+  if (options.evolutionGoWebhookCredential && !options.evolutionGoTextSender && !options.evolutionGoBaseUrl) {
+    throw new Error("Evolution Go base URL is required when the webhook is configured");
   }
 
   if (options.databasePath !== ":memory:") {
@@ -105,6 +112,17 @@ export async function createBasicPlanRuntime(
       commercialEventRepository,
       evolutionGoWebhookReplayGuard,
       evolutionGoConversationLinkRepository,
+      evolutionGoWebhookTransaction: {
+        run: (operation) => withSqliteTransaction(database, operation),
+      },
+      ...(options.evolutionGoWebhookCredential
+        ? {
+            evolutionGoTextSender: options.evolutionGoTextSender ?? new EvolutionGoTextSender({
+              baseUrl: options.evolutionGoBaseUrl!,
+              instanceToken: options.evolutionGoWebhookCredential.instanceToken,
+            }),
+          }
+        : {}),
       ...(options.evolutionGoWebhookCredential
         ? { evolutionGoWebhookCredentials: [options.evolutionGoWebhookCredential] }
         : {}),

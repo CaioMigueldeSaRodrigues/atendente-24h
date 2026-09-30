@@ -18,6 +18,7 @@ import { SqliteVehicleRepository } from "../../src/infrastructure/sqlite/sqlite-
 import { SqliteEvolutionGoWebhookReplayGuard } from "../../src/infrastructure/sqlite/sqlite-evolution-go-webhook-replay-guard.js";
 import { SqliteEvolutionGoConversationLinkRepository } from "../../src/infrastructure/sqlite/sqlite-evolution-go-conversation-link-repository.js";
 import { createBasicPlanHttpServer } from "../../src/infrastructure/http/basic-plan-http-server.js";
+import { withSqliteTransaction } from "../../src/infrastructure/sqlite/sqlite-connection-lock.js";
 
 const timestamp = "2026-09-24T12:00:00.000Z";
 const interpretation: AIInterpretation = {
@@ -29,6 +30,15 @@ const interpretation: AIInterpretation = {
   suggestedNextAction: { type: "PROVIDE_QUOTE", description: "Fornecer orçamento" },
   requiresHuman: false,
   proposedResponse: "Vamos preparar seu orçamento.",
+};
+const webhookInterpretation: AIInterpretation = {
+  intent: Intent.GENERAL_INFORMATION,
+  extractedCustomerData: {},
+  extractedVehicleData: {},
+  missingData: [],
+  suggestedNextAction: { type: "NONE", description: "Nenhuma ação adicional" },
+  requiresHuman: false,
+  proposedResponse: "Resposta sintética do webhook",
 };
 
 test("serves the commercial cycle over HTTP and enforces business isolation", async () => {
@@ -53,6 +63,8 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
   let sequence = 0;
   let clockTick = 0;
   let interpreterCalls = 0;
+  const sentWebhookMessages: Array<{ recipientJid: string; content: string }> = [];
+  let failNextSend = false;
   const webhookCredential = {
     instanceName: "instancia-ficticia",
     instanceToken: "token-compartilhado-de-teste-ficticio",
@@ -65,10 +77,23 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
     evolutionGoWebhookCredentials: [webhookCredential],
     evolutionGoWebhookReplayGuard,
     evolutionGoConversationLinkRepository,
+    evolutionGoWebhookTransaction: { run: <T>(operation: () => Promise<T>) => withSqliteTransaction(database, operation) },
+    evolutionGoTextSender: {
+      sendText: async (message: { recipientJid: string; content: string }) => {
+        if (failNextSend) {
+          failNextSend = false;
+          throw new Error("synthetic sender failure");
+        }
+        sentWebhookMessages.push(message);
+      },
+    },
     appointmentRepository: new InMemoryAppointmentRepository(),
     humanHandoffRepository: new InMemoryHumanHandoffRepository(),
     operator: { businessId: "business-a", businessName: "Oficina A" },
-    interpreter: { interpret: async () => { interpreterCalls += 1; return interpretation; } },
+    interpreter: { interpret: async (input: { content: string }) => {
+      interpreterCalls += 1;
+      return input.content.startsWith("Mensagem") ? webhookInterpretation : interpretation;
+    } },
     now: () => new Date(Date.parse(timestamp) + clockTick++).toISOString(),
     generateId: (prefix: string) => `${prefix}-${++sequence}`,
   };
@@ -143,6 +168,8 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
     assert.equal(incorrectTokenWebhook.status, 401);
     await assertWebhookTokenOmitted(incorrectTokenWebhook);
     assert.deepEqual(await incorrectTokenWebhook.json(), { error: "Unauthorized" });
+    assert.equal(interpreterCalls, 0);
+    assert.equal(sentWebhookMessages.length, 0);
 
     const validWebhook = await post(webhookPath, webhookPayload);
     assert.equal(validWebhook.status, 202);
@@ -159,6 +186,11 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
         occurredAt: "2026-09-24T12:00:00.000Z",
       },
     });
+    assert.deepEqual(sentWebhookMessages, [{
+      recipientJid: "5511999990000@s.whatsapp.net",
+      content: "Resposta sintética do webhook",
+    }]);
+    assert.equal(interpreterCalls, 1);
     const persistedWebhookLink = await evolutionGoConversationLinkRepository.findBySender(
       "business-a",
       webhookCredential.instanceName,
@@ -172,6 +204,14 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
     assert.equal(database.prepare(
       "SELECT COUNT(*) AS count FROM evolution_go_conversation_links WHERE business_id = ?",
     ).get("business-a")?.count, 1);
+    const webhookMessages = await messageRepository.listByConversation(
+      "business-a",
+      persistedWebhookLink.conversationId,
+    );
+    assert.deepEqual(webhookMessages.map(({ senderType, content }) => ({ senderType, content })), [
+      { senderType: SenderType.CUSTOMER, content: "Mensagem de teste fictícia" },
+      { senderType: SenderType.ASSISTANT, content: "Resposta sintética do webhook" },
+    ]);
     const duplicateWebhook = await post(webhookPath, webhookPayload);
     assert.equal(duplicateWebhook.status, 202);
     await assertWebhookTokenOmitted(duplicateWebhook);
@@ -179,7 +219,25 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
       accepted: false,
       reason: "duplicate_message",
     });
+    assert.equal(interpreterCalls, 1);
+    assert.equal(sentWebhookMessages.length, 1);
     assert.equal(database.prepare("SELECT COUNT(*) AS count FROM evolution_go_webhook_claims").get()?.count, 0);
+    failNextSend = true;
+    const senderFailurePayload = {
+      ...webhookPayload,
+      data: {
+        ...webhookPayload.data,
+        Info: { ...webhookPayload.data.Info, ID: "mensagem-com-falha-de-envio" },
+      },
+    };
+    const failedSend = await post(webhookPath, senderFailurePayload);
+    assert.equal(failedSend.status, 503);
+    assert.deepEqual(await failedSend.json(), { error: "Service unavailable" });
+    const callsAfterFailedSend = interpreterCalls;
+    const retriedSend = await post(webhookPath, senderFailurePayload);
+    assert.equal(retriedSend.status, 202);
+    assert.equal(interpreterCalls, callsAfterFailedSend);
+    assert.equal(sentWebhookMessages.length, 2);
     const unconfiguredInstanceWebhook = await post(webhookPath, {
       ...webhookPayload,
       instanceName: "instancia-nao-configurada",
@@ -202,6 +260,8 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
       },
     });
     assert.equal(fromMeWebhook.status, 202);
+    assert.equal(interpreterCalls, 2);
+    assert.equal(sentWebhookMessages.length, 2);
     await assertWebhookTokenOmitted(fromMeWebhook);
     assert.deepEqual(await fromMeWebhook.json(), { accepted: false, reason: "ignored_event" });
     const retryIgnoredWebhook = await post(webhookPath, {
@@ -272,6 +332,9 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
       ...serverDependencies,
       evolutionGoWebhookReplayGuard: {
         claim: () => ({ status: "in_progress" }),
+        lockForProcessing: () => { throw new Error("lockForProcessing should not be called for an in-progress claim"); },
+        markProcessed: () => { throw new Error("markProcessed should not be called for an in-progress claim"); },
+        markSent: () => { throw new Error("markSent should not be called for an in-progress claim"); },
         complete: () => { throw new Error("complete should not be called for an in-progress claim"); },
         release: () => false,
       },
@@ -312,7 +375,7 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
     assert.equal(invalidWebhookJson.status, 400);
     await assertWebhookTokenOmitted(invalidWebhookJson);
     assert.deepEqual(await invalidWebhookJson.json(), { error: "Invalid JSON" });
-    assert.equal(interpreterCalls, 0);
+    assert.equal(interpreterCalls, 3);
 
     const health = await request("/health");
     assert.equal(health.status, 200);

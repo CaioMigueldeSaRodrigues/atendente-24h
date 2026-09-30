@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AddressInfo } from "node:net";
 import test from "node:test";
-import { BusinessType, Channel, ConversationStatus } from "../../src/core/domain/enums.js";
+import { BusinessType, Channel, ConversationStatus, Intent } from "../../src/core/domain/enums.js";
+import type { AIInterpretation } from "../../src/core/domain/types.js";
 import { SqliteAutomotiveBusinessRepository } from "../../src/infrastructure/sqlite/sqlite-automotive-business-repository.js";
 import { SqliteConversationRepository } from "../../src/infrastructure/sqlite/sqlite-conversation-repository.js";
 import { createBasicPlanRuntime } from "../../src/app/basic-plan-runtime.js";
@@ -19,6 +20,15 @@ const webhookCredential = {
   instanceName: "instance-synthetic-1",
   instanceToken: "fake-evolution-token-for-runtime-test-only",
   businessId: business.businessId,
+};
+const runtimeInterpretation: AIInterpretation = {
+  intent: Intent.GENERAL_INFORMATION,
+  extractedCustomerData: {},
+  extractedVehicleData: {},
+  missingData: [],
+  suggestedNextAction: { type: "NONE", description: "Nenhuma ação adicional" },
+  requiresHuman: false,
+  proposedResponse: "Resposta sintética do runtime",
 };
 
 test("rejects an Evolution Go credential configured for another business", async () => {
@@ -45,6 +55,7 @@ test("creates and reuses the pilot business and persists conversations across ru
   const directory = mkdtempSync(join(tmpdir(), "basic-plan-runtime-"));
   const databasePath = join(directory, "nested", "atendente.db");
   const interpreter = { interpret: async () => { throw new Error("Interpreter should not be called"); } };
+  const sentMessages: Array<{ recipientJid: string; content: string }> = [];
   let firstRuntime: Awaited<ReturnType<typeof createBasicPlanRuntime>> | undefined;
   let secondRuntime: Awaited<ReturnType<typeof createBasicPlanRuntime>> | undefined;
 
@@ -100,8 +111,9 @@ test("creates and reuses the pilot business and persists conversations across ru
     secondRuntime = await createBasicPlanRuntime({
       databasePath,
       business,
-      interpreter,
+      interpreter: { interpret: async () => runtimeInterpretation },
       evolutionGoWebhookCredential: webhookCredential,
+      evolutionGoTextSender: { sendText: async (message) => { sentMessages.push(message); } },
       now: () => "2026-09-25T12:00:00.000Z",
     });
     const businessRepository = new SqliteAutomotiveBusinessRepository(secondRuntime.database);
@@ -177,6 +189,10 @@ test("creates and reuses the pilot business and persists conversations across ru
       accepted: false,
       reason: "duplicate_message",
     });
+    assert.deepEqual(sentMessages, [{
+      recipientJid: "15550000001@s.whatsapp.net",
+      content: "Resposta sintética do runtime",
+    }]);
 
     const secondConversation = await createConversation(secondAddress.port);
     assert.notEqual(secondConversation.conversationId, firstId);
