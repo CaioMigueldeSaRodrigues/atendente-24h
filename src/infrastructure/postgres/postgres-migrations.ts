@@ -7,6 +7,7 @@ const MIGRATIONS = [
   "001_initial_schema.sql",
   "002_appointment_and_handoff_repositories.sql",
   "003_evolution_go_webhook_processing.sql",
+  "004_outbound_delivery_outbox.sql",
 ] as const;
 
 export async function applyPostgresMigrations(database: PostgresDatabase): Promise<string[]> {

@@ -15,6 +15,7 @@ import { SqliteMessageRepository } from "../../src/infrastructure/sqlite/sqlite-
 import { SqliteOpportunityRepository } from "../../src/infrastructure/sqlite/sqlite-opportunity-repository.js";
 import { SqliteQuoteRequestRepository } from "../../src/infrastructure/sqlite/sqlite-quote-request-repository.js";
 import { SqliteVehicleRepository } from "../../src/infrastructure/sqlite/sqlite-vehicle-repository.js";
+import { SqliteOutboundDeliveryRepository } from "../../src/infrastructure/sqlite/sqlite-outbound-delivery-repository.js";
 import { SqliteEvolutionGoWebhookReplayGuard } from "../../src/infrastructure/sqlite/sqlite-evolution-go-webhook-replay-guard.js";
 import { SqliteEvolutionGoConversationLinkRepository } from "../../src/infrastructure/sqlite/sqlite-evolution-go-conversation-link-repository.js";
 import { createBasicPlanHttpServer } from "../../src/infrastructure/http/basic-plan-http-server.js";
@@ -47,6 +48,7 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
   const conversationRepository = new SqliteConversationRepository(database);
   const customerRepository = new SqliteCustomerRepository(database);
   const vehicleRepository = new SqliteVehicleRepository(database);
+  const outboundDeliveryRepository = new SqliteOutboundDeliveryRepository(database);
   const messageRepository = new SqliteMessageRepository(database);
   const opportunityRepository = new SqliteOpportunityRepository(database);
   const quoteRequestRepository = new SqliteQuoteRequestRepository(database);
@@ -73,6 +75,7 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
   const serverDependencies = {
     conversationRepository, messageRepository, customerRepository, vehicleRepository,
     opportunityRepository, quoteRequestRepository,
+    outboundDeliveryRepository,
     commercialEventRepository,
     evolutionGoWebhookCredentials: [webhookCredential],
     evolutionGoWebhookReplayGuard,

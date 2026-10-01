@@ -17,5 +17,9 @@ export interface EvolutionGoConversationLinkRepository {
     instanceName: string,
     senderJid: string,
   ): Promise<EvolutionGoConversationLink | null>;
+  findByConversation(
+    businessId: string,
+    conversationId: string,
+  ): Promise<EvolutionGoConversationLink | null>;
   save(link: EvolutionGoConversationLink): Promise<void>;
 }

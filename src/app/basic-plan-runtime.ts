@@ -3,7 +3,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import type { Server } from "node:http";
 import type { AutomotiveBusiness } from "../core/domain/entities.js";
-import type { BusinessType } from "../core/domain/enums.js";
+import { Channel, type BusinessType } from "../core/domain/enums.js";
 import type { MessageInterpreter } from "../core/message-interpreter.js";
 import type { EvolutionGoWebhookCredential } from "../channels/whatsapp/evolution-go-webhook-auth.js";
 import { EvolutionGoTextSender, type EvolutionGoTextMessage } from "../channels/whatsapp/evolution-go-text-sender.js";
@@ -21,6 +21,7 @@ import { SqliteConversationRepository } from "../infrastructure/sqlite/sqlite-co
 import { SqliteCommercialEventRepository } from "../infrastructure/sqlite/sqlite-commercial-event-repository.js";
 import { SqliteCustomerRepository } from "../infrastructure/sqlite/sqlite-customer-repository.js";
 import { SqliteMessageRepository } from "../infrastructure/sqlite/sqlite-message-repository.js";
+import { SqliteOutboundDeliveryRepository } from "../infrastructure/sqlite/sqlite-outbound-delivery-repository.js";
 import { SqliteOpportunityRepository } from "../infrastructure/sqlite/sqlite-opportunity-repository.js";
 import { SqliteQuoteRequestRepository } from "../infrastructure/sqlite/sqlite-quote-request-repository.js";
 import { SqliteVehicleRepository } from "../infrastructure/sqlite/sqlite-vehicle-repository.js";
@@ -94,6 +95,7 @@ export async function createBasicPlanRuntime(
 
     const conversationRepository = new SqliteConversationRepository(database);
     const messageRepository = new SqliteMessageRepository(database);
+    const outboundDeliveryRepository = new SqliteOutboundDeliveryRepository(database);
     const customerRepository = new SqliteCustomerRepository(database);
     const vehicleRepository = new SqliteVehicleRepository(database);
     const opportunityRepository = new SqliteOpportunityRepository(database);
@@ -101,10 +103,17 @@ export async function createBasicPlanRuntime(
     const commercialEventRepository = new SqliteCommercialEventRepository(database);
     const evolutionGoWebhookReplayGuard = new SqliteEvolutionGoWebhookReplayGuard(database);
     const evolutionGoConversationLinkRepository = new SqliteEvolutionGoConversationLinkRepository(database);
+    const evolutionGoTextSender = options.evolutionGoWebhookCredential
+      ? options.evolutionGoTextSender ?? new EvolutionGoTextSender({
+          baseUrl: options.evolutionGoBaseUrl!,
+          instanceToken: options.evolutionGoWebhookCredential.instanceToken,
+        })
+      : undefined;
 
     server = createBasicPlanHttpServer({
       conversationRepository,
       messageRepository,
+      outboundDeliveryRepository,
       customerRepository,
       vehicleRepository,
       opportunityRepository,
@@ -115,12 +124,10 @@ export async function createBasicPlanRuntime(
       evolutionGoWebhookTransaction: {
         run: (operation) => withSqliteTransaction(database, operation),
       },
-      ...(options.evolutionGoWebhookCredential
+      ...(evolutionGoTextSender
         ? {
-            evolutionGoTextSender: options.evolutionGoTextSender ?? new EvolutionGoTextSender({
-              baseUrl: options.evolutionGoBaseUrl!,
-              instanceToken: options.evolutionGoWebhookCredential.instanceToken,
-            }),
+            evolutionGoTextSender,
+            channelTextSenders: { [Channel.WHATSAPP]: evolutionGoTextSender },
           }
         : {}),
       ...(options.evolutionGoWebhookCredential

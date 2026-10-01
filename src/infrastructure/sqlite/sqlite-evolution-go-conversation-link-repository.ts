@@ -54,6 +54,31 @@ export class SqliteEvolutionGoConversationLinkRepository implements EvolutionGoC
     }
   }
 
+  async findByConversation(
+    businessId: string,
+    conversationId: string,
+  ): Promise<EvolutionGoConversationLink | null> {
+    try {
+      const row = await withSqliteConnectionLock(this.database, () => this.database.prepare(`
+        SELECT * FROM evolution_go_conversation_links
+        WHERE business_id = ? AND conversation_id = ?
+        ORDER BY updated_at DESC, instance_name, sender_jid
+        LIMIT 1
+      `).get(businessId, conversationId)) as EvolutionGoConversationLinkRow | undefined;
+
+      return row ? {
+        businessId: row.business_id,
+        instanceName: row.instance_name,
+        senderJid: row.sender_jid,
+        conversationId: row.conversation_id,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      } : null;
+    } catch {
+      throw new Error("Failed to load Evolution Go conversation link");
+    }
+  }
+
   async save(link: EvolutionGoConversationLink): Promise<void> {
     try {
       await withSqliteConnectionLock(this.database, () => this.database.prepare(`
