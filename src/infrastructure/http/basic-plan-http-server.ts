@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AppointmentRepository, CommercialEventRepository, ConversationRepository, CustomerRepository, HumanHandoffRepository, MessageRepository, OpportunityRepository, OutboundDeliveryRepository, QuoteRequestRepository, VehicleRepository } from "../../core/repositories.js";
 import type { MessageInterpreter } from "../../core/message-interpreter.js";
-import { Channel, ConversationStatus, OutboundDeliveryStatus, QuoteRequestStatus } from "../../core/domain/enums.js";
+import { Channel, ConversationStatus, Intent, OutboundDeliveryStatus, QuoteRequestStatus } from "../../core/domain/enums.js";
 import type { Channel as ChannelType } from "../../core/domain/enums.js";
 import type { Conversation } from "../../core/domain/entities.js";
 import { processMessage } from "../../core/process-message.js";
@@ -20,6 +20,8 @@ import type { EvolutionGoWebhookTransaction } from "../../channels/whatsapp/evol
 import type { ChannelTextSender } from "../../channels/channel-text-sender.js";
 import { resolveEvolutionGoConversation } from "../../channels/whatsapp/evolution-go-conversation-resolver.js";
 import { renderBasicPlanOperatorUi, type BasicPlanOperatorConfig } from "./basic-plan-operator-ui.js";
+import type { AdminBusinessScopeAuthorizer, AdminQueryService } from "../../core/admin-read-model.js";
+import { parseAdminPagination, parseAdminPeriod } from "../../core/admin-read-model.js";
 
 const MAX_BODY_BYTES = 1024 * 1024;
 
@@ -70,6 +72,8 @@ export type BasicPlanHttpServerDependencies = {
   evolutionGoConversationLinkRepository?: EvolutionGoConversationLinkRepository;
   evolutionGoTextSender?: { sendText(message: EvolutionGoTextMessage): Promise<void> };
   channelTextSenders?: Partial<Record<ChannelType, ChannelTextSender>>;
+  adminQueryService?: AdminQueryService;
+  adminBusinessScopeAuthorizer?: AdminBusinessScopeAuthorizer;
   evolutionGoWebhookTransaction: EvolutionGoWebhookTransaction;
   operator: BasicPlanOperatorConfig;
   interpreter: MessageInterpreter;
@@ -313,6 +317,11 @@ async function handleRequest(
 
   if (request.method === "GET" && pathname === "/health") {
     sendJson(response, 200, { status: "ok" });
+    return;
+  }
+
+  if (pathname.startsWith("/v1/admin/")) {
+    await handleAdminRequest(url, request, response, dependencies);
     return;
   }
 
@@ -611,6 +620,88 @@ async function handleRequest(
   }
 
   sendError(response, 404, "Not found");
+}
+
+async function handleAdminRequest(url: URL, request: IncomingMessage, response: ServerResponse, dependencies: BasicPlanHttpServerDependencies): Promise<void> {
+  if (request.method !== "GET" || !dependencies.adminQueryService || !dependencies.adminBusinessScopeAuthorizer) {
+    sendError(response, 404, "Not found");
+    return;
+  }
+  const businessId = url.searchParams.get("businessId")?.trim();
+  if (!businessId) {
+    sendError(response, 400, "businessId is required");
+    return;
+  }
+  if (!(await dependencies.adminBusinessScopeAuthorizer.isAuthorized({ businessId }))) {
+    sendError(response, 403, "Forbidden");
+    return;
+  }
+
+  if (url.pathname === "/v1/admin/overview") {
+    let period;
+    let channel;
+    try {
+      period = parseAdminPeriod(url.searchParams.get("from") ?? undefined, url.searchParams.get("to") ?? undefined);
+      channel = optionalEnumQuery(url.searchParams.get("channel"), Object.values(Channel));
+    } catch (error) {
+      sendError(response, 400, error instanceof Error ? error.message : "Invalid query");
+      return;
+    }
+    const overview = await dependencies.adminQueryService.getOverview({ businessId, period, ...(channel === undefined ? {} : { channel }) });
+    sendJson(response, 200, overview);
+    return;
+  }
+
+  if (url.pathname === "/v1/admin/conversations") {
+    let pagination;
+    let period;
+    let channel;
+    let status;
+    let intent;
+    let year: number | undefined;
+    let serviceItem: string | undefined;
+    try {
+      pagination = parseAdminPagination(url.searchParams.get("page") ?? undefined, url.searchParams.get("pageSize") ?? undefined);
+      period = parseAdminPeriod(url.searchParams.get("from") ?? undefined, url.searchParams.get("to") ?? undefined);
+      channel = optionalEnumQuery(url.searchParams.get("channel"), Object.values(Channel));
+      status = optionalEnumQuery(url.searchParams.get("status"), Object.values(ConversationStatus));
+      intent = optionalEnumQuery(url.searchParams.get("intent"), Object.values(Intent));
+      const yearValue = url.searchParams.get("year");
+      year = yearValue === null ? undefined : Number(yearValue);
+      if (year !== undefined && (!Number.isInteger(year) || year < 0)) throw new Error("Invalid year");
+      serviceItem = url.searchParams.get("service") ?? url.searchParams.get("item") ?? undefined;
+    } catch (error) {
+      sendError(response, 400, error instanceof Error ? error.message : "Invalid query");
+      return;
+    }
+    const result = await dependencies.adminQueryService.listConversations({ businessId, period, ...pagination, ...(channel === undefined ? {} : { channel }), ...(status === undefined ? {} : { status }), ...(intent === undefined ? {} : { intent }), ...(serviceItem === undefined ? {} : { serviceItem }), ...(url.searchParams.get("brand") === null ? {} : { brand: url.searchParams.get("brand")! }), ...(url.searchParams.get("model") === null ? {} : { model: url.searchParams.get("model")! }), ...(year === undefined ? {} : { year }) });
+    sendJson(response, 200, result);
+    return;
+  }
+
+  const detailMatch = url.pathname.match(/^\/v1\/admin\/conversations\/([^/]+)$/);
+  if (detailMatch) {
+    const conversationId = decodePathPart(detailMatch[1]);
+    if (conversationId === null) {
+      sendError(response, 400, "Invalid conversationId");
+      return;
+    }
+    const detail = await dependencies.adminQueryService.getConversation({ businessId, conversationId });
+    if (detail === null) {
+      sendError(response, 404, "Conversation not found");
+      return;
+    }
+    sendJson(response, 200, detail);
+    return;
+  }
+
+  sendError(response, 404, "Not found");
+}
+
+function optionalEnumQuery<T extends string>(value: string | null, values: readonly T[]): T | undefined {
+  if (value === null) return undefined;
+  if (!values.includes(value as T)) throw new Error("Invalid filter");
+  return value as T;
 }
 
 async function readJsonBody(request: IncomingMessage, response: ServerResponse): Promise<unknown | undefined> {
