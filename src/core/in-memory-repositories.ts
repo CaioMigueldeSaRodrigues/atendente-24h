@@ -9,9 +9,13 @@ import type {
   HumanHandoff,
   Message,
   Opportunity,
+  OutboundDelivery,
   QuoteRequest,
   Vehicle,
 } from "./domain/entities.js";
+import {
+  OutboundDeliveryStatus,
+} from "./domain/enums.js";
 import type {
   AppointmentRepository,
   AssistantHealthEventRepository,
@@ -22,6 +26,10 @@ import type {
   CustomerRepository,
   HumanHandoffRepository,
   MessageRepository,
+  OutboundDeliveryClaimResult,
+  OutboundDeliveryFailure,
+  OutboundDeliveryReservation,
+  OutboundDeliveryRepository,
   OpportunityRepository,
   QuoteRequestRepository,
   VehicleRepository,
@@ -272,6 +280,130 @@ export class InMemoryQuoteRequestRepository implements QuoteRequestRepository {
       this.quoteRequests.set(entity.businessId, businessQuoteRequests);
     }
     businessQuoteRequests.set(entity.id, entity);
+  }
+}
+
+export class InMemoryOutboundDeliveryRepository implements OutboundDeliveryRepository {
+  private readonly deliveries = new Map<string, Map<string, OutboundDelivery>>();
+
+  async findById(businessId: string, id: string): Promise<OutboundDelivery | null> {
+    return this.deliveries.get(businessId)?.get(id) ?? null;
+  }
+
+  async findByMessageAndChannel(
+    businessId: string,
+    messageId: string,
+    channel: OutboundDelivery["channel"],
+  ): Promise<OutboundDelivery | null> {
+    return [...(this.deliveries.get(businessId)?.values() ?? [])]
+      .find((delivery) => delivery.messageId === messageId && delivery.channel === channel) ?? null;
+  }
+
+  async findByQuoteRequestAndChannel(
+    businessId: string,
+    quoteRequestId: string,
+    channel: OutboundDelivery["channel"],
+  ): Promise<OutboundDelivery | null> {
+    return [...(this.deliveries.get(businessId)?.values() ?? [])]
+      .find((delivery) => delivery.quoteRequestId === quoteRequestId && delivery.channel === channel) ?? null;
+  }
+
+  async create(entity: OutboundDelivery): Promise<OutboundDelivery> {
+    return (await this.reserve(entity)).delivery;
+  }
+
+  async reserve(entity: OutboundDelivery): Promise<OutboundDeliveryReservation> {
+    let businessDeliveries = this.deliveries.get(entity.businessId);
+    if (!businessDeliveries) {
+      businessDeliveries = new Map<string, OutboundDelivery>();
+      this.deliveries.set(entity.businessId, businessDeliveries);
+    }
+    const existing = [...businessDeliveries.values()]
+      .find((delivery) => delivery.quoteRequestId === entity.quoteRequestId && delivery.channel === entity.channel);
+    if (existing) return { created: false, delivery: existing };
+    businessDeliveries.set(entity.id, entity);
+    return { created: true, delivery: entity };
+  }
+
+  async attachMessage(businessId: string, id: string, messageId: string, updatedAt: string): Promise<OutboundDelivery> {
+    const delivery = await this.require(businessId, id);
+    if (delivery.messageId !== undefined && delivery.messageId !== messageId) {
+      throw new Error("OutboundDelivery message is already attached");
+    }
+    const updated = { ...delivery, messageId, updatedAt };
+    this.deliveries.get(businessId)!.set(id, updated);
+    return updated;
+  }
+
+  async claimForSending(
+    businessId: string,
+    id: string,
+    now: string,
+    leaseUntil: string,
+    claimToken: string,
+  ): Promise<OutboundDeliveryClaimResult> {
+    const delivery = await this.findById(businessId, id);
+    if (!delivery) throw new Error("OutboundDelivery not found");
+    if (delivery.status === OutboundDeliveryStatus.PENDING ||
+      (delivery.status === OutboundDeliveryStatus.FAILED_RETRYABLE &&
+        (delivery.nextAttemptAt === undefined || delivery.nextAttemptAt <= now)) ||
+      (delivery.status === OutboundDeliveryStatus.SENDING &&
+        delivery.leaseUntil !== undefined && delivery.leaseUntil <= now)) {
+      const claimed: OutboundDelivery = {
+        ...delivery,
+        status: OutboundDeliveryStatus.SENDING,
+        attempts: delivery.attempts + 1,
+        updatedAt: now,
+        claimedAt: now,
+        leaseUntil,
+        claimToken,
+      };
+      this.deliveries.get(businessId)!.set(id, claimed);
+      return { claimed: true, delivery: claimed };
+    }
+    return { claimed: false, delivery };
+  }
+
+  async markDelivered(
+    businessId: string,
+    id: string,
+    deliveredAt: string,
+    updatedAt: string,
+    claimToken: string,
+    providerMessageId?: string,
+  ): Promise<OutboundDelivery> {
+    const delivery = await this.require(businessId, id);
+    if (delivery.status !== OutboundDeliveryStatus.SENDING || delivery.claimToken !== claimToken) throw new Error("OutboundDelivery is not sending");
+    const { lastError: _lastError, nextAttemptAt: _nextAttemptAt, claimedAt: _claimedAt, leaseUntil: _leaseUntil, claimToken: _claimToken, ...withoutFailure } = delivery;
+    const updated: OutboundDelivery = {
+      ...withoutFailure,
+      status: OutboundDeliveryStatus.DELIVERED,
+      deliveredAt,
+      updatedAt,
+      ...(providerMessageId === undefined ? {} : { providerMessageId }),
+    };
+    this.deliveries.get(businessId)!.set(id, updated);
+    return updated;
+  }
+
+  async markFailed(
+    businessId: string,
+    id: string,
+    failure: OutboundDeliveryFailure,
+    claimToken: string,
+  ): Promise<OutboundDelivery> {
+    const delivery = await this.require(businessId, id);
+    if (delivery.status !== OutboundDeliveryStatus.SENDING || delivery.claimToken !== claimToken) throw new Error("OutboundDelivery is not sending");
+    const { claimedAt: _claimedAt, leaseUntil: _leaseUntil, claimToken: _claimToken, ...withoutClaim } = delivery;
+    const updated = { ...withoutClaim, ...failure };
+    this.deliveries.get(businessId)!.set(id, updated);
+    return updated;
+  }
+
+  private async require(businessId: string, id: string): Promise<OutboundDelivery> {
+    const delivery = await this.findById(businessId, id);
+    if (!delivery) throw new Error("OutboundDelivery not found");
+    return delivery;
   }
 }
 

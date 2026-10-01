@@ -92,6 +92,16 @@ test("isolates lookups by business, instance and sender JID", async () => {
   });
 });
 
+test("finds the WhatsApp recipient link by business and conversation", async () => {
+  await withDatabase(async (repository) => {
+    const value = link();
+    await repository.save(value);
+    assert.deepEqual(await repository.findByConversation(value.businessId, value.conversationId), value);
+    assert.equal(await repository.findByConversation("business-b", value.conversationId), null);
+    assert.equal(await repository.findByConversation(value.businessId, "missing"), null);
+  });
+});
+
 test("upsert changes conversation and updatedAt while preserving createdAt", async () => {
   await withDatabase(async (repository) => {
     const original = link();

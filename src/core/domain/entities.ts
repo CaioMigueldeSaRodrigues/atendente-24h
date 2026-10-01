@@ -11,6 +11,7 @@ import type {
   HandoffStatus,
   Intent,
   OpportunityStatus,
+  OutboundDeliveryStatus,
   QuoteRequestStatus,
   SenderType,
 } from "./enums.js";
@@ -123,6 +124,27 @@ export type QuoteRequest = {
   authorizedPrice?: Money;
   createdAt: string;
   updatedAt: string;
+};
+
+export type OutboundDelivery = {
+  id: string;
+  businessId: string;
+  messageId?: string;
+  quoteRequestId: string;
+  conversationId: string;
+  channel: Channel;
+  recipientRef?: string;
+  status: OutboundDeliveryStatus;
+  attempts: number;
+  lastError?: string;
+  providerMessageId?: string;
+  nextAttemptAt?: string;
+  createdAt: string;
+  updatedAt: string;
+  deliveredAt?: string;
+  claimedAt?: string;
+  leaseUntil?: string;
+  claimToken?: string;
 };
 
 export type Appointment = {

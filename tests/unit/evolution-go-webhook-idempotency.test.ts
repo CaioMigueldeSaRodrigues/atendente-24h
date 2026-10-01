@@ -15,6 +15,7 @@ import { SqliteMessageRepository } from "../../src/infrastructure/sqlite/sqlite-
 import { SqliteOpportunityRepository } from "../../src/infrastructure/sqlite/sqlite-opportunity-repository.js";
 import { SqliteQuoteRequestRepository } from "../../src/infrastructure/sqlite/sqlite-quote-request-repository.js";
 import { SqliteVehicleRepository } from "../../src/infrastructure/sqlite/sqlite-vehicle-repository.js";
+import { SqliteOutboundDeliveryRepository } from "../../src/infrastructure/sqlite/sqlite-outbound-delivery-repository.js";
 import { withSqliteTransaction } from "../../src/infrastructure/sqlite/sqlite-connection-lock.js";
 import { createSqliteDatabase } from "../../src/infrastructure/sqlite/sqlite-database.js";
 
@@ -63,6 +64,7 @@ async function createHarness(options: HarnessOptions) {
     vehicleRepository: new SqliteVehicleRepository(database),
     opportunityRepository: new SqliteOpportunityRepository(database),
     quoteRequestRepository: new SqliteQuoteRequestRepository(database),
+    outboundDeliveryRepository: new SqliteOutboundDeliveryRepository(database),
     appointmentRepository: new InMemoryAppointmentRepository(),
     humanHandoffRepository: new InMemoryHumanHandoffRepository(),
     evolutionGoWebhookCredentials: [credential],

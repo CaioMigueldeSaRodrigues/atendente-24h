@@ -10,9 +10,10 @@ import {
   PostgresAppointmentRepository, PostgresConversationRepository, PostgresCustomerRepository,
   PostgresEvolutionGoConversationLinkRepository, PostgresEvolutionGoWebhookReplayGuard, PostgresMessageRepository,
   PostgresHumanHandoffRepository, PostgresOpportunityRepository, PostgresQuoteRequestRepository, PostgresVehicleRepository,
+  PostgresOutboundDeliveryRepository,
 } from "../infrastructure/postgres/postgres-repositories.js";
 import { applyPostgresMigrations } from "../infrastructure/postgres/postgres-migrations.js";
-import type { BusinessType } from "../core/domain/enums.js";
+import { Channel, type BusinessType } from "../core/domain/enums.js";
 
 export type BasicPlanPostgresRuntimeOptions = {
   postgres: PostgresEnvironment;
@@ -49,9 +50,17 @@ export async function createBasicPlanPostgresRuntime(options: BasicPlanPostgresR
       throw new Error("Configured business does not match the existing business");
     }
 
+    const evolutionGoTextSender = options.evolutionGoWebhookCredential
+      ? options.evolutionGoTextSender ?? new EvolutionGoTextSender({
+          baseUrl: options.evolutionGoBaseUrl!,
+          instanceToken: options.evolutionGoWebhookCredential.instanceToken,
+        })
+      : undefined;
+
     server = createBasicPlanHttpServer({
       conversationRepository: new PostgresConversationRepository(database),
       messageRepository: new PostgresMessageRepository(database),
+      outboundDeliveryRepository: new PostgresOutboundDeliveryRepository(database),
       customerRepository: new PostgresCustomerRepository(database),
       vehicleRepository: new PostgresVehicleRepository(database),
       opportunityRepository: new PostgresOpportunityRepository(database),
@@ -63,12 +72,10 @@ export async function createBasicPlanPostgresRuntime(options: BasicPlanPostgresR
         run: (operation) => database.transaction(async () => operation()),
       },
       ...(options.evolutionGoWebhookCredential ? { evolutionGoWebhookCredentials: [options.evolutionGoWebhookCredential] } : {}),
-      ...(options.evolutionGoWebhookCredential
+      ...(evolutionGoTextSender
         ? {
-            evolutionGoTextSender: options.evolutionGoTextSender ?? new EvolutionGoTextSender({
-              baseUrl: options.evolutionGoBaseUrl!,
-              instanceToken: options.evolutionGoWebhookCredential.instanceToken,
-            }),
+            evolutionGoTextSender,
+            channelTextSenders: { [Channel.WHATSAPP]: evolutionGoTextSender },
           }
         : {}),
       appointmentRepository: new PostgresAppointmentRepository(database),

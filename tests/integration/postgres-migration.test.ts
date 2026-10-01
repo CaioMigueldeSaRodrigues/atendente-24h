@@ -65,6 +65,7 @@ test("PostgreSQL migrations and repositories persist tenant data and serialize c
       "001_initial_schema.sql",
       "002_appointment_and_handoff_repositories.sql",
       "003_evolution_go_webhook_processing.sql",
+      "004_outbound_delivery_outbox.sql",
     ].includes(version)));
     assert.deepEqual(await applyPostgresMigrations(db),[]);
     const transferBusinessId=`transfer-test-${businessId}`;
@@ -128,6 +129,7 @@ test("PostgreSQL migrations and repositories persist tenant data and serialize c
     const failingLinks={
       runAtomically:links.runAtomically.bind(links),
       findBySender:links.findBySender.bind(links),
+      findByConversation:links.findByConversation.bind(links),
       save:async()=>{throw new Error("synthetic link storage failure");},
     };
     await assert.rejects(resolveEvolutionGoConversation({businessId,instanceName:"rollback-test",senderJid:"rollback@synthetic.invalid"},{

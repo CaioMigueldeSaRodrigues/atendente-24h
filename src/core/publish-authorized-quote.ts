@@ -19,6 +19,7 @@ export type PublishAuthorizedQuoteDependencies = {
   conversationRepository: ConversationRepository;
   messageRepository: MessageRepository;
   commercialEventRepository?: CommercialEventRepository;
+  strictCommercialEventPersistence?: boolean;
   generateId: (prefix: string) => string;
   now: () => string;
 };
@@ -46,6 +47,24 @@ export async function publishAuthorizedQuote(
     throw new Error("Conversation not found");
   }
 
+  const existingPublishedMessage = (await dependencies.messageRepository.listByConversation(
+    input.businessId,
+    conversation.id,
+  )).find((candidate) =>
+    candidate.senderType === SenderType.ASSISTANT &&
+    candidate.channel === conversation.channel &&
+    candidate.content === content,
+  );
+  if (existingPublishedMessage) {
+    return {
+      messageId: existingPublishedMessage.id,
+      conversationId: conversation.id,
+      quoteRequestId: quoteRequest.id,
+      content: existingPublishedMessage.content,
+      channel: existingPublishedMessage.channel,
+    };
+  }
+
   const now = dependencies.now();
   const message: Message = {
     id: dependencies.generateId("message"),
@@ -67,7 +86,7 @@ export async function publishAuthorizedQuote(
 
   const authorizedPrice = quoteRequest.authorizedPrice;
   if (dependencies.commercialEventRepository !== undefined && authorizedPrice !== undefined) {
-    await appendCommercialEventSafely(dependencies.commercialEventRepository, () => {
+    const createEvent = () => {
       const customerId = quoteRequest.customerId ?? conversation.customerId;
       const vehicleId = quoteRequest.vehicleId ?? conversation.vehicleId;
       const event: CommercialEvent = {
@@ -88,7 +107,12 @@ export async function publishAuthorizedQuote(
         occurredAt: message.createdAt,
       };
       return event;
-    });
+    };
+    if (dependencies.strictCommercialEventPersistence) {
+      await dependencies.commercialEventRepository.append(createEvent());
+    } else {
+      await appendCommercialEventSafely(dependencies.commercialEventRepository, createEvent);
+    }
   }
 
   return {

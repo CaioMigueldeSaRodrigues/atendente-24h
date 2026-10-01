@@ -9,9 +9,11 @@ import type {
   HumanHandoff,
   Message,
   Opportunity,
+  OutboundDelivery,
   QuoteRequest,
   Vehicle,
 } from "./domain/entities.js";
+import { OutboundDeliveryStatus } from "./domain/enums.js";
 
 export interface CommercialEventRepository {
   append(event: CommercialEvent): Promise<void>;
@@ -75,6 +77,61 @@ export interface QuoteRequestRepository {
     conversationId: string,
   ): Promise<QuoteRequest[]>;
   save(entity: QuoteRequest): Promise<void>;
+}
+
+export type OutboundDeliveryClaimResult = {
+  claimed: boolean;
+  delivery: OutboundDelivery;
+};
+
+export type OutboundDeliveryReservation = {
+  created: boolean;
+  delivery: OutboundDelivery;
+};
+
+export type OutboundDeliveryFailure = {
+  status: OutboundDeliveryStatus.FAILED_RETRYABLE | OutboundDeliveryStatus.FAILED_FINAL;
+  lastError: string;
+  nextAttemptAt?: string;
+  updatedAt: string;
+};
+
+export interface OutboundDeliveryRepository {
+  findById(businessId: string, id: string): Promise<OutboundDelivery | null>;
+  findByMessageAndChannel(
+    businessId: string,
+    messageId: string,
+    channel: OutboundDelivery["channel"],
+  ): Promise<OutboundDelivery | null>;
+  findByQuoteRequestAndChannel(
+    businessId: string,
+    quoteRequestId: string,
+    channel: OutboundDelivery["channel"],
+  ): Promise<OutboundDelivery | null>;
+  create(entity: OutboundDelivery): Promise<OutboundDelivery>;
+  reserve(entity: OutboundDelivery): Promise<OutboundDeliveryReservation>;
+  attachMessage(businessId: string, id: string, messageId: string, updatedAt: string): Promise<OutboundDelivery>;
+  claimForSending(
+    businessId: string,
+    id: string,
+    now: string,
+    leaseUntil: string,
+    claimToken: string,
+  ): Promise<OutboundDeliveryClaimResult>;
+  markDelivered(
+    businessId: string,
+    id: string,
+    deliveredAt: string,
+    updatedAt: string,
+    claimToken: string,
+    providerMessageId?: string,
+  ): Promise<OutboundDelivery>;
+  markFailed(
+    businessId: string,
+    id: string,
+    failure: OutboundDeliveryFailure,
+    claimToken: string,
+  ): Promise<OutboundDelivery>;
 }
 
 export interface AppointmentRepository {

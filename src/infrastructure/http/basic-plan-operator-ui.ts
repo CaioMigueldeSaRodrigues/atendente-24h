@@ -409,7 +409,15 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
           headers: { "content-type": "application/json" },
           body: "{}",
         });
-        if (!publish.ok) throw new Error("publish failed");
+        const publishBody = await publish.json().catch(() => null);
+        const deliveryStatus = publishBody && typeof publishBody === "object" &&
+          "delivery" in publishBody && publishBody.delivery && typeof publishBody.delivery === "object" &&
+          "status" in publishBody.delivery && typeof publishBody.delivery.status === "string"
+          ? publishBody.delivery.status
+          : null;
+        if (!publish.ok || (deliveryStatus !== "DELIVERED" && deliveryStatus !== "ALREADY_DELIVERED")) {
+          throw new Error("publish delivery failed");
+        }
         setFeedback("Orçamento enviado com sucesso.", "success");
         refreshAfterSuccess = true;
       } catch {

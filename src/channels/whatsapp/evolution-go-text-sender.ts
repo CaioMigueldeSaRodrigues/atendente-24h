@@ -1,17 +1,16 @@
+import type { ChannelTextMessage, ChannelTextSender } from "../channel-text-sender.js";
+
 export interface EvolutionGoTextSenderOptions {
   baseUrl: string;
   instanceToken: string;
   fetch?: typeof fetch;
 }
 
-export interface EvolutionGoTextMessage {
-  recipientJid: string;
-  content: string;
-}
+export type EvolutionGoTextMessage = ChannelTextMessage;
 
 const SAFE_SEND_ERROR = "Evolution Go text message could not be sent";
 
-export class EvolutionGoTextSender {
+export class EvolutionGoTextSender implements ChannelTextSender {
   private readonly endpoint: string;
   private readonly instanceToken: string;
   private readonly fetchImplementation: typeof fetch;

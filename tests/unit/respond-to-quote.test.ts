@@ -125,6 +125,7 @@ test("preserves quote identifiers, relationships, and creation timestamps", asyn
     ...originalQuote,
     authorizedPrice: { amountCents: 12500, currency: "BRL" },
     status: QuoteRequestStatus.RESPONDED,
+    respondedAt: responseTime,
     updatedAt: responseTime,
   });
   assert.deepEqual(opportunity, {

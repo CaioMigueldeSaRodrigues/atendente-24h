@@ -1,12 +1,13 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import type { AppointmentRepository, CommercialEventRepository, ConversationRepository, CustomerRepository, HumanHandoffRepository, MessageRepository, OpportunityRepository, QuoteRequestRepository, VehicleRepository } from "../../core/repositories.js";
+import type { AppointmentRepository, CommercialEventRepository, ConversationRepository, CustomerRepository, HumanHandoffRepository, MessageRepository, OpportunityRepository, OutboundDeliveryRepository, QuoteRequestRepository, VehicleRepository } from "../../core/repositories.js";
 import type { MessageInterpreter } from "../../core/message-interpreter.js";
-import { Channel, ConversationStatus, QuoteRequestStatus } from "../../core/domain/enums.js";
+import { Channel, ConversationStatus, OutboundDeliveryStatus, QuoteRequestStatus } from "../../core/domain/enums.js";
 import type { Channel as ChannelType } from "../../core/domain/enums.js";
 import type { Conversation } from "../../core/domain/entities.js";
 import { processMessage } from "../../core/process-message.js";
 import { respondToQuote } from "../../core/respond-to-quote.js";
 import { publishAuthorizedQuote } from "../../core/publish-authorized-quote.js";
+import { outboundDeliveryLeaseUntil } from "../../core/outbound-delivery-policy.js";
 import { parseEvolutionGoInboundText } from "../../channels/whatsapp/evolution-go-message-parser.js";
 import {
   authenticateEvolutionGoWebhook,
@@ -16,10 +17,42 @@ import type { EvolutionGoWebhookReplayGuard } from "../../channels/whatsapp/evol
 import type { EvolutionGoConversationLinkRepository } from "../../channels/whatsapp/evolution-go-conversation-link.js";
 import type { EvolutionGoTextMessage } from "../../channels/whatsapp/evolution-go-text-sender.js";
 import type { EvolutionGoWebhookTransaction } from "../../channels/whatsapp/evolution-go-webhook-transaction.js";
+import type { ChannelTextSender } from "../../channels/channel-text-sender.js";
 import { resolveEvolutionGoConversation } from "../../channels/whatsapp/evolution-go-conversation-resolver.js";
 import { renderBasicPlanOperatorUi, type BasicPlanOperatorConfig } from "./basic-plan-operator-ui.js";
 
 const MAX_BODY_BYTES = 1024 * 1024;
+
+type PublishedQuoteDeliveryStatus =
+  | "DELIVERED"
+  | "ALREADY_DELIVERED"
+  | "SENDING"
+  | "NOT_CONFIGURED"
+  | "RECIPIENT_NOT_FOUND"
+  | "FAILED";
+
+type PublishedQuoteDelivery = {
+  status: PublishedQuoteDeliveryStatus;
+  retryable: boolean;
+};
+
+type PublishedQuoteDeliveryState = {
+  inFlight: Map<string, Promise<PublishedQuoteDelivery>>;
+  publishing: Map<string, Promise<{
+    result: AtomicPublishedQuote["result"];
+    delivery: PublishedQuoteDelivery;
+  }>>;
+};
+
+type PublishedQuoteDeliveryInput = {
+  businessId: string;
+  messageId: string;
+  quoteRequestId: string;
+  conversationId: string;
+  channel: ChannelType;
+  content: string;
+  outboundDeliveryId: string;
+};
 
 export type BasicPlanHttpServerDependencies = {
   conversationRepository: ConversationRepository;
@@ -28,6 +61,7 @@ export type BasicPlanHttpServerDependencies = {
   vehicleRepository: VehicleRepository;
   opportunityRepository: OpportunityRepository;
   quoteRequestRepository: QuoteRequestRepository;
+  outboundDeliveryRepository: OutboundDeliveryRepository;
   appointmentRepository: AppointmentRepository;
   humanHandoffRepository: HumanHandoffRepository;
   commercialEventRepository?: CommercialEventRepository;
@@ -35,6 +69,7 @@ export type BasicPlanHttpServerDependencies = {
   evolutionGoWebhookReplayGuard?: EvolutionGoWebhookReplayGuard;
   evolutionGoConversationLinkRepository?: EvolutionGoConversationLinkRepository;
   evolutionGoTextSender?: { sendText(message: EvolutionGoTextMessage): Promise<void> };
+  channelTextSenders?: Partial<Record<ChannelType, ChannelTextSender>>;
   evolutionGoWebhookTransaction: EvolutionGoWebhookTransaction;
   operator: BasicPlanOperatorConfig;
   interpreter: MessageInterpreter;
@@ -45,18 +80,227 @@ export type BasicPlanHttpServerDependencies = {
 export function createBasicPlanHttpServer(
   dependencies: BasicPlanHttpServerDependencies,
 ): Server {
+  const deliveryState: PublishedQuoteDeliveryState = {
+    inFlight: new Map(),
+    publishing: new Map(),
+  };
   return createServer((request, response) => {
-    void handleRequest(request, response, dependencies).catch((cause: unknown) => {
+    void handleRequest(request, response, dependencies, deliveryState).catch((cause: unknown) => {
       const error = mapError(cause);
       sendError(response, error.status, error.body);
     });
   });
 }
 
+async function deliverPublishedQuote(
+  input: PublishedQuoteDeliveryInput,
+  dependencies: BasicPlanHttpServerDependencies,
+  state: PublishedQuoteDeliveryState,
+): Promise<PublishedQuoteDelivery> {
+  const repository = dependencies.outboundDeliveryRepository;
+  const key = `${input.businessId}:${input.outboundDeliveryId}`;
+  let delivery = await repository.findById(input.businessId, input.outboundDeliveryId);
+  if (delivery === null) throw new Error("OutboundDelivery not found");
+  if (delivery?.status === OutboundDeliveryStatus.DELIVERED) {
+    return { status: "ALREADY_DELIVERED", retryable: false };
+  }
+  if (delivery?.status === OutboundDeliveryStatus.FAILED_FINAL) {
+    return deliveryFailureResult(delivery.lastError);
+  }
+
+  const current = state.inFlight.get(key);
+  if (current !== undefined) return current;
+
+  const deliveryAttempt = (async (): Promise<PublishedQuoteDelivery> => {
+    let currentDelivery = delivery;
+
+    if (currentDelivery.status === OutboundDeliveryStatus.DELIVERED) {
+      return { status: "ALREADY_DELIVERED", retryable: false };
+    }
+    if (currentDelivery.status === OutboundDeliveryStatus.FAILED_FINAL) {
+      return deliveryFailureResult(currentDelivery.lastError);
+    }
+
+    const claim = await repository.claimForSending(
+      input.businessId,
+      currentDelivery.id,
+      dependencies.now(),
+      outboundDeliveryLeaseUntil(dependencies.now()),
+      dependencies.generateId("outbound-claim"),
+    );
+    if (!claim.claimed) {
+      if (claim.delivery.status === OutboundDeliveryStatus.DELIVERED) {
+        return { status: "ALREADY_DELIVERED", retryable: false };
+      }
+      if (claim.delivery.status === OutboundDeliveryStatus.SENDING) {
+        return { status: "SENDING", retryable: true };
+      }
+      if (claim.delivery.status === OutboundDeliveryStatus.FAILED_FINAL) {
+        return deliveryFailureResult(claim.delivery.lastError);
+      }
+      return { status: "FAILED", retryable: claim.delivery.status === OutboundDeliveryStatus.FAILED_RETRYABLE };
+    }
+
+    const sender = dependencies.channelTextSenders?.[input.channel];
+    if (!sender) {
+      const retryable = input.channel === Channel.WHATSAPP;
+      await repository.markFailed(input.businessId, currentDelivery.id, {
+        status: retryable ? OutboundDeliveryStatus.FAILED_RETRYABLE : OutboundDeliveryStatus.FAILED_FINAL,
+        lastError: CHANNEL_SENDER_NOT_CONFIGURED,
+        ...(retryable ? { nextAttemptAt: dependencies.now() } : {}),
+        updatedAt: dependencies.now(),
+      }, claim.delivery.claimToken!);
+      return { status: "NOT_CONFIGURED", retryable };
+    }
+
+    if (input.channel !== Channel.WHATSAPP) {
+      await repository.markFailed(input.businessId, currentDelivery.id, {
+        status: OutboundDeliveryStatus.FAILED_FINAL,
+        lastError: CHANNEL_SENDER_NOT_CONFIGURED,
+        updatedAt: dependencies.now(),
+      }, claim.delivery.claimToken!);
+      return { status: "NOT_CONFIGURED", retryable: false };
+    }
+
+    if (currentDelivery.recipientRef === undefined) {
+      const recipient = await resolveDeliveryRecipient(input, dependencies);
+      const retryable = recipient.retryable;
+      await repository.markFailed(input.businessId, currentDelivery.id, {
+        status: retryable ? OutboundDeliveryStatus.FAILED_RETRYABLE : OutboundDeliveryStatus.FAILED_FINAL,
+        lastError: recipient.retryable ? RECIPIENT_REPOSITORY_NOT_CONFIGURED : RECIPIENT_NOT_FOUND,
+        ...(retryable ? { nextAttemptAt: dependencies.now() } : {}),
+        updatedAt: dependencies.now(),
+      }, claim.delivery.claimToken!);
+      return { status: "RECIPIENT_NOT_FOUND", retryable };
+    }
+
+    try {
+      await sender.sendText({ recipientJid: currentDelivery.recipientRef, content: input.content });
+    } catch (cause) {
+      await repository.markFailed(input.businessId, currentDelivery.id, {
+        status: OutboundDeliveryStatus.FAILED_RETRYABLE,
+        lastError: errorMessage(cause),
+        nextAttemptAt: dependencies.now(),
+        updatedAt: dependencies.now(),
+      }, claim.delivery.claimToken!);
+      return { status: "FAILED", retryable: true };
+    }
+
+    await repository.markDelivered(
+      input.businessId,
+      currentDelivery.id,
+      dependencies.now(),
+      dependencies.now(),
+      claim.delivery.claimToken!,
+    );
+    return { status: "DELIVERED", retryable: false };
+  })();
+
+  state.inFlight.set(key, deliveryAttempt);
+  try {
+    return await deliveryAttempt;
+  } finally {
+    if (state.inFlight.get(key) === deliveryAttempt) state.inFlight.delete(key);
+  }
+}
+
+const CHANNEL_SENDER_NOT_CONFIGURED = "Channel sender is not configured";
+const RECIPIENT_REPOSITORY_NOT_CONFIGURED = "WhatsApp conversation link repository is not configured";
+const RECIPIENT_NOT_FOUND = "WhatsApp conversation recipient link not found";
+
+async function resolveDeliveryRecipient(
+  input: Pick<PublishedQuoteDeliveryInput, "businessId" | "conversationId" | "channel">,
+  dependencies: BasicPlanHttpServerDependencies,
+): Promise<{ recipientRef?: string; retryable: boolean }> {
+  if (input.channel !== Channel.WHATSAPP) return { retryable: false };
+  const linkRepository = dependencies.evolutionGoConversationLinkRepository;
+  if (!linkRepository) return { retryable: true };
+  const link = await linkRepository.findByConversation(input.businessId, input.conversationId);
+  if (
+    link === null ||
+    link.businessId !== input.businessId ||
+    link.conversationId !== input.conversationId ||
+    link.senderJid.trim().length === 0
+  ) return { retryable: false };
+  return { recipientRef: link.senderJid, retryable: false };
+}
+
+type AtomicPublishedQuote = {
+  result: Awaited<ReturnType<typeof publishAuthorizedQuote>>;
+  outboundDeliveryId: string;
+};
+
+async function publishPublishedQuoteAtomically(
+  input: { businessId: string; quoteRequestId: string },
+  dependencies: BasicPlanHttpServerDependencies,
+): Promise<AtomicPublishedQuote> {
+  const quote = await dependencies.quoteRequestRepository.findById(input.businessId, input.quoteRequestId);
+  if (quote === null) throw new Error("QuoteRequest not found");
+  const conversation = await dependencies.conversationRepository.findById(input.businessId, quote.conversationId);
+  if (conversation === null) throw new Error("Conversation not found");
+  const recipient = await resolveDeliveryRecipient({
+    businessId: input.businessId,
+    conversationId: conversation.id,
+    channel: conversation.channel,
+  }, dependencies);
+  return dependencies.evolutionGoWebhookTransaction.run(async () => {
+    const now = dependencies.now();
+    const reservation = await dependencies.outboundDeliveryRepository.reserve({
+      id: dependencies.generateId("outbound-delivery"),
+      businessId: input.businessId,
+      quoteRequestId: quote.id,
+      conversationId: conversation.id,
+      channel: conversation.channel,
+      ...(recipient.recipientRef === undefined ? {} : { recipientRef: recipient.recipientRef }),
+      status: OutboundDeliveryStatus.PENDING,
+      attempts: 0,
+      createdAt: now,
+      updatedAt: now,
+    });
+    if (!reservation.created) {
+      if (reservation.delivery.messageId === undefined) throw new Error("OutboundDelivery has no published message");
+      const messages = await dependencies.messageRepository.listByConversation(input.businessId, conversation.id);
+      const message = messages.find((candidate) => candidate.id === reservation.delivery.messageId);
+      if (message === undefined) throw new Error("Published Message not found");
+      return {
+        result: {
+          messageId: message.id,
+          conversationId: conversation.id,
+          quoteRequestId: quote.id,
+          channel: message.channel,
+          content: message.content,
+        },
+        outboundDeliveryId: reservation.delivery.id,
+      };
+    }
+    const result = await publishAuthorizedQuote(
+      { businessId: input.businessId, quoteRequestId: input.quoteRequestId },
+      { ...dependencies, strictCommercialEventPersistence: true },
+    );
+    await dependencies.outboundDeliveryRepository.attachMessage(input.businessId, reservation.delivery.id, result.messageId, dependencies.now());
+    return { result, outboundDeliveryId: reservation.delivery.id };
+  });
+}
+
+function deliveryFailureResult(lastError: string | undefined): PublishedQuoteDelivery {
+  if (lastError === CHANNEL_SENDER_NOT_CONFIGURED) return { status: "NOT_CONFIGURED", retryable: false };
+  if (lastError === RECIPIENT_NOT_FOUND || lastError === RECIPIENT_REPOSITORY_NOT_CONFIGURED) {
+    return { status: "RECIPIENT_NOT_FOUND", retryable: lastError === RECIPIENT_REPOSITORY_NOT_CONFIGURED };
+  }
+  return { status: "FAILED", retryable: false };
+}
+
+function errorMessage(cause: unknown): string {
+  return cause instanceof Error && cause.message.trim().length > 0
+    ? cause.message
+    : "Channel sender failed";
+}
+
 async function handleRequest(
   request: IncomingMessage,
   response: ServerResponse,
   dependencies: BasicPlanHttpServerDependencies,
+  deliveryState: PublishedQuoteDeliveryState,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", "http://localhost");
   const pathname = url.pathname;
@@ -331,8 +575,38 @@ async function handleRequest(
       sendJson(response, 200, result);
       return;
     }
-    const result = await publishAuthorizedQuote({ businessId, quoteRequestId }, dependencies);
-    sendJson(response, 200, result);
+    const publicationKey = `${businessId}:${quoteRequestId}`;
+    let publication = deliveryState.publishing.get(publicationKey);
+    if (publication === undefined) {
+      publication = (async () => {
+        const publication = await publishPublishedQuoteAtomically({ businessId, quoteRequestId }, dependencies);
+        const result = publication.result;
+        const delivery = await deliverPublishedQuote({
+          businessId,
+          messageId: result.messageId,
+          quoteRequestId,
+          conversationId: result.conversationId,
+          channel: result.channel,
+          content: result.content,
+          outboundDeliveryId: publication.outboundDeliveryId,
+        }, dependencies, deliveryState);
+        return { result, delivery };
+      })();
+      deliveryState.publishing.set(publicationKey, publication);
+    }
+    let result: AtomicPublishedQuote["result"];
+    let delivery: PublishedQuoteDelivery;
+    try {
+      ({ result, delivery } = await publication);
+    } finally {
+      if (deliveryState.publishing.get(publicationKey) === publication) {
+        deliveryState.publishing.delete(publicationKey);
+      }
+    }
+    const deliveryFailed = delivery.status === "FAILED" || delivery.status === "SENDING" || delivery.status === "RECIPIENT_NOT_FOUND" || (
+      delivery.status === "NOT_CONFIGURED" && result.channel === Channel.WHATSAPP
+    );
+    sendJson(response, deliveryFailed ? 503 : 200, { ...result, delivery });
     return;
   }
 

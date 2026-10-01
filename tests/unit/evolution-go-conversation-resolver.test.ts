@@ -65,6 +65,7 @@ function harness(options: {
       calls.push("findLink");
       return options.existingLink ?? null;
     },
+    findByConversation: async () => null,
     save: async (value) => { calls.push("saveLink"); savedLinks.push(value); },
   };
   const dependencies: ResolveEvolutionGoConversationDependencies = {

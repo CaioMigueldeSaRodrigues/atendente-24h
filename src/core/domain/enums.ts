@@ -114,6 +114,14 @@ export enum QuoteRequestStatus {
   CLOSED = "CLOSED",
 }
 
+export enum OutboundDeliveryStatus {
+  PENDING = "PENDING",
+  SENDING = "SENDING",
+  DELIVERED = "DELIVERED",
+  FAILED_RETRYABLE = "FAILED_RETRYABLE",
+  FAILED_FINAL = "FAILED_FINAL",
+}
+
 export enum AppointmentStatus {
   REQUESTED = "REQUESTED",
   CHECKING_AVAILABILITY = "CHECKING_AVAILABILITY",

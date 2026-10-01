@@ -64,6 +64,7 @@ export async function respondToQuote(
     ...quoteRequest,
     authorizedPrice: input.authorizedPrice,
     status: QuoteRequestStatus.RESPONDED,
+    respondedAt: now,
     updatedAt: now,
   };
   const updatedOpportunity: Opportunity = {
