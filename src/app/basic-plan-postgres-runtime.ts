@@ -14,6 +14,8 @@ import {
 } from "../infrastructure/postgres/postgres-repositories.js";
 import { applyPostgresMigrations } from "../infrastructure/postgres/postgres-migrations.js";
 import { Channel, type BusinessType } from "../core/domain/enums.js";
+import { PostgresStockCheckRepository } from "../infrastructure/postgres/postgres-stock-check-repository.js";
+import { UnavailableInventoryReadAdapter } from "../infrastructure/inventory/local-inventory-read-adapter.js";
 
 export type BasicPlanPostgresRuntimeOptions = {
   postgres: PostgresEnvironment;
@@ -65,6 +67,8 @@ export async function createBasicPlanPostgresRuntime(options: BasicPlanPostgresR
       vehicleRepository: new PostgresVehicleRepository(database),
       opportunityRepository: new PostgresOpportunityRepository(database),
       quoteRequestRepository: new PostgresQuoteRequestRepository(database),
+      inventoryReadPort: new UnavailableInventoryReadAdapter(),
+      stockCheckRepository: new PostgresStockCheckRepository(database),
       commercialEventRepository: new PostgresCommercialEventRepository(database),
       evolutionGoWebhookReplayGuard: new PostgresEvolutionGoWebhookReplayGuard(database),
       evolutionGoConversationLinkRepository: new PostgresEvolutionGoConversationLinkRepository(database),

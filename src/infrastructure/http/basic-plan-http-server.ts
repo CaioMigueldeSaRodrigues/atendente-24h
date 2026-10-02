@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import type { AppointmentRepository, CommercialEventRepository, ConversationRepository, CustomerRepository, HumanHandoffRepository, MessageRepository, OpportunityRepository, OutboundDeliveryRepository, QuoteRequestRepository, VehicleRepository } from "../../core/repositories.js";
+import type { AppointmentRepository, CommercialEventRepository, ConversationRepository, CustomerRepository, HumanHandoffRepository, MessageRepository, OpportunityRepository, OutboundDeliveryRepository, QuoteRequestRepository, StockCheckRepository, VehicleRepository } from "../../core/repositories.js";
 import type { MessageInterpreter } from "../../core/message-interpreter.js";
-import { Channel, ConversationStatus, Intent, OutboundDeliveryStatus, QuoteRequestStatus } from "../../core/domain/enums.js";
+import { Channel, ConversationStatus, Intent, InventoryAvailability, OutboundDeliveryStatus, QuoteRequestStatus } from "../../core/domain/enums.js";
 import type { Channel as ChannelType } from "../../core/domain/enums.js";
 import type { Conversation } from "../../core/domain/entities.js";
 import { processMessage } from "../../core/process-message.js";
@@ -22,6 +22,8 @@ import { resolveEvolutionGoConversation } from "../../channels/whatsapp/evolutio
 import { renderBasicPlanOperatorUi, type BasicPlanOperatorConfig } from "./basic-plan-operator-ui.js";
 import type { AdminBusinessScopeAuthorizer, AdminQueryService } from "../../core/admin-read-model.js";
 import { parseAdminPagination, parseAdminPeriod } from "../../core/admin-read-model.js";
+import { checkInventory } from "../../core/check-inventory.js";
+import type { InventoryReadPort } from "../../core/inventory-read-port.js";
 
 const MAX_BODY_BYTES = 1024 * 1024;
 
@@ -66,6 +68,8 @@ export type BasicPlanHttpServerDependencies = {
   outboundDeliveryRepository: OutboundDeliveryRepository;
   appointmentRepository: AppointmentRepository;
   humanHandoffRepository: HumanHandoffRepository;
+  inventoryReadPort?: InventoryReadPort;
+  stockCheckRepository?: StockCheckRepository;
   commercialEventRepository?: CommercialEventRepository;
   evolutionGoWebhookCredentials?: EvolutionGoWebhookCredential[];
   evolutionGoWebhookReplayGuard?: EvolutionGoWebhookReplayGuard;
@@ -566,6 +570,64 @@ async function handleRequest(
     return;
   }
 
+  const quoteInventoryMatch = pathname.match(/^\/v1\/businesses\/([^/]+)\/quotes\/([^/]+)\/inventory$/);
+  if (quoteInventoryMatch && (request.method === "GET" || request.method === "POST")) {
+    const businessId = decodePathPart(quoteInventoryMatch[1]);
+    const quoteRequestId = decodePathPart(quoteInventoryMatch[2]);
+    if (businessId === null || quoteRequestId === null) {
+      sendError(response, 400, "Invalid path");
+      return;
+    }
+    if (!dependencies.stockCheckRepository) {
+      sendError(response, 503, "Inventory read model is not configured");
+      return;
+    }
+    if (request.method === "GET") {
+      const result = await dependencies.stockCheckRepository.findLatestByQuoteRequest(businessId, quoteRequestId);
+      if (result === null) {
+        sendError(response, 404, "StockCheck not found");
+        return;
+      }
+      sendJson(response, 200, result);
+      return;
+    }
+    if (!dependencies.inventoryReadPort) {
+      sendError(response, 503, "Inventory provider is not configured");
+      return;
+    }
+    const quote = await dependencies.quoteRequestRepository.findById(businessId, quoteRequestId);
+    if (quote === null) {
+      sendError(response, 404, "QuoteRequest not found");
+      return;
+    }
+    const vehicle = quote.vehicleId === undefined ? undefined : await dependencies.vehicleRepository.findById(businessId, quote.vehicleId);
+    const conversation = await dependencies.conversationRepository.findById(businessId, quote.conversationId);
+    if (conversation === null) {
+      sendError(response, 404, "Conversation not found");
+      return;
+    }
+    const result = await checkInventory({
+      businessId,
+      conversationId: conversation.id,
+      quoteRequestId: quote.id,
+      ...(quote.vehicleId === undefined ? {} : { vehicleId: quote.vehicleId }),
+      requestedItem: quote.requestDescription,
+      ...(vehicle === null || vehicle === undefined ? {} : {
+        vehicle: {
+          ...(vehicle.brand === undefined ? {} : { brand: vehicle.brand }),
+          ...(vehicle.model === undefined ? {} : { model: vehicle.model }),
+          ...(vehicle.year === undefined ? {} : { year: vehicle.year }),
+          ...(vehicle.version === undefined ? {} : { version: vehicle.version }),
+        },
+      }),
+    }, dependencies.inventoryReadPort, dependencies.stockCheckRepository, {
+      now: dependencies.now,
+      generateId: () => dependencies.generateId("stock-check"),
+    });
+    sendJson(response, 200, result);
+    return;
+  }
+
   const quoteActionMatch = pathname.match(/^\/v1\/businesses\/([^/]+)\/quotes\/([^/]+)\/(respond|publish)$/);
   if (request.method === "POST" && quoteActionMatch) {
     const businessId = decodePathPart(quoteActionMatch[1]);
@@ -681,6 +743,27 @@ export async function handleAdminRequest(url: URL, request: IncomingMessage, res
       ...(year === undefined ? {} : { year }),
     });
     sendJson(response, 200, demand);
+    return;
+  }
+
+  if (url.pathname === "/v1/admin/inventory") {
+    let period;
+    let availability;
+    try {
+      period = parseAdminPeriod(url.searchParams.get("from") ?? undefined, url.searchParams.get("to") ?? undefined);
+      availability = optionalEnumQuery(url.searchParams.get("availability"), Object.values(InventoryAvailability));
+    } catch (error) {
+      sendError(response, 400, error instanceof Error ? error.message : "Invalid query");
+      return;
+    }
+    const requestedItem = url.searchParams.get("service") ?? url.searchParams.get("item");
+    const inventory = await dependencies.adminQueryService.getInventory({
+      businessId,
+      period,
+      ...(availability === undefined ? {} : { availability }),
+      ...(requestedItem === null ? {} : { requestedItem }),
+    });
+    sendJson(response, 200, inventory);
     return;
   }
 

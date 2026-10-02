@@ -1,6 +1,7 @@
 import type {
   BusinessType,
   CatalogItemKind,
+  InventoryAvailability,
   Channel,
   CommercialEventType,
   CommercialOutcome,
@@ -65,6 +66,21 @@ export type CatalogItem = {
   active: boolean;
   createdAt: string;
   updatedAt: string;
+};
+
+export type StockCheck = {
+  id: string;
+  businessId: string;
+  conversationId: string;
+  quoteRequestId: string;
+  vehicleId?: string;
+  requestedItem: string;
+  inventoryReference: string;
+  availability: InventoryAvailability;
+  availableQuantity?: number;
+  unit?: string;
+  source: string;
+  checkedAt: string;
 };
 
 export type Conversation = {

@@ -20,6 +20,13 @@ export enum CatalogItemKind {
   PRODUCT_AND_SERVICE = "PRODUCT_AND_SERVICE",
 }
 
+export enum InventoryAvailability {
+  AVAILABLE = "AVAILABLE",
+  LOW_STOCK = "LOW_STOCK",
+  OUT_OF_STOCK = "OUT_OF_STOCK",
+  UNKNOWN = "UNKNOWN",
+}
+
 export enum Channel {
   WEB = "WEB",
   WHATSAPP = "WHATSAPP",

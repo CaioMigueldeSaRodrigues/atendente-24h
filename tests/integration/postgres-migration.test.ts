@@ -66,6 +66,7 @@ test("PostgreSQL migrations and repositories persist tenant data and serialize c
       "002_appointment_and_handoff_repositories.sql",
       "003_evolution_go_webhook_processing.sql",
       "004_outbound_delivery_outbox.sql",
+      "005_stock_checks_read_only.sql",
     ].includes(version)));
     assert.deepEqual(await applyPostgresMigrations(db),[]);
     const transferBusinessId=`transfer-test-${businessId}`;

@@ -85,6 +85,10 @@ test("preview keeps the existing portals and serves admin data through the real 
     assert.ok(adminHtml.includes("Nenhum atendimento encontrado neste período."));
     assert.ok(adminHtml.includes("Não foi possível carregar os dados administrativos."));
     assert.ok(adminHtml.includes("/v1/admin/demand"));
+    assert.ok(adminHtml.includes("/v1/admin/inventory"));
+    for (const inventoryLabel of ["Estoque e disponibilidade", "Consultas de estoque", "Disponível", "Baixo estoque", "Sem estoque", "Desconhecido", "Demanda × disponibilidade"]) {
+      assert.ok(adminHtml.includes(inventoryLabel), `missing inventory visual label: ${inventoryLabel}`);
+    }
     for (const demandLabel of ["Demanda", "Participação da demanda por serviço", "Solicitados:", "Respondidos:", "Publicados:", "Entregues:", "Perfil dos veículos atendidos", "Demanda ao longo do tempo", "Progressão dos orçamentos"]) {
       assert.ok(adminHtml.includes(demandLabel), `missing demand visual label: ${demandLabel}`);
     }
@@ -145,6 +149,13 @@ test("preview keeps the existing portals and serves admin data through the real 
     assert.ok(demand.timeline.length >= 1);
     assert.equal((await fetch(`${base}/v1/admin/demand?businessId=other-business`)).status, 403);
 
+    const inventoryResponse = await fetch(`${base}/v1/admin/inventory?businessId=preview-business`);
+    const inventory = await inventoryResponse.json() as { summary: { total: number; available: number; lowStock: number; outOfStock: number; unknown: number; withoutAvailability: number }; items: Array<{ requestedItem: string; queries: number }> };
+    assert.equal(inventoryResponse.status, 200);
+    assert.deepEqual(inventory.summary, { total: 4, available: 1, lowStock: 1, outOfStock: 1, unknown: 1, withoutAvailability: 2 });
+    assert.equal(inventory.items.reduce((total, item) => total + item.queries, 0), 4);
+    assert.equal((await fetch(`${base}/v1/admin/inventory?businessId=other-business`)).status, 403);
+
     const listResponse = await fetch(`${base}/v1/admin/conversations?businessId=preview-business&page=1&pageSize=25`);
     const list = await listResponse.json() as { page: number; pageSize: number; total: number; items: Array<{ conversationId: string; customer?: { email?: string; primaryPhone?: string }; vehicle?: { version?: string; year?: number }; quoteRequest?: { status: string; authorizedPrice?: { amountCents: number } }; delivery?: { status: string }; lastMessage?: { content: string } }> };
     assert.equal(listResponse.status, 200);
@@ -190,13 +201,23 @@ test("preview keeps the existing portals and serves admin data through the real 
     const operatorHtml = await operator.text();
     assert.equal(operator.status, 200);
     assert.match(operatorHtml, /Ampliview/);
+    for (const inventoryLabel of ["Disponibilidade", "Quantidade", "Unidade", "Fonte", "Consultado em", "Não consultado / desconhecido"]) assert.ok(operatorHtml.includes(inventoryLabel), `missing operator inventory label: ${inventoryLabel}`);
     assert.match(operatorHtml, /Empresa não configurada/);
     assert.match(operatorHtml, /Nenhum orçamento aguardando atendimento\./);
     for (const fictitiousOperatorValue of ["Oficina de Demonstração", "Carlos Almeida", "Mariana Souza", "Roberto Lima", "Toyota Corolla", "Volkswagen T-Cross", "Chevrolet Onix"]) {
       assert.ok(!operatorHtml.includes(fictitiousOperatorValue), `operator preview contains ${fictitiousOperatorValue}`);
     }
     assert.doesNotMatch(operatorHtml, /OPENAI_API_KEY/);
-    assert.deepEqual(await (await fetch(`${base}/v1/businesses/preview-business/quotes/pending`)).json(), { items: [] });
+    const pendingOperator = await (await fetch(`${base}/v1/businesses/preview-business/quotes/pending`)).json() as { items: Array<{ quote: { id: string; status: string } }> };
+    assert.equal(pendingOperator.items.length, 1);
+    assert.equal(pendingOperator.items[0]?.quote.status, "WAITING_BUSINESS");
+    const operatorInventory = await fetch(`${base}/v1/businesses/preview-business/quotes/preview-business-quote-waiting/inventory`);
+    assert.equal(operatorInventory.status, 200);
+    const operatorInventoryBody = await operatorInventory.json() as { availability: string; availableQuantity: number; unit: string; source: string };
+    assert.deepEqual({ availability: operatorInventoryBody.availability, availableQuantity: operatorInventoryBody.availableQuantity, unit: operatorInventoryBody.unit, source: operatorInventoryBody.source }, {
+      availability: "AVAILABLE", availableQuantity: 8, unit: "unidade", source: "local-fixture",
+    });
+    assert.equal((await fetch(`${base}/v1/businesses/other-business/quotes/preview-business-quote-waiting/inventory`)).status, 404);
     assert.equal((await fetch(`${base}/v1/businesses/preview-business/conversations/unknown-conversation/messages`)).status, 404);
     assert.equal((await fetch(`${base}/v1/businesses/preview-business/quotes/unknown-quote/respond`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ amountCents: 10000, currency: "BRL" }) })).status, 404);
     assert.equal((await fetch(`${base}/v1/businesses/preview-business/quotes/unknown-quote/publish`, { method: "POST" })).status, 404);

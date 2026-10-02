@@ -5,7 +5,7 @@ const TABLES = [
   "automotive_businesses", "customers", "vehicles", "conversations",
   "evolution_go_conversation_links", "messages", "opportunities", "quote_requests",
   "commercial_events", "assistant_health_events", "evolution_go_webhook_receipts",
-  "evolution_go_webhook_claims", "outbound_deliveries",
+  "evolution_go_webhook_claims", "outbound_deliveries", "stock_checks",
 ] as const;
 
 export async function transferSqliteToPostgres(filename: string, target: PostgresDatabase): Promise<void> {

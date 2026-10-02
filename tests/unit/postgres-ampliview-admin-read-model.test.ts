@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { PostgresDatabase } from "../../src/infrastructure/postgres/postgres-database.js";
 import { PostgresAmpliviewAdminReadModel } from "../../src/infrastructure/postgres/postgres-ampliview-admin-read-model.js";
-import { Channel, CommercialEventType } from "../../src/core/domain/enums.js";
+import { Channel, CommercialEventType, InventoryAvailability } from "../../src/core/domain/enums.js";
 
 test("PostgreSQL administrative read model keeps tenant parameters and maps overview aggregates", async () => {
   const calls: Array<{ text: string; values: readonly unknown[] }> = [];
@@ -69,4 +69,30 @@ test("PostgreSQL demand query keeps tenant, period and vehicle filters and maps 
   assert.ok(calls[0]?.text.includes("business_id = \$"));
   assert.ok(calls[0]?.values.includes("business-a"));
   assert.ok(calls[0]?.values.includes("WHATSAPP"));
+});
+
+test("PostgreSQL inventory read model keeps tenant and availability filters", async () => {
+  const calls: Array<{ text: string; values: readonly unknown[] }> = [];
+  const fakeDatabase = {
+    async query(text: string, values: readonly unknown[]) {
+      calls.push({ text, values });
+      const rows = [
+        { id: "stock-a", business_id: "business-a", conversation_id: "conversation-a", quote_request_id: "quote-a", vehicle_id: null, requested_item: "Troca de óleo", inventory_reference: "sku-a", availability: InventoryAvailability.AVAILABLE, available_quantity: 8, unit: "unidade", source: "fixture", checked_at: "2026-01-01T10:00:00.000Z" },
+        { id: "stock-b", business_id: "business-a", conversation_id: "conversation-b", quote_request_id: "quote-b", vehicle_id: null, requested_item: "Troca de óleo", inventory_reference: "sku-b", availability: InventoryAvailability.OUT_OF_STOCK, available_quantity: 0, unit: "unidade", source: "fixture", checked_at: "2026-01-02T10:00:00.000Z" },
+      ];
+      return { rows: values.includes(InventoryAvailability.AVAILABLE) ? rows.slice(0, 1) : rows };
+    },
+  } as unknown as PostgresDatabase;
+  const inventory = await new PostgresAmpliviewAdminReadModel(fakeDatabase).getInventory({
+    businessId: "business-a",
+    period: { from: "2026-01-01T00:00:00.000Z", to: "2026-01-03T00:00:00.000Z" },
+    availability: InventoryAvailability.AVAILABLE,
+    requestedItem: "óleo",
+  });
+  assert.deepEqual(inventory.summary, { total: 1, available: 1, lowStock: 0, outOfStock: 0, unknown: 0, withoutAvailability: 0 });
+  assert.equal(inventory.items[0]?.queries, 1);
+  assert.equal(calls.length, 1);
+  assert.ok(calls[0]?.text.includes("stock_checks"));
+  assert.ok(calls[0]?.values.includes("business-a"));
+  assert.ok(calls[0]?.values.includes(InventoryAvailability.AVAILABLE));
 });

@@ -7,6 +7,7 @@ import { renderBasicPlanAuthUi } from "../infrastructure/http/basic-plan-auth-ui
 import { renderBasicPlanOperatorUi } from "../infrastructure/http/basic-plan-operator-ui.js";
 import { handleAdminRequest } from "../infrastructure/http/basic-plan-http-server.js";
 import { createPreviewAdminDependencies, PREVIEW_ADMIN_BUSINESS_ID } from "./admin-preview-fixture.js";
+import { SqliteStockCheckRepository } from "../infrastructure/sqlite/sqlite-stock-check-repository.js";
 
 const HOST = "127.0.0.1";
 const PORT = 3001;
@@ -14,6 +15,7 @@ const BUSINESS_ID = PREVIEW_ADMIN_BUSINESS_ID;
 const MAX_BODY_BYTES = 1024 * 1024;
 
 const previewAdmin = createPreviewAdminDependencies();
+const previewStockCheckRepository = new SqliteStockCheckRepository(previewAdmin.database);
 
 type PreviewQuoteItem = {
   quote: {
@@ -48,11 +50,21 @@ type PreviewQuoteItem = {
   conversation: {
     id: string;
     businessId: string;
-    channel: "WEB";
+    channel: "WEB" | "WHATSAPP";
   };
 };
 
-let items: PreviewQuoteItem[] = [];
+let items: PreviewQuoteItem[] = [{
+  quote: {
+    id: `${BUSINESS_ID}-quote-waiting`, businessId: BUSINESS_ID, opportunityId: `${BUSINESS_ID}-opportunity-waiting`,
+    conversationId: `${BUSINESS_ID}-conversation-waiting`, customerId: `${BUSINESS_ID}-customer-waiting`, vehicleId: `${BUSINESS_ID}-vehicle-waiting`,
+    requestDescription: "troca de óleo", status: QuoteRequestStatus.WAITING_BUSINESS,
+    requestedAt: "2026-09-29T10:00:00.000Z", createdAt: "2026-09-29T10:00:00.000Z", updatedAt: "2026-09-29T10:05:00.000Z",
+  },
+  customer: { id: `${BUSINESS_ID}-customer-waiting`, businessId: BUSINESS_ID, name: "Ana Souza", primaryPhone: "5511999990001" },
+  vehicle: { id: `${BUSINESS_ID}-vehicle-waiting`, businessId: BUSINESS_ID, brand: "Toyota", model: "Corolla", year: 2021, version: "XEi" },
+  conversation: { id: `${BUSINESS_ID}-conversation-waiting`, businessId: BUSINESS_ID, channel: "WHATSAPP" },
+}];
 
 export const server = createServer((request, response) => {
   void handleRequest(request, response).catch(() => {
@@ -104,6 +116,23 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse)
       quote.status === QuoteRequestStatus.WAITING_BUSINESS,
     );
     sendJson(response, 200, { items: pending });
+    return;
+  }
+
+  const inventoryMatch = pathname.match(/^\/v1\/businesses\/([^/]+)\/quotes\/([^/]+)\/inventory$/);
+  if (request.method === "GET" && inventoryMatch) {
+    const businessId = decodePathPart(inventoryMatch[1]);
+    const quoteRequestId = decodePathPart(inventoryMatch[2]);
+    if (businessId !== BUSINESS_ID || quoteRequestId === null) {
+      sendJson(response, 404, { error: "Not found" });
+      return;
+    }
+    const stockCheck = await previewStockCheckRepository.findLatestByQuoteRequest(businessId, quoteRequestId);
+    if (stockCheck === null) {
+      sendJson(response, 404, { error: "StockCheck not found" });
+      return;
+    }
+    sendJson(response, 200, stockCheck);
     return;
   }
 

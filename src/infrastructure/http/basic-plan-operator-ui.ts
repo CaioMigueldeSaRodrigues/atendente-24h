@@ -360,6 +360,38 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
       }
     }
 
+    function inventoryStatusLabel(value) {
+      if (value === "AVAILABLE") return "Disponível";
+      if (value === "LOW_STOCK") return "Baixo estoque";
+      if (value === "OUT_OF_STOCK") return "Sem estoque";
+      return "Não consultado / desconhecido";
+    }
+
+    async function loadInventory(item, block) {
+      try {
+        const path = "/v1/businesses/" + encodeURIComponent(operator.businessId) +
+          "/quotes/" + encodeURIComponent(item.quote.id) + "/inventory";
+        const response = await fetch(path);
+        if (!response.ok) throw new Error("inventory unavailable");
+        const data = await response.json();
+        block.replaceChildren();
+        const heading = document.createElement("h3");
+        heading.textContent = "Disponibilidade";
+        block.append(heading);
+        addInfo(block, "Status", inventoryStatusLabel(data && data.availability));
+        addInfo(block, "Quantidade", data && data.availableQuantity);
+        addInfo(block, "Unidade", data && data.unit);
+        addInfo(block, "Fonte", data && data.source);
+        addInfo(block, "Consultado em", dateTime(data && data.checkedAt));
+      } catch {
+        block.replaceChildren();
+        const heading = document.createElement("h3");
+        heading.textContent = "Disponibilidade";
+        block.append(heading);
+        addInfo(block, "Status", "Não consultado / desconhecido");
+      }
+    }
+
     function priceToCents(value) {
       const match = /^(\d+)(?:[,.](\d{1,2}))?$/.exec(value.trim());
       if (!match) return null;
@@ -456,6 +488,7 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
       const vehicle = item.vehicle;
       const grid = document.createElement("div");
       grid.className = "detail-grid";
+      const inventory = makeInfoBlock("Disponibilidade", [["Status", "Consultando…"]]);
       grid.append(
         makeInfoBlock("Cliente", [
           ["Nome", customer && customer.name],
@@ -476,6 +509,7 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
           ["Status", statusLabel(item.quote.status)],
           ["Data/hora", dateTime(item.quote.requestedAt)],
         ], "request-block"),
+        inventory,
       );
 
       const historyHeading = document.createElement("h3");
@@ -494,6 +528,7 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
       };
 
       content.append(toolbar, grid, historyHeading, historyArea);
+      void loadInventory(item, inventory);
       if (item.quote.status === "WAITING_BUSINESS") {
         const action = document.createElement("form");
         action.className = "action-panel";

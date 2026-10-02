@@ -11,8 +11,10 @@ import type {
 import type { Channel, ConversationStatus, Intent } from "./domain/enums.js";
 import type { Money, NextAction } from "./domain/types.js";
 import type { AdminDemand, AdminDemandFilters } from "./admin-demand.js";
+import type { AdminInventory, AdminInventoryFilters } from "./admin-inventory.js";
 
 export type { AdminDemand, AdminDemandCount, AdminDemandFilters, AdminDemandModelCount, AdminDemandQuoteRow, AdminDemandTimelinePoint, AdminDemandYearCount } from "./admin-demand.js";
+export type { AdminInventory, AdminInventoryCheck, AdminInventoryFilters, AdminInventoryItem } from "./admin-inventory.js";
 
 /** `from` is inclusive and `to` is exclusive. */
 export type AdminPeriod = { from?: string; to?: string };
@@ -93,6 +95,7 @@ export type AdminConversationDetail = {
 export type AdminQueryService = {
   getOverview(input: AdminScope & { period?: AdminPeriod }): Promise<AdminOverview>;
   getDemand(input: AdminDemandFilters): Promise<AdminDemand>;
+  getInventory(input: AdminInventoryFilters): Promise<AdminInventory>;
   listConversations(input: AdminConversationListFilters): Promise<AdminConversationList>;
   getConversation(input: { businessId: string; conversationId: string }): Promise<AdminConversationDetail | null>;
 };

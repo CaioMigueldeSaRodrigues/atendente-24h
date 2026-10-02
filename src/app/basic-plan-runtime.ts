@@ -25,6 +25,8 @@ import { SqliteOutboundDeliveryRepository } from "../infrastructure/sqlite/sqlit
 import { SqliteOpportunityRepository } from "../infrastructure/sqlite/sqlite-opportunity-repository.js";
 import { SqliteQuoteRequestRepository } from "../infrastructure/sqlite/sqlite-quote-request-repository.js";
 import { SqliteVehicleRepository } from "../infrastructure/sqlite/sqlite-vehicle-repository.js";
+import { SqliteStockCheckRepository } from "../infrastructure/sqlite/sqlite-stock-check-repository.js";
+import { UnavailableInventoryReadAdapter } from "../infrastructure/inventory/local-inventory-read-adapter.js";
 
 export type BasicPlanBusinessConfig = {
   businessId: string;
@@ -101,6 +103,7 @@ export async function createBasicPlanRuntime(
     const opportunityRepository = new SqliteOpportunityRepository(database);
     const quoteRequestRepository = new SqliteQuoteRequestRepository(database);
     const commercialEventRepository = new SqliteCommercialEventRepository(database);
+    const stockCheckRepository = new SqliteStockCheckRepository(database);
     const evolutionGoWebhookReplayGuard = new SqliteEvolutionGoWebhookReplayGuard(database);
     const evolutionGoConversationLinkRepository = new SqliteEvolutionGoConversationLinkRepository(database);
     const evolutionGoTextSender = options.evolutionGoWebhookCredential
@@ -118,6 +121,8 @@ export async function createBasicPlanRuntime(
       vehicleRepository,
       opportunityRepository,
       quoteRequestRepository,
+      inventoryReadPort: new UnavailableInventoryReadAdapter(),
+      stockCheckRepository,
       commercialEventRepository,
       evolutionGoWebhookReplayGuard,
       evolutionGoConversationLinkRepository,

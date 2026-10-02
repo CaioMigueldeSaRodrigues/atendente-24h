@@ -1,9 +1,11 @@
 import type { DatabaseSync } from "node:sqlite";
-import type { AdminConversationDetail, AdminConversationList, AdminConversationListFilters, AdminConversationListItem, AdminCustomer, AdminDelivery, AdminLastMessage, AdminOpportunity, AdminOverview, AdminQueryService, AdminQuoteRequest, AdminScope, AdminVehicle, AdminDemand, AdminDemandFilters, AdminDemandQuoteRow } from "../../core/admin-read-model.js";
+import type { AdminConversationDetail, AdminConversationList, AdminConversationListFilters, AdminConversationListItem, AdminCustomer, AdminDelivery, AdminLastMessage, AdminOpportunity, AdminOverview, AdminQueryService, AdminQuoteRequest, AdminScope, AdminVehicle, AdminDemand, AdminDemandFilters, AdminDemandQuoteRow, AdminInventory, AdminInventoryFilters } from "../../core/admin-read-model.js";
+import { buildAdminInventory } from "../../core/admin-inventory.js";
 import { buildAdminDemand } from "../../core/admin-demand.js";
 import { parseNextAction, toAverageMoney, toMoney } from "../../core/admin-read-model.js";
 import type { CommercialEvent, Conversation, Message, Opportunity, OutboundDelivery, QuoteRequest } from "../../core/domain/entities.js";
-import { Channel, CommercialEventType, CommercialOutcome, ConversationStatus, Intent, OpportunityStatus, OutboundDeliveryStatus, QuoteRequestStatus, SenderType } from "../../core/domain/enums.js";
+import { Channel, CommercialEventType, CommercialOutcome, ConversationStatus, Intent, InventoryAvailability, OpportunityStatus, OutboundDeliveryStatus, QuoteRequestStatus, SenderType } from "../../core/domain/enums.js";
+import type { StockCheck } from "../../core/domain/entities.js";
 import type { Money } from "../../core/domain/types.js";
 import { withSqliteConnectionLock } from "./sqlite-connection-lock.js";
 
@@ -139,6 +141,25 @@ export class SqliteAmpliviewAdminReadModel implements AdminQueryService {
         return result;
       });
       return buildAdminDemand(input, demandRows);
+    });
+  }
+
+  async getInventory(input: AdminInventoryFilters): Promise<AdminInventory> {
+    return withSqliteConnectionLock(this.database, () => {
+      const params: any[] = [input.businessId];
+      const clauses = ["business_id = ?"];
+      if (input.period?.from !== undefined) { clauses.push("checked_at >= ?"); params.push(input.period.from); }
+      if (input.period?.to !== undefined) { clauses.push("checked_at < ?"); params.push(input.period.to); }
+      if (input.availability !== undefined) { clauses.push("availability = ?"); params.push(input.availability); }
+      if (input.requestedItem !== undefined) { clauses.push("LOWER(TRIM(requested_item)) LIKE LOWER(TRIM(?))"); params.push(`%${input.requestedItem}%`); }
+      const rows = this.database.prepare(`SELECT * FROM stock_checks WHERE ${clauses.join(" AND ")} ORDER BY checked_at ASC,id ASC`).all(...params) as Row[];
+      const checks: StockCheck[] = rows.map((row) => ({
+        id: text(row, "id"), businessId: text(row, "business_id"), conversationId: text(row, "conversation_id"), quoteRequestId: text(row, "quote_request_id"),
+        ...(optionalText(row, "vehicle_id") === undefined ? {} : { vehicleId: optionalText(row, "vehicle_id")! }), requestedItem: text(row, "requested_item"), inventoryReference: text(row, "inventory_reference"),
+        availability: enumValue(Object.values(InventoryAvailability), value(row, "availability")), ...(value(row, "available_quantity") == null ? {} : { availableQuantity: Number(value(row, "available_quantity")) }),
+        ...(optionalText(row, "unit") === undefined ? {} : { unit: optionalText(row, "unit")! }), source: text(row, "source"), checkedAt: text(row, "checked_at"),
+      }));
+      return buildAdminInventory(input, checks);
     });
   }
 

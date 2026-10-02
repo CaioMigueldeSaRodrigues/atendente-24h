@@ -26,6 +26,7 @@ test("creates an in-memory database and initializes the schema", () => {
       { name: "opportunities" },
       { name: "outbound_deliveries" },
       { name: "quote_requests" },
+      { name: "stock_checks" },
       { name: "vehicles" },
     ]);
   } finally {

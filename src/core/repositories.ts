@@ -11,9 +11,10 @@ import type {
   Opportunity,
   OutboundDelivery,
   QuoteRequest,
+  StockCheck,
   Vehicle,
 } from "./domain/entities.js";
-import { OutboundDeliveryStatus } from "./domain/enums.js";
+import { InventoryAvailability, OutboundDeliveryStatus } from "./domain/enums.js";
 
 export interface CommercialEventRepository {
   append(event: CommercialEvent): Promise<void>;
@@ -45,6 +46,14 @@ export interface VehicleRepository {
 export interface CatalogItemRepository {
   findById(businessId: string, id: string): Promise<CatalogItem | null>;
   save(entity: CatalogItem): Promise<void>;
+}
+
+export type StockCheckListFilters = { from?: string; to?: string; availability?: InventoryAvailability; requestedItem?: string };
+
+export interface StockCheckRepository {
+  save(entity: StockCheck): Promise<void>;
+  findLatestByQuoteRequest(businessId: string, quoteRequestId: string): Promise<StockCheck | null>;
+  listByBusiness(businessId: string, filters?: StockCheckListFilters): Promise<StockCheck[]>;
 }
 
 export interface ConversationRepository {

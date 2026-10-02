@@ -1,5 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
-import { Channel, CommercialEventType, CommercialOutcome, ConversationStatus, Intent, OpportunityStatus, OutboundDeliveryStatus, QuoteRequestStatus, SenderType } from "../core/domain/enums.js";
+import { Channel, CommercialEventType, CommercialOutcome, ConversationStatus, Intent, InventoryAvailability, OpportunityStatus, OutboundDeliveryStatus, QuoteRequestStatus, SenderType } from "../core/domain/enums.js";
 import { SqliteAmpliviewAdminReadModel } from "../infrastructure/sqlite/sqlite-ampliview-admin-read-model.js";
 import { createSqliteDatabase } from "../infrastructure/sqlite/sqlite-database.js";
 import { PreviewAdminBusinessScopeAuthorizer } from "./preview-admin-authorizer.js";
@@ -145,6 +145,19 @@ export function createPreviewAdminDependencies(): PreviewAdminDependencies {
     requestDescription: "alinhamento",
     lastMessageAt: "2026-09-29T10:24:00.000Z",
   });
+
+  const stockChecks = [
+    ["waiting", InventoryAvailability.AVAILABLE, 8, "unidade"],
+    ["responded", InventoryAvailability.LOW_STOCK, 2, "unidade"],
+    ["delivered", InventoryAvailability.OUT_OF_STOCK, 0, "unidade"],
+    ["failed", InventoryAvailability.UNKNOWN, null, null],
+  ] as const;
+  for (const [suffix, availability, quantity, unit] of stockChecks) {
+    insert(database, "INSERT INTO stock_checks(id,business_id,conversation_id,quote_request_id,vehicle_id,requested_item,inventory_reference,availability,available_quantity,unit,source,checked_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+      `${businessId}-stock-check-${suffix}`, businessId, `${businessId}-conversation-${suffix}`, `${businessId}-quote-${suffix}`, `${businessId}-vehicle-${suffix}`,
+      ({ waiting: "troca de óleo", responded: "revisão de freios", delivered: "troca de pastilhas", failed: "alinhamento" } as Record<string, string>)[suffix],
+      `${businessId}-inventory-${suffix}`, availability, quantity, unit, "local-fixture", "2026-09-29T10:30:00.000Z");
+  }
 
   return {
     database,

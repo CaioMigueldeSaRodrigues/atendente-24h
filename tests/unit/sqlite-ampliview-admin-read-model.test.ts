@@ -5,7 +5,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { createSqliteDatabase } from "../../src/infrastructure/sqlite/sqlite-database.js";
 import { SqliteAmpliviewAdminReadModel } from "../../src/infrastructure/sqlite/sqlite-ampliview-admin-read-model.js";
 import { createBasicPlanHttpServer, type BasicPlanHttpServerDependencies } from "../../src/infrastructure/http/basic-plan-http-server.js";
-import { Channel, CommercialEventType, CommercialOutcome, ConversationStatus, Intent, OpportunityStatus, OutboundDeliveryStatus, QuoteRequestStatus, SenderType } from "../../src/core/domain/enums.js";
+import { Channel, CommercialEventType, CommercialOutcome, ConversationStatus, Intent, InventoryAvailability, OpportunityStatus, OutboundDeliveryStatus, QuoteRequestStatus, SenderType } from "../../src/core/domain/enums.js";
 import type { AdminBusinessScopeAuthorizer } from "../../src/core/admin-read-model.js";
 import { buildAdminDemand } from "../../src/core/admin-demand.js";
 
@@ -158,6 +158,35 @@ test("administrative API validates scope, period and exposes overview/list/detai
     assert.equal((await fetch(`${baseUrl}/v1/admin/overview`)).status, 400);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
+    database.close();
+  }
+});
+
+test("SQLite inventory read model aggregates StockChecks, filters them, and enforces tenant scope", async () => {
+  const database = createSqliteDatabase({ filename: ":memory:" });
+  const server = createBasicPlanHttpServer(adminDependencies(new SqliteAmpliviewAdminReadModel(database), { isAuthorized: async ({ businessId }) => businessId === "business-a" }));
+  seed(database);
+  insert(database, "INSERT INTO stock_checks(id,business_id,conversation_id,quote_request_id,vehicle_id,requested_item,inventory_reference,availability,available_quantity,unit,source,checked_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", "stock-a-1", "business-a", "business-a-conversation-1", "business-a-quote-1", "business-a-vehicle-1", " Troca   de óleo ", "item-a", InventoryAvailability.AVAILABLE, 8, "unidade", "fixture", "2026-01-01T11:00:00.000Z");
+  insert(database, "INSERT INTO stock_checks(id,business_id,conversation_id,quote_request_id,vehicle_id,requested_item,inventory_reference,availability,available_quantity,unit,source,checked_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", "stock-a-2", "business-a", "business-a-conversation-2", "business-a-quote-2", "business-a-vehicle-2", "troca de óleo", "item-a", InventoryAvailability.OUT_OF_STOCK, 0, "unidade", "fixture", "2026-01-02T11:00:00.000Z");
+  insert(database, "INSERT INTO stock_checks(id,business_id,conversation_id,quote_request_id,vehicle_id,requested_item,inventory_reference,availability,available_quantity,unit,source,checked_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", "stock-b-1", "business-b", "business-b-conversation-1", "business-b-quote-1", "business-b-vehicle-1", "Troca de óleo", "item-b", InventoryAvailability.UNKNOWN, null, null, "fixture", "2026-01-01T11:00:00.000Z");
+  try {
+    const readModel = new SqliteAmpliviewAdminReadModel(database);
+    const inventory = await readModel.getInventory({ businessId: "business-a", period });
+    assert.deepEqual(inventory.summary, { total: 2, available: 1, lowStock: 0, outOfStock: 1, unknown: 0, withoutAvailability: 1 });
+    assert.deepEqual(inventory.items, [{ requestedItem: "Troca de óleo", queries: 2, available: 1, lowStock: 0, outOfStock: 1, unknown: 0, withoutAvailability: 1 }]);
+    assert.equal((await readModel.getInventory({ businessId: "business-a", availability: InventoryAvailability.AVAILABLE })).summary.total, 1);
+    assert.equal((await readModel.getInventory({ businessId: "business-b" })).summary.total, 1);
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address() as AddressInfo;
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    const response = await fetch(`${baseUrl}/v1/admin/inventory?businessId=business-a&availability=AVAILABLE`);
+    assert.equal(response.status, 200);
+    assert.equal((await response.json() as { summary: { total: number } }).summary.total, 1);
+    assert.equal((await fetch(`${baseUrl}/v1/admin/inventory?businessId=business-b`)).status, 403);
+    assert.equal((await fetch(`${baseUrl}/v1/admin/inventory?businessId=business-a&availability=invalid`)).status, 400);
+  } finally {
+    if (server.listening) await new Promise<void>((resolve) => server.close(() => resolve()));
     database.close();
   }
 });

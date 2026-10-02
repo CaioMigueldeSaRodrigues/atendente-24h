@@ -1,9 +1,10 @@
 import type { PostgresDatabase } from "./postgres-database.js";
-import type { AdminConversationDetail, AdminConversationList, AdminConversationListFilters, AdminConversationListItem, AdminCustomer, AdminDelivery, AdminLastMessage, AdminOpportunity, AdminOverview, AdminQueryService, AdminQuoteRequest, AdminScope, AdminVehicle, AdminDemand, AdminDemandFilters, AdminDemandQuoteRow } from "../../core/admin-read-model.js";
+import type { AdminConversationDetail, AdminConversationList, AdminConversationListFilters, AdminConversationListItem, AdminCustomer, AdminDelivery, AdminLastMessage, AdminOpportunity, AdminOverview, AdminQueryService, AdminQuoteRequest, AdminScope, AdminVehicle, AdminDemand, AdminDemandFilters, AdminDemandQuoteRow, AdminInventory, AdminInventoryFilters } from "../../core/admin-read-model.js";
+import { buildAdminInventory } from "../../core/admin-inventory.js";
 import { buildAdminDemand } from "../../core/admin-demand.js";
 import { parseNextAction, toAverageMoney, toMoney } from "../../core/admin-read-model.js";
-import type { CommercialEvent, Conversation, Message, Opportunity, OutboundDelivery, QuoteRequest } from "../../core/domain/entities.js";
-import { Channel, CommercialEventType, CommercialOutcome, ConversationStatus, Intent, OpportunityStatus, OutboundDeliveryStatus, QuoteRequestStatus, SenderType } from "../../core/domain/enums.js";
+import type { CommercialEvent, Conversation, Message, Opportunity, OutboundDelivery, QuoteRequest, StockCheck } from "../../core/domain/entities.js";
+import { Channel, CommercialEventType, CommercialOutcome, ConversationStatus, Intent, InventoryAvailability, OpportunityStatus, OutboundDeliveryStatus, QuoteRequestStatus, SenderType } from "../../core/domain/enums.js";
 import type { Money } from "../../core/domain/types.js";
 
 type Row = Record<string, any>;
@@ -132,6 +133,23 @@ export class PostgresAmpliviewAdminReadModel implements AdminQueryService {
       return result;
     });
     return buildAdminDemand(input, demandRows);
+  }
+
+  async getInventory(input: AdminInventoryFilters): Promise<AdminInventory> {
+    const values: unknown[] = [input.businessId];
+    const clauses = ["business_id = ?"];
+    if (input.period?.from !== undefined) { values.push(input.period.from); clauses.push("checked_at >= ?"); }
+    if (input.period?.to !== undefined) { values.push(input.period.to); clauses.push("checked_at < ?"); }
+    if (input.availability !== undefined) { values.push(input.availability); clauses.push("availability = ?"); }
+    if (input.requestedItem !== undefined) { values.push(`%${input.requestedItem}%`); clauses.push("LOWER(TRIM(requested_item)) LIKE LOWER(TRIM(?))"); }
+    const rows = await this.rows(`SELECT * FROM stock_checks WHERE ${clauses.join(" AND ")} ORDER BY checked_at ASC,id ASC`, values);
+    const checks: StockCheck[] = rows.map((row) => ({
+      id: text(row, "id"), businessId: text(row, "business_id"), conversationId: text(row, "conversation_id"), quoteRequestId: text(row, "quote_request_id"),
+      ...(optionalText(row, "vehicle_id") === undefined ? {} : { vehicleId: optionalText(row, "vehicle_id")! }), requestedItem: text(row, "requested_item"), inventoryReference: text(row, "inventory_reference"),
+      availability: enumValue(Object.values(InventoryAvailability), row.availability), ...(row.available_quantity == null ? {} : { availableQuantity: Number(row.available_quantity) }),
+      ...(optionalText(row, "unit") === undefined ? {} : { unit: optionalText(row, "unit")! }), source: text(row, "source"), checkedAt: text(row, "checked_at"),
+    }));
+    return buildAdminInventory(input, checks);
   }
 
   async listConversations(input: AdminConversationListFilters): Promise<AdminConversationList> {
