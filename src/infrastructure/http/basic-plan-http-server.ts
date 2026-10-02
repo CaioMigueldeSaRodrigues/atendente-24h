@@ -81,6 +81,11 @@ export type BasicPlanHttpServerDependencies = {
   generateId: (prefix: string) => string;
 };
 
+export type AdminHttpServerDependencies = Pick<
+  BasicPlanHttpServerDependencies,
+  "adminQueryService" | "adminBusinessScopeAuthorizer"
+>;
+
 export function createBasicPlanHttpServer(
   dependencies: BasicPlanHttpServerDependencies,
 ): Server {
@@ -622,7 +627,7 @@ async function handleRequest(
   sendError(response, 404, "Not found");
 }
 
-async function handleAdminRequest(url: URL, request: IncomingMessage, response: ServerResponse, dependencies: BasicPlanHttpServerDependencies): Promise<void> {
+export async function handleAdminRequest(url: URL, request: IncomingMessage, response: ServerResponse, dependencies: AdminHttpServerDependencies): Promise<void> {
   if (request.method !== "GET" || !dependencies.adminQueryService || !dependencies.adminBusinessScopeAuthorizer) {
     sendError(response, 404, "Not found");
     return;

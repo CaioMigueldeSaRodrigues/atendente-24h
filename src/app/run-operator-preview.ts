@@ -2,42 +2,18 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { resolve } from "node:path";
 import { QuoteRequestStatus } from "../core/domain/enums.js";
 import { MANAUS_COMMERCIAL_CLUSTERS, MANAUS_COMMERCIAL_REGIONS, MANAUS_MAPPED_BUSINESSES } from "./manaus-market-mapping.js";
-import { renderAmpliviewAdminUi, type AmpliviewAdminData } from "../infrastructure/http/ampliview-admin-ui.js";
+import { renderAmpliviewAdminUi } from "../infrastructure/http/ampliview-admin-ui.js";
 import { renderBasicPlanAuthUi } from "../infrastructure/http/basic-plan-auth-ui.js";
 import { renderBasicPlanOperatorUi } from "../infrastructure/http/basic-plan-operator-ui.js";
+import { handleAdminRequest } from "../infrastructure/http/basic-plan-http-server.js";
+import { createPreviewAdminDependencies, PREVIEW_ADMIN_BUSINESS_ID } from "./admin-preview-fixture.js";
 
 const HOST = "127.0.0.1";
 const PORT = 3001;
-const BUSINESS_ID = "preview-business";
+const BUSINESS_ID = PREVIEW_ADMIN_BUSINESS_ID;
 const MAX_BODY_BYTES = 1024 * 1024;
 
-const adminOperationalData: AmpliviewAdminData = {
-  overview: {
-    activeBusinesses: 0,
-    attendances: 0,
-    commercialRequests: 0,
-    respondedQuotes: 0,
-    authorizedAmountCents: 0,
-    aiResolutionPercent: 0,
-    attendancePeriods: [],
-    businessesByRegion: [],
-    channels: [],
-    commercialResults: [],
-    operationalAlerts: [],
-  },
-  attendances: [],
-  assistantHealth: { issues: [], causes: [] },
-  regionalAdoption: [],
-  coverageDeficits: [],
-  demand: [],
-  merchandising: {
-    unexploredDemand: [],
-    opportunitiesByRegion: [],
-    opportunitiesBySegment: [],
-    productTrends: [],
-  },
-  businesses: [],
-};
+const previewAdmin = createPreviewAdminDependencies();
 
 type PreviewQuoteItem = {
   quote: {
@@ -103,12 +79,16 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse)
     sendHtml(response, renderBasicPlanAuthUi("admin-login"));
     return;
   }
+  if (pathname.startsWith("/v1/admin/")) {
+    await handleAdminRequest(new URL(request.url ?? "/", `http://${HOST}:${PORT}`), request, response, previewAdmin);
+    return;
+  }
   if (request.method === "GET" && pathname === "/admin") {
-    sendHtml(response, renderAmpliviewAdminUi(adminOperationalData, {
+    sendHtml(response, renderAmpliviewAdminUi({ businessId: BUSINESS_ID, marketMapping: {
       regions: MANAUS_COMMERCIAL_REGIONS,
       clusters: MANAUS_COMMERCIAL_CLUSTERS,
       mappedBusinesses: MANAUS_MAPPED_BUSINESSES,
-    }));
+    }}));
     return;
   }
   if (request.method === "GET" && pathname === "/operator") {

@@ -111,6 +111,9 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
     const address = server.address() as AddressInfo;
     baseUrl = `http://127.0.0.1:${address.port}`;
     const request = (path: string, init?: RequestInit) => fetch(`${baseUrl}${path}`, init);
+    const adminWithoutDependencies = await request("/v1/admin/overview?businessId=business-a");
+    assert.equal(adminWithoutDependencies.status, 404);
+    assert.deepEqual(await adminWithoutDependencies.json(), { error: "Not found" });
     const post = (path: string, body: unknown) => request(path, {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
     });
