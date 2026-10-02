@@ -7,6 +7,7 @@ import { SqliteAmpliviewAdminReadModel } from "../../src/infrastructure/sqlite/s
 import { createBasicPlanHttpServer, type BasicPlanHttpServerDependencies } from "../../src/infrastructure/http/basic-plan-http-server.js";
 import { Channel, CommercialEventType, CommercialOutcome, ConversationStatus, Intent, OpportunityStatus, OutboundDeliveryStatus, QuoteRequestStatus, SenderType } from "../../src/core/domain/enums.js";
 import type { AdminBusinessScopeAuthorizer } from "../../src/core/admin-read-model.js";
+import { buildAdminDemand } from "../../src/core/admin-demand.js";
 
 const period = { from: "2026-01-01T00:00:00.000Z", to: "2026-01-03T00:00:00.000Z" };
 
@@ -88,9 +89,34 @@ test("SQLite administrative read model calculates real overview and enforces ten
     assert.equal(detail.outboundDeliveries[0]?.status, OutboundDeliveryStatus.DELIVERED);
     assert.equal(await readModel.getConversation({ businessId: "business-a", conversationId: "business-b-conversation-1" }), null);
     assert.equal((await readModel.getOverview({ businessId: "business-b", period })).quotePublished, 1);
+
+    const demand = await readModel.getDemand({ businessId: "business-a", period });
+    assert.deepEqual(demand.quotes, { requested: 2, responded: 1, published: 1 });
+    assert.deepEqual(demand.services, [
+      { name: "Revis\u00e3o", quantity: 1, requested: 1, responded: 0, published: 0, delivered: 0 },
+      { name: "Troca de \u00f3leo", quantity: 1, requested: 1, responded: 1, published: 1, delivered: 1 },
+    ]);
+    assert.deepEqual(demand.brands, [{ name: "Chevrolet", quantity: 2 }]);
+    assert.deepEqual(demand.models, [{ brand: "Chevrolet", model: "Onix", quantity: 1 }, { brand: "Chevrolet", model: "Tracker", quantity: 1 }]);
+    assert.deepEqual(demand.years, [{ year: 2020, quantity: 2 }]);
+    assert.deepEqual(demand.timeline, [{ period: "2026-01-01", quantity: 1 }, { period: "2026-01-02", quantity: 1 }]);
+    assert.equal((await readModel.getDemand({ businessId: "business-b", period })).quotes.requested, 2);
   } finally {
     database.close();
   }
+});
+
+test("demand normalization groups casing and whitespace without double counting quote events", () => {
+  const demand = buildAdminDemand({ businessId: "business-a" }, [
+    { quoteId: "quote-1", requestedAt: "2026-01-01T10:00:00.000Z", requestDescription: "Troca de óleo", brand: "Honda", model: "Civic", year: 2019, eventType: CommercialEventType.QUOTE_RESPONDED },
+    { quoteId: "quote-1", requestedAt: "2026-01-01T10:00:00.000Z", requestDescription: "Troca de óleo", brand: "Honda", model: "Civic", year: 2019, eventType: CommercialEventType.QUOTE_PUBLISHED },
+    { quoteId: "quote-2", requestedAt: "2026-01-02T10:00:00.000Z", requestDescription: "  troca   de óleo ", brand: "honda", model: " civic ", year: 2019 },
+  ]);
+  assert.deepEqual(demand.services, [{ name: "Troca de óleo", quantity: 2, requested: 2, responded: 1, published: 1, delivered: 0 }]);
+  assert.deepEqual(demand.brands, [{ name: "Honda", quantity: 2 }]);
+  assert.deepEqual(demand.models, [{ brand: "Honda", model: "Civic", quantity: 2 }]);
+  assert.deepEqual(demand.years, [{ year: 2019, quantity: 2 }]);
+  assert.deepEqual(demand.quotes, { requested: 2, responded: 1, published: 1 });
 });
 
 test("administrative API validates scope, period and exposes overview/list/detail DTOs", async () => {
@@ -106,6 +132,15 @@ test("administrative API validates scope, period and exposes overview/list/detai
     assert.equal(overviewResponse.status, 200, overviewBody);
     const overview = JSON.parse(overviewBody) as { quotePublished: number };
     assert.equal(overview.quotePublished, 1);
+    const demandResponse = await fetch(`${baseUrl}/v1/admin/demand?businessId=business-a&from=${encodeURIComponent(period.from)}&to=${encodeURIComponent(period.to)}&channel=WHATSAPP&brand=chevrolet`);
+    assert.equal(demandResponse.status, 200);
+    const demand = await demandResponse.json() as { quotes: { requested: number; responded: number; published: number }; brands: Array<{ name: string; quantity: number }> };
+    assert.deepEqual(demand.quotes, { requested: 2, responded: 1, published: 1 });
+    assert.deepEqual(demand.brands, [{ name: "Chevrolet", quantity: 2 }]);
+    const filteredDemandResponse = await fetch(`${baseUrl}/v1/admin/demand?businessId=business-a&service=troca&brand=chevrolet&model=onix&year=2020&from=${encodeURIComponent(period.from)}&to=${encodeURIComponent(period.to)}`);
+    const filteredDemand = await filteredDemandResponse.json() as { quotes: { requested: number; responded: number; published: number } };
+    assert.equal(filteredDemandResponse.status, 200);
+    assert.deepEqual(filteredDemand.quotes, { requested: 1, responded: 1, published: 1 });
     const listResponse = await fetch(`${baseUrl}/v1/admin/conversations?businessId=business-a&page=1&pageSize=1&brand=Chevrolet`);
     assert.equal(listResponse.status, 200);
     const list = await listResponse.json() as { total: number; items: Array<{ vehicle?: { brand?: string } }> };
@@ -117,7 +152,9 @@ test("administrative API validates scope, period and exposes overview/list/detai
     assert.equal(detail.messages.length, 2);
     assert.equal(detail.commercialEvents.length, 3);
     assert.equal((await fetch(`${baseUrl}/v1/admin/overview?businessId=business-b`)).status, 403);
+    assert.equal((await fetch(`${baseUrl}/v1/admin/demand?businessId=business-b`)).status, 403);
     assert.equal((await fetch(`${baseUrl}/v1/admin/overview?businessId=business-a&from=invalid`)).status, 400);
+    assert.equal((await fetch(`${baseUrl}/v1/admin/demand?businessId=business-a&year=invalid`)).status, 400);
     assert.equal((await fetch(`${baseUrl}/v1/admin/overview`)).status, 400);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));

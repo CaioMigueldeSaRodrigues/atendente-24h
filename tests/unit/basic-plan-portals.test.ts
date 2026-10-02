@@ -84,6 +84,20 @@ test("preview keeps the existing portals and serves admin data through the real 
     assert.ok(adminHtml.includes("Carregando dados administrativos"));
     assert.ok(adminHtml.includes("Nenhum atendimento encontrado neste período."));
     assert.ok(adminHtml.includes("Não foi possível carregar os dados administrativos."));
+    assert.ok(adminHtml.includes("/v1/admin/demand"));
+    for (const demandLabel of ["Demanda", "Participação da demanda por serviço", "Solicitados:", "Respondidos:", "Publicados:", "Entregues:", "Perfil dos veículos atendidos", "Demanda ao longo do tempo", "Progressão dos orçamentos"]) {
+      assert.ok(adminHtml.includes(demandLabel), `missing demand visual label: ${demandLabel}`);
+    }
+    assert.match(adminHtml, /Math\.min\(100,Number\(item\.quantity\)\/total\*100\)/);
+    for (const segmentLabel of ["Oficina", "Auto Center", "Elétrica automotiva", "Acessórios", "Ar-condicionado", "Pneus e rodas", "Baterias"]) assert.ok(adminHtml.includes(segmentLabel), `missing market segment label: ${segmentLabel}`);
+    assert.doesNotMatch(adminHtml, /Percentual contratado|Contratado|Conversão de vendas/i);
+    assert.match(adminHtml, /options\[0\]\.value=\"\"/);
+    assert.match(adminHtml, /Concentração de oficinas|Concentração por cluster/);
+    assert.match(adminHtml, /Oficinas por segmento/);
+    assert.match(adminHtml, /Auditoria geográfica/);
+    assert.match(adminHtml, /Latitude/);
+    assert.match(adminHtml, /Longitude/);
+    assert.match(adminHtml, /não representa coordenadas geográficas/);
     for (const visualLabel of ["Conversas", "Orçamentos solicitados", "Orçamentos respondidos", "Entregas concluídas", "Ticket médio autorizado", "Clientes", "Veículos", "Orçamentos publicados", "Falhas de entrega", "Valor autorizado", "Tempo médio do fluxo"]) {
       assert.ok(adminHtml.includes(visualLabel), `missing visual label: ${visualLabel}`);
     }
@@ -116,6 +130,20 @@ test("preview keeps the existing portals and serves admin data through the real 
     assert.notEqual(overview.averageRequestToResponseMs, null);
     assert.notEqual(overview.averageResponseToPublishMs, null);
     assert.notEqual(overview.averagePublishToDeliveryMs, null);
+
+    const demandResponse = await fetch(`${base}/v1/admin/demand?businessId=preview-business&channel=WHATSAPP`);
+    const demand = await demandResponse.json() as { services: Array<{ name: string; quantity: number; requested: number; responded: number; published: number; delivered: number }>; brands: Array<{ name: string; quantity: number }>; models: Array<{ brand: string; model: string; quantity: number }>; years: Array<{ year: number; quantity: number }>; timeline: Array<{ period: string; quantity: number }>; quotes: { requested: number; responded: number; published: number } };
+    assert.equal(demandResponse.status, 200);
+    assert.deepEqual(demand.quotes, { requested: 4, responded: 3, published: 2 });
+    assert.equal(demand.services.reduce((total, item) => total + item.quantity, 0), 4);
+    assert.equal(demand.services.reduce((total, item) => total + item.requested, 0), demand.quotes.requested);
+    assert.equal(demand.services.reduce((total, item) => total + Math.round(item.quantity / demand.quotes.requested * 100), 0), 100);
+    assert.equal(demand.services.find((item) => item.name === "troca de pastilhas")?.delivered, 1);
+    assert.equal(demand.brands.reduce((total, item) => total + item.quantity, 0), 4);
+    assert.ok(demand.models.some((item) => item.brand === "Honda" && item.model === "Civic" && item.quantity === 1));
+    assert.ok(demand.years.some((item) => item.year === 2019 && item.quantity === 1));
+    assert.ok(demand.timeline.length >= 1);
+    assert.equal((await fetch(`${base}/v1/admin/demand?businessId=other-business`)).status, 403);
 
     const listResponse = await fetch(`${base}/v1/admin/conversations?businessId=preview-business&page=1&pageSize=25`);
     const list = await listResponse.json() as { page: number; pageSize: number; total: number; items: Array<{ conversationId: string; customer?: { email?: string; primaryPhone?: string }; vehicle?: { version?: string; year?: number }; quoteRequest?: { status: string; authorizedPrice?: { amountCents: number } }; delivery?: { status: string }; lastMessage?: { content: string } }> };

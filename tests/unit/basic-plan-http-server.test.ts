@@ -114,6 +114,7 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
     const adminWithoutDependencies = await request("/v1/admin/overview?businessId=business-a");
     assert.equal(adminWithoutDependencies.status, 404);
     assert.deepEqual(await adminWithoutDependencies.json(), { error: "Not found" });
+    assert.equal((await request("/v1/admin/demand?businessId=business-a")).status, 404);
     const post = (path: string, body: unknown) => request(path, {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
     });

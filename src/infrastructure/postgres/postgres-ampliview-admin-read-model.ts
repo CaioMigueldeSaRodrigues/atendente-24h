@@ -1,5 +1,6 @@
 import type { PostgresDatabase } from "./postgres-database.js";
-import type { AdminConversationDetail, AdminConversationList, AdminConversationListFilters, AdminConversationListItem, AdminCustomer, AdminDelivery, AdminLastMessage, AdminOpportunity, AdminOverview, AdminQueryService, AdminQuoteRequest, AdminScope, AdminVehicle } from "../../core/admin-read-model.js";
+import type { AdminConversationDetail, AdminConversationList, AdminConversationListFilters, AdminConversationListItem, AdminCustomer, AdminDelivery, AdminLastMessage, AdminOpportunity, AdminOverview, AdminQueryService, AdminQuoteRequest, AdminScope, AdminVehicle, AdminDemand, AdminDemandFilters, AdminDemandQuoteRow } from "../../core/admin-read-model.js";
+import { buildAdminDemand } from "../../core/admin-demand.js";
 import { parseNextAction, toAverageMoney, toMoney } from "../../core/admin-read-model.js";
 import type { CommercialEvent, Conversation, Message, Opportunity, OutboundDelivery, QuoteRequest } from "../../core/domain/entities.js";
 import { Channel, CommercialEventType, CommercialOutcome, ConversationStatus, Intent, OpportunityStatus, OutboundDeliveryStatus, QuoteRequestStatus, SenderType } from "../../core/domain/enums.js";
@@ -97,6 +98,40 @@ export class PostgresAmpliviewAdminReadModel implements AdminQueryService {
       averageResponseToPublishMs: value(published, "response_publish_ms") == null ? null : Math.round(Number(value(published, "response_publish_ms"))),
       averagePublishToDeliveryMs: value(publishDelivery, "publish_delivery_ms") == null ? null : Math.round(Number(value(publishDelivery, "publish_delivery_ms"))),
     };
+  }
+
+  async getDemand(input: AdminDemandFilters): Promise<AdminDemand> {
+    const params: unknown[] = [CommercialEventType.QUOTE_RESPONDED, CommercialEventType.QUOTE_PUBLISHED, input.businessId];
+    const clauses = ["q.business_id = ?"];
+    if (input.period?.from !== undefined) { clauses.push("q.requested_at >= ?"); params.push(input.period.from); }
+    if (input.period?.to !== undefined) { clauses.push("q.requested_at < ?"); params.push(input.period.to); }
+    if (input.serviceItem !== undefined) { clauses.push("LOWER(TRIM(q.request_description)) LIKE LOWER(TRIM(?))"); params.push(`%${input.serviceItem}%`); }
+    if (input.brand !== undefined) { clauses.push("LOWER(TRIM(v.brand)) LIKE LOWER(TRIM(?))"); params.push(`%${input.brand}%`); }
+    if (input.model !== undefined) { clauses.push("LOWER(TRIM(v.model)) LIKE LOWER(TRIM(?))"); params.push(`%${input.model}%`); }
+    if (input.year !== undefined) { clauses.push("v.year = ?"); params.push(input.year); }
+    if (input.channel !== undefined) {
+      clauses.push("EXISTS (SELECT 1 FROM commercial_events channel_event WHERE channel_event.business_id = q.business_id AND channel_event.quote_request_id = q.id AND channel_event.event_type = ? AND channel_event.channel = ?)");
+      params.push(CommercialEventType.QUOTE_REQUESTED, input.channel);
+    }
+    const rows = await this.rows(`SELECT q.id AS quote_id,q.requested_at,q.request_description,v.brand,v.model,v.year,e.event_type,
+      CASE WHEN EXISTS (SELECT 1 FROM outbound_deliveries delivered WHERE delivered.business_id = q.business_id AND delivered.quote_request_id = q.id AND delivered.status = ?) THEN 1 ELSE 0 END AS delivered
+      FROM quote_requests q
+      LEFT JOIN vehicles v ON v.business_id = q.business_id AND v.id = q.vehicle_id
+      LEFT JOIN commercial_events e ON e.business_id = q.business_id AND e.quote_request_id = q.id AND e.event_type IN (?, ?)
+      WHERE ${clauses.join(" AND ")} ORDER BY q.requested_at ASC,q.id ASC`, [OutboundDeliveryStatus.DELIVERED, ...params]);
+    const demandRows: AdminDemandQuoteRow[] = rows.map((row) => {
+      const brand = optionalText(row, "brand");
+      const model = optionalText(row, "model");
+      const eventType = optionalText(row, "event_type");
+      const result: AdminDemandQuoteRow = { quoteId: text(row, "quote_id"), requestedAt: text(row, "requested_at"), requestDescription: text(row, "request_description") };
+      if (brand !== undefined) result.brand = brand;
+      if (model !== undefined) result.model = model;
+      if (value(row, "year") != null) result.year = Number(value(row, "year"));
+      if (eventType !== undefined) result.eventType = eventType;
+      if (Number(value(row, "delivered") ?? 0) === 1) result.delivered = true;
+      return result;
+    });
+    return buildAdminDemand(input, demandRows);
   }
 
   async listConversations(input: AdminConversationListFilters): Promise<AdminConversationList> {

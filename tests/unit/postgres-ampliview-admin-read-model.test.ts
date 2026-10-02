@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { PostgresDatabase } from "../../src/infrastructure/postgres/postgres-database.js";
 import { PostgresAmpliviewAdminReadModel } from "../../src/infrastructure/postgres/postgres-ampliview-admin-read-model.js";
+import { Channel, CommercialEventType } from "../../src/core/domain/enums.js";
 
 test("PostgreSQL administrative read model keeps tenant parameters and maps overview aggregates", async () => {
   const calls: Array<{ text: string; values: readonly unknown[] }> = [];
@@ -43,4 +44,29 @@ test("PostgreSQL administrative read model keeps tenant parameters and maps over
   assert.equal(calls.length, 7);
   assert.ok(calls[5]?.values.includes("business-a"));
   assert.ok(calls[6]?.values.includes("business-a"));
+});
+
+test("PostgreSQL demand query keeps tenant, period and vehicle filters and maps unique quote aggregates", async () => {
+  const calls: Array<{ text: string; values: readonly unknown[] }> = [];
+  const fakeDatabase = {
+    async query(text: string, values: readonly unknown[]) {
+      calls.push({ text, values });
+      return { rows: [
+        { quote_id: "quote-1", requested_at: "2026-01-01T10:00:00.000Z", request_description: "Troca de óleo", brand: "Honda", model: "Civic", year: 2019, event_type: CommercialEventType.QUOTE_RESPONDED },
+        { quote_id: "quote-1", requested_at: "2026-01-01T10:00:00.000Z", request_description: "Troca de óleo", brand: "Honda", model: "Civic", year: 2019, event_type: CommercialEventType.QUOTE_PUBLISHED },
+      ] };
+    },
+  } as unknown as PostgresDatabase;
+
+  const demand = await new PostgresAmpliviewAdminReadModel(fakeDatabase).getDemand({
+    businessId: "business-a", period: { from: "2026-01-01T00:00:00.000Z", to: "2026-01-03T00:00:00.000Z" }, channel: Channel.WHATSAPP, brand: "Honda", model: "Civic", year: 2019,
+  });
+  assert.deepEqual(demand.quotes, { requested: 1, responded: 1, published: 1 });
+  assert.deepEqual(demand.services, [{ name: "Troca de óleo", quantity: 1, requested: 1, responded: 1, published: 1, delivered: 0 }]);
+  assert.deepEqual(demand.models, [{ brand: "Honda", model: "Civic", quantity: 1 }]);
+  assert.equal(calls.length, 1);
+  assert.ok(calls[0]?.text.includes("quote_requests q"));
+  assert.ok(calls[0]?.text.includes("business_id = \$"));
+  assert.ok(calls[0]?.values.includes("business-a"));
+  assert.ok(calls[0]?.values.includes("WHATSAPP"));
 });

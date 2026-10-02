@@ -657,6 +657,33 @@ export async function handleAdminRequest(url: URL, request: IncomingMessage, res
     return;
   }
 
+  if (url.pathname === "/v1/admin/demand") {
+    let period;
+    let channel;
+    let year: number | undefined;
+    try {
+      period = parseAdminPeriod(url.searchParams.get("from") ?? undefined, url.searchParams.get("to") ?? undefined);
+      channel = optionalEnumQuery(url.searchParams.get("channel"), Object.values(Channel));
+      const yearValue = url.searchParams.get("year");
+      year = yearValue === null ? undefined : Number(yearValue);
+      if (year !== undefined && (!Number.isInteger(year) || year < 0)) throw new Error("Invalid year");
+    } catch (error) {
+      sendError(response, 400, error instanceof Error ? error.message : "Invalid query");
+      return;
+    }
+    const serviceItem = url.searchParams.get("service") ?? url.searchParams.get("item");
+    const demand = await dependencies.adminQueryService.getDemand({
+      businessId, period,
+      ...(channel === undefined ? {} : { channel }),
+      ...(serviceItem === null ? {} : { serviceItem }),
+      ...(url.searchParams.get("brand") === null ? {} : { brand: url.searchParams.get("brand")! }),
+      ...(url.searchParams.get("model") === null ? {} : { model: url.searchParams.get("model")! }),
+      ...(year === undefined ? {} : { year }),
+    });
+    sendJson(response, 200, demand);
+    return;
+  }
+
   if (url.pathname === "/v1/admin/conversations") {
     let pagination;
     let period;
