@@ -92,10 +92,12 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse)
     return;
   }
   if (pathname.startsWith("/v1/admin/")) {
-    await handleAdminRequest(new URL(request.url ?? "/", `http://${HOST}:${PORT}`), request, response, previewAdmin);
+    const url = new URL(request.url ?? "/", `http://${HOST}:${PORT}`);
+    await handleAdminRequest(url, request, response, previewAdmin);
     return;
   }
   if (request.method === "GET" && pathname === "/admin") {
+    const url = new URL(request.url ?? "/", `http://${HOST}:${PORT}`);
     sendHtml(response, renderAmpliviewAdminUi({ businessId: BUSINESS_ID, marketMapping: {
       regions: MANAUS_COMMERCIAL_REGIONS,
       clusters: MANAUS_COMMERCIAL_CLUSTERS,

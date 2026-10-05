@@ -57,7 +57,7 @@ test("preview keeps the existing portals and serves admin data through the real 
     assert.doesNotThrow(() => new Function(adminScript));
     assert.equal(admin.status, 200);
     assert.match(admin.headers.get("content-type") ?? "", /text\/html/);
-    for (const section of ["Visão Geral", "Atendimentos", "Saúde do Atendente", "Adesão e Cobertura", "Demanda", "Merchandising", "Empresas", "Mercado Mapeado"]) {
+    for (const section of ["Visão Geral", "Atendimentos", "Saúde da Plataforma", "Adesão e Planos", "Demanda", "Merchandising", "Empresas", "Mercado Mapeado"]) {
       assert.ok(adminHtml.includes(section), `missing ${section}`);
     }
     assert.match(adminHtml, /não representam clientes Ampliview/);
@@ -196,6 +196,97 @@ test("preview keeps the existing portals and serves admin data through the real 
 
     assert.equal((await fetch(`${base}/v1/admin/overview?businessId=other-business`)).status, 403);
     assert.equal((await fetch(`${base}/v1/admin/overview`)).status, 400);
+
+    /* Old Fase 5 assertions treated workshop plans as Admin UI versions. The platform API below replaces them.
+    const basicAnalytics = await fetch(`${base}/v1/admin/analytics/intermediate?businessId=preview-business`);
+    assert.equal(basicAnalytics.status, 403);
+    const intermediateAnalytics = await fetch(`${base}/v1/admin/analytics/intermediate?businessId=preview-business&plan=INTERMEDIATE`);
+    const intermediateBody = await intermediateAnalytics.json() as { plan: string; demand: { totalRequests: number; services: Array<{ sharePercent: number; requested: number; responded: number; published: number; delivered: number }> }; market: { status: string; regions: Array<{ quantity: number }>; segments: Array<{ name: string; quantity: number }> }; operation: { retries: number } };
+    assert.equal(intermediateAnalytics.status, 200);
+    assert.equal(intermediateBody.plan, "INTERMEDIATE");
+    assert.equal(intermediateBody.demand.totalRequests, 4);
+    assert.equal(intermediateBody.demand.services.reduce((total, item) => total + item.requested, 0), 4);
+    assert.equal(intermediateBody.demand.services.reduce((total, item) => total + item.sharePercent, 0), 100);
+    assert.equal(intermediateBody.market.status, "AVAILABLE");
+    assert.equal(intermediateBody.market.regions.reduce((total, item) => total + item.quantity, 0), 31);
+    assert.equal(intermediateBody.market.segments.reduce((total, item) => total + item.quantity, 0), 45);
+    assert.equal(intermediateBody.operation.retries, 1);
+    assert.equal((await fetch(`${base}/v1/admin/analytics/advanced?businessId=preview-business&plan=INTERMEDIATE`)).status, 403);
+    const advancedAnalytics = await fetch(`${base}/v1/admin/analytics/advanced?businessId=preview-business&plan=ADVANCED`);
+    const advancedBody = await advancedAnalytics.json() as { plan: string; forecast: { status: string; availableObservations: number; minimumRequired: number }; opportunities: Array<{ description: string; evidence: unknown[] }>; comparison: { status: string }; trends: Array<{ currentQuantity: number; previousQuantity: number }> };
+    assert.equal(advancedAnalytics.status, 200);
+    assert.equal(advancedBody.plan, "ADVANCED");
+    assert.equal(advancedBody.forecast.status, "INSUFFICIENT_DATA");
+    assert.equal(advancedBody.forecast.minimumRequired, 3);
+    assert.equal(advancedBody.comparison.status, "INSUFFICIENT_DATA");
+    assert.ok(advancedBody.trends.every((item) => item.previousQuantity === 0));
+    assert.ok(advancedBody.opportunities.every((item) => !/contratad|conversão|venda perdida/i.test(item.description)));
+    assert.equal((await fetch(`${base}/v1/admin/analytics/intermediate?businessId=other-business&plan=ADVANCED`)).status, 403);
+    const comparedAnalytics = await fetch(`${base}/v1/admin/analytics/advanced?businessId=preview-business&plan=ADVANCED&from=2026-09-29T00:00:00.000Z&to=2026-09-30T00:00:00.000Z`);
+    const comparedBody = await comparedAnalytics.json() as { comparison: { status: string; metrics: Array<{ current: number; previous: number }> } };
+    assert.equal(comparedAnalytics.status, 200);
+    assert.equal(comparedBody.comparison.status, "AVAILABLE");
+    assert.ok(comparedBody.comparison.metrics.some((metric) => metric.current === 4 && metric.previous === 0));
+    assert.equal((await fetch(`${base}/v1/admin/analytics/intermediate?businessId=preview-business&plan=INTERMEDIATE&from=invalid`)).status, 400);
+
+    const intermediateAdmin = await fetch(`${base}/admin?plan=INTERMEDIATE`);
+    const intermediateHtml = await intermediateAdmin.text();
+    assert.equal(intermediateAdmin.status, 200);
+    assert.match(intermediateHtml, /adminPlan!=="BASIC"/);
+    assert.match(intermediateHtml, /el\("button","Analytics"/);
+    assert.match(intermediateHtml, /\/v1\/admin\/analytics\/intermediate/);
+    const advancedAdmin = await fetch(`${base}/admin?plan=ADVANCED`);
+    const advancedHtml = await advancedAdmin.text();
+    assert.equal(advancedAdmin.status, 200);
+    assert.match(advancedHtml, /Tendências|Gargalos|Oportunidades|Alertas/);
+
+    */
+    const platformOverview = await fetch(`${base}/v1/admin/platform/overview`);
+    const platformBody = await platformOverview.json() as { businesses: { total: number; active: number }; plans: Array<{ plan: string; businesses: number; sharePercent: number }>; mostAdoptedPlan: string | null; geography: { status: string } };
+    assert.equal(platformOverview.status, 200);
+    assert.equal((await fetch(`${base}/v1/admin/analytics/intermediate?businessId=preview-business`)).status, 404);
+    assert.equal((await fetch(`${base}/v1/admin/analytics/advanced?businessId=preview-business`)).status, 404);
+    assert.equal(platformBody.businesses.total, 3);
+    assert.equal(platformBody.businesses.active, 3);
+    assert.deepEqual(platformBody.plans.map((item) => [item.plan, item.businesses]), [["BASIC", 1], ["INTERMEDIATE", 1], ["ADVANCED", 1]]);
+    assert.ok(platformBody.plans.every((item) => item.sharePercent === 33.33));
+    assert.equal(platformBody.mostAdoptedPlan, null);
+    assert.equal(platformBody.geography.status, "NOT_AVAILABLE");
+    for (const plan of ["BASIC", "INTERMEDIATE", "ADVANCED"]) {
+      const filtered = await fetch(`${base}/v1/admin/platform/overview?plan=${plan}`);
+      const filteredBody = await filtered.json() as { businesses: { total: number }; plans: Array<{ plan: string; businesses: number }> };
+      assert.equal(filtered.status, 200);
+      assert.equal(filteredBody.businesses.total, 1);
+      assert.equal(filteredBody.plans.find((item) => item.plan === plan)?.businesses, 1);
+    }
+    const platformHealth = await fetch(`${base}/v1/admin/platform/health`);
+    const healthBody = await platformHealth.json() as { status: string; issues: Array<{ type: string; byPlan: Array<{ plan: string }> }> };
+    assert.equal(platformHealth.status, 200);
+    assert.equal(healthBody.status, "ATTENTION");
+    assert.ok(healthBody.issues.some((item) => item.type === "DELIVERY_FAILED_RETRYABLE" && item.byPlan.some((plan) => plan.plan === "ADVANCED")));
+    const stockIssues = await fetch(`${base}/v1/admin/platform/issues?issueType=STOCK_UNKNOWN`);
+    const stockIssueBody = await stockIssues.json() as Array<{ type: string }>;
+    assert.deepEqual(stockIssueBody.map((item) => item.type), ["STOCK_UNKNOWN"]);
+    const globalAdminHtml = await (await fetch(`${base}/admin`)).text();
+    assert.match(globalAdminHtml, /Saúde da Plataforma|Adesão e Planos|Super Admin/);
+    assert.doesNotMatch(globalAdminHtml, /admin\?plan=/);
+    assert.match(globalAdminHtml, /<meta charset="UTF-8">/);
+    assert.doesNotMatch(globalAdminHtml, /Ã[\u0080-\u00FF]|Â[\u0080-\u00FF]|â€|�/);
+    assert.match(globalAdminHtml, /Empate/);
+    assert.match(globalAdminHtml, /Pendentes < 1h/);
+    assert.match(globalAdminHtml, /Pendentes 1h–2h/);
+    assert.match(globalAdminHtml, /Pendentes > 2h/);
+    assert.doesNotMatch(globalAdminHtml, /Pendentes há mais de 1h/);
+    assert.match(globalAdminHtml, /Orçamentos e valores/);
+    assert.match(globalAdminHtml, /Mediana/);
+    assert.match(globalAdminHtml, /inferior/);
+    assert.match(globalAdminHtml, /observada/);
+    assert.match(globalAdminHtml, /superior/);
+    assert.match(globalAdminHtml, /Valores consolidados a partir das/);
+    assert.doesNotMatch(globalAdminHtml, /Menor or[^<]{0,3}amento|Maior or[^<]{0,3}amento/);
+    assert.match(globalAdminHtml, /Distribuição geográfica ainda indisponível/);
+    assert.match(globalAdminHtml, /Problema.*Ocorrências.*Empresas afetadas.*Plano/);
+    assert.doesNotMatch(globalAdminHtml, /Sem plano/);
 
     const operator = await fetch(`${base}/operator`);
     const operatorHtml = await operator.text();

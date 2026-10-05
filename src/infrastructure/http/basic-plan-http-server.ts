@@ -22,6 +22,8 @@ import { resolveEvolutionGoConversation } from "../../channels/whatsapp/evolutio
 import { renderBasicPlanOperatorUi, type BasicPlanOperatorConfig } from "./basic-plan-operator-ui.js";
 import type { AdminBusinessScopeAuthorizer, AdminQueryService } from "../../core/admin-read-model.js";
 import { parseAdminPagination, parseAdminPeriod } from "../../core/admin-read-model.js";
+import { AdminPlan, type AdminPlan as AdminPlanType } from "../../core/admin-plan-entitlement.js";
+import type { PlatformFilters, PlatformQueryService, SuperAdminAuthorizer } from "../../core/platform-admin-read-model.js";
 import { checkInventory } from "../../core/check-inventory.js";
 import type { InventoryReadPort } from "../../core/inventory-read-port.js";
 
@@ -78,6 +80,8 @@ export type BasicPlanHttpServerDependencies = {
   channelTextSenders?: Partial<Record<ChannelType, ChannelTextSender>>;
   adminQueryService?: AdminQueryService;
   adminBusinessScopeAuthorizer?: AdminBusinessScopeAuthorizer;
+  platformQueryService?: PlatformQueryService;
+  superAdminAuthorizer?: SuperAdminAuthorizer;
   evolutionGoWebhookTransaction: EvolutionGoWebhookTransaction;
   operator: BasicPlanOperatorConfig;
   interpreter: MessageInterpreter;
@@ -87,7 +91,7 @@ export type BasicPlanHttpServerDependencies = {
 
 export type AdminHttpServerDependencies = Pick<
   BasicPlanHttpServerDependencies,
-  "adminQueryService" | "adminBusinessScopeAuthorizer"
+  "adminQueryService" | "adminBusinessScopeAuthorizer" | "platformQueryService" | "superAdminAuthorizer"
 >;
 
 export function createBasicPlanHttpServer(
@@ -690,7 +694,43 @@ async function handleRequest(
 }
 
 export async function handleAdminRequest(url: URL, request: IncomingMessage, response: ServerResponse, dependencies: AdminHttpServerDependencies): Promise<void> {
-  if (request.method !== "GET" || !dependencies.adminQueryService || !dependencies.adminBusinessScopeAuthorizer) {
+  if (request.method !== "GET") {
+    sendError(response, 404, "Not found");
+    return;
+  }
+
+  const platformMatch = url.pathname.match(/^\/v1\/admin\/platform\/(overview|plans|health|issues)$/);
+  if (platformMatch) {
+    if (!dependencies.platformQueryService || !dependencies.superAdminAuthorizer || !(await dependencies.superAdminAuthorizer.isAuthorized())) {
+      sendError(response, 403, "Super Admin authorization required");
+      return;
+    }
+    let filters: PlatformFilters;
+    try {
+      const planValue = url.searchParams.get("plan");
+      const plan = planValue === null ? undefined : optionalEnumQuery(planValue, Object.values(AdminPlan)) as AdminPlanType;
+      const statusValue = url.searchParams.get("status");
+      const status = statusValue === null ? undefined : optionalEnumQuery(statusValue, ["ACTIVE", "INACTIVE"] as const);
+      const issueType = url.searchParams.get("issueType") ?? undefined;
+      const businessId = url.searchParams.get("businessId")?.trim() || undefined;
+      filters = { period: parseAdminPeriod(url.searchParams.get("from") ?? undefined, url.searchParams.get("to") ?? undefined), ...(plan === undefined ? {} : { plan }), ...(businessId === undefined ? {} : { businessId }), ...(status === undefined ? {} : { status }), ...(issueType === undefined ? {} : { issueType }) };
+      if (url.searchParams.has("region") || url.searchParams.has("state") || url.searchParams.has("city")) throw new Error("Location filters are not available");
+    } catch (error) {
+      sendError(response, 400, error instanceof Error ? error.message : "Invalid query");
+      return;
+    }
+    const result = platformMatch[1] === "overview"
+      ? await dependencies.platformQueryService.getOverview(filters)
+      : platformMatch[1] === "plans"
+        ? await dependencies.platformQueryService.getPlans(filters)
+        : platformMatch[1] === "health"
+          ? await dependencies.platformQueryService.getHealth(filters)
+          : await dependencies.platformQueryService.getIssues(filters);
+    sendJson(response, 200, result);
+    return;
+  }
+
+  if (!dependencies.adminBusinessScopeAuthorizer) {
     sendError(response, 404, "Not found");
     return;
   }
@@ -701,6 +741,11 @@ export async function handleAdminRequest(url: URL, request: IncomingMessage, res
   }
   if (!(await dependencies.adminBusinessScopeAuthorizer.isAuthorized({ businessId }))) {
     sendError(response, 403, "Forbidden");
+    return;
+  }
+
+  if (!dependencies.adminQueryService) {
+    sendError(response, 404, "Not found");
     return;
   }
 

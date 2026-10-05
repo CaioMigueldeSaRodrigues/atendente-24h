@@ -19,6 +19,23 @@ const INITIAL_SCHEMA = `
     updated_at TEXT NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS business_plan_assignments (
+    id TEXT NOT NULL,
+    business_id TEXT NOT NULL,
+    plan TEXT NOT NULL CHECK (plan IN ('BASIC','INTERMEDIATE','ADVANCED')),
+    status TEXT NOT NULL CHECK (status IN ('ACTIVE','ENDED')),
+    started_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    source TEXT NOT NULL,
+    PRIMARY KEY (business_id, id),
+    FOREIGN KEY (business_id) REFERENCES automotive_businesses(id)
+  );
+
+  CREATE UNIQUE INDEX IF NOT EXISTS business_plan_assignments_current_idx
+    ON business_plan_assignments (business_id) WHERE status = 'ACTIVE';
+  CREATE INDEX IF NOT EXISTS business_plan_assignments_plan_started_idx
+    ON business_plan_assignments (plan, started_at);
+
   CREATE TABLE IF NOT EXISTS evolution_go_webhook_receipts (
     business_id TEXT NOT NULL,
     instance_name TEXT NOT NULL,

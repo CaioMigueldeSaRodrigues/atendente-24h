@@ -3,6 +3,9 @@ import { Channel, CommercialEventType, CommercialOutcome, ConversationStatus, In
 import { SqliteAmpliviewAdminReadModel } from "../infrastructure/sqlite/sqlite-ampliview-admin-read-model.js";
 import { createSqliteDatabase } from "../infrastructure/sqlite/sqlite-database.js";
 import { PreviewAdminBusinessScopeAuthorizer } from "./preview-admin-authorizer.js";
+import { AdminPlan } from "../core/admin-plan-entitlement.js";
+import { SqlitePlatformAdminReadModel } from "../infrastructure/sqlite/sqlite-platform-admin-read-model.js";
+import { PreviewSuperAdminAuthorizer } from "./preview-super-admin-authorizer.js";
 
 export const PREVIEW_ADMIN_BUSINESS_ID = "preview-business";
 
@@ -10,6 +13,8 @@ export type PreviewAdminDependencies = {
   database: DatabaseSync;
   adminQueryService: SqliteAmpliviewAdminReadModel;
   adminBusinessScopeAuthorizer: PreviewAdminBusinessScopeAuthorizer;
+  platformQueryService: SqlitePlatformAdminReadModel;
+  superAdminAuthorizer: PreviewSuperAdminAuthorizer;
 };
 
 function insert(database: DatabaseSync, sql: string, ...values: any[]): void {
@@ -71,6 +76,11 @@ export function createPreviewAdminDependencies(): PreviewAdminDependencies {
   const database = createSqliteDatabase({ filename: ":memory:" });
   const businessId = PREVIEW_ADMIN_BUSINESS_ID;
   insert(database, "INSERT INTO automotive_businesses(id,name,business_type,timezone,active,created_at,updated_at) VALUES(?,?,?,?,?,?,?)", businessId, "Oficina Preview", "WORKSHOP", "America/Sao_Paulo", 1, "2026-09-29T00:00:00.000Z", "2026-09-29T00:00:00.000Z");
+  insert(database, "INSERT INTO automotive_businesses(id,name,business_type,timezone,active,created_at,updated_at) VALUES(?,?,?,?,?,?,?)", "preview-basic-business", "Oficina Básica Preview", "WORKSHOP", "America/Sao_Paulo", 1, "2026-09-28T00:00:00.000Z", "2026-09-28T00:00:00.000Z");
+  insert(database, "INSERT INTO automotive_businesses(id,name,business_type,timezone,active,created_at,updated_at) VALUES(?,?,?,?,?,?,?)", "preview-intermediate-business", "Oficina Intermediária Preview", "WORKSHOP", "America/Sao_Paulo", 1, "2026-09-27T00:00:00.000Z", "2026-09-27T00:00:00.000Z");
+  for (const [id, businessPlan] of [[businessId, AdminPlan.ADVANCED], ["preview-basic-business", AdminPlan.BASIC], ["preview-intermediate-business", AdminPlan.INTERMEDIATE]] as const) {
+    insert(database, "INSERT INTO business_plan_assignments(id,business_id,plan,status,started_at,updated_at,source) VALUES(?,?,?,?,?,?,?)", `${id}-plan`, id, businessPlan, "ACTIVE", "2026-09-01T00:00:00.000Z", "2026-09-01T00:00:00.000Z", "preview-fixture");
+  }
 
   seedConversation(database, {
     suffix: "waiting",
@@ -163,5 +173,7 @@ export function createPreviewAdminDependencies(): PreviewAdminDependencies {
     database,
     adminQueryService: new SqliteAmpliviewAdminReadModel(database),
     adminBusinessScopeAuthorizer: new PreviewAdminBusinessScopeAuthorizer(new Set([businessId])),
+    platformQueryService: new SqlitePlatformAdminReadModel(database),
+    superAdminAuthorizer: new PreviewSuperAdminAuthorizer(),
   };
 }
