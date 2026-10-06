@@ -6,7 +6,7 @@ Copie `.env.example` para `.env.local` e preencha os valores locais. `.env.local
 
 - `DATABASE_BACKEND`: obrigatório, `sqlite` ou `postgres`.
 - `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`: configuração libpq para o Session pooler. Os valores de host, porta, database e user de referência estão no `.env.example`; configure a senha apenas em sua máquina.
-- `BASIC_PLAN_BUSINESS_ID`, `BASIC_PLAN_BUSINESS_NAME`, `BASIC_PLAN_BUSINESS_TYPE`, `BASIC_PLAN_TIMEZONE`, `OPENAI_API_KEY`, `OPENAI_MODEL`, `HOST`, `PORT`: configuração usual do runtime.
+- `BASIC_PLAN_BUSINESS_ID`, `BASIC_PLAN_BUSINESS_NAME`, `BASIC_PLAN_BUSINESS_TYPE`, `BASIC_PLAN_TIMEZONE`, `BASIC_PLAN_OPERATOR_USERNAME`, `BASIC_PLAN_OPERATOR_PASSWORD`, `OPENAI_API_KEY`, `OPENAI_MODEL`, `HOST`, `PORT`: configuração usual do runtime. As credenciais do operador são obrigatórias, a senha deve ter ao menos 16 caracteres e ambas devem ser fornecidas apenas pelo ambiente.
 - `POSTGRES_ALLOW_INSECURE_LOCAL=true`: opção exclusiva para testes de loopback local. O cliente rejeita essa opção para qualquer host não loopback. Não a configure para Supabase.
 
 O modo PostgreSQL exige TLS com validação do certificado e hostname. Não existe opção de desativar a validação para o Supabase.

@@ -80,6 +80,7 @@ async function createHarness(options: HarnessOptions) {
       run: <T>(operation: () => Promise<T>) => withSqliteTransaction(database, operation),
     },
     operator: { businessId, businessName: "Idempotency Test" },
+    businessOperatorAuthorizer: { isAuthorized: async (input) => input.businessId === businessId },
     interpreter: {
       interpret: async (input: { content: string }) => {
         calls += 1;

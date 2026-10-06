@@ -20,7 +20,7 @@
   },
   "dependencies": {
     "@google/genai": "^2.24.0",
-    "@supabase/supabase-js": "2.49.1",
+    "@supabase/supabase-js": "2.51.0",
     "openai": "^7.22.0",
     "pg": "^8.23.0",
     "zod": "^4.6.5"

@@ -7,6 +7,7 @@ import { createBasicPlanRuntime } from "./basic-plan-runtime.js";
 import { createBasicPlanPostgresRuntime } from "./basic-plan-postgres-runtime.js";
 import { postgresConfigFromEnvironment } from "../infrastructure/postgres/postgres-database.js";
 import { readEvolutionGoWebhookCredential } from "./evolution-go-webhook-environment.js";
+import { BasicBusinessOperatorAuthorizer } from "../infrastructure/http/basic-business-operator-authorizer.js";
 
 async function main(): Promise<void> {
   const config = readEnvironment(process.env);
@@ -18,6 +19,11 @@ async function main(): Promise<void> {
   const interpreter = new OpenAIMessageInterpreter(client, config.openaiModel);
   const common = {
     interpreter,
+    businessOperatorAuthorizer: new BasicBusinessOperatorAuthorizer(
+      config.businessId,
+      config.operatorUsername,
+      config.operatorPassword,
+    ),
     business: {
       businessId: config.businessId,
       businessName: config.businessName,
@@ -79,6 +85,8 @@ type RuntimeEnvironment = {
   port: number;
   openaiApiKey: string;
   openaiModel: string;
+  operatorUsername: string;
+  operatorPassword: string;
   evolutionGoWebhookCredential?: ReturnType<typeof readEvolutionGoWebhookCredential>;
   evolutionGoBaseUrl?: string;
 };
@@ -120,6 +128,8 @@ function readEnvironment(environment: NodeJS.ProcessEnv): RuntimeEnvironment {
     port,
     openaiApiKey: required(environment.OPENAI_API_KEY, "OPENAI_API_KEY"),
     openaiModel: required(environment.OPENAI_MODEL, "OPENAI_MODEL"),
+    operatorUsername: required(environment.BASIC_PLAN_OPERATOR_USERNAME, "BASIC_PLAN_OPERATOR_USERNAME"),
+    operatorPassword: required(environment.BASIC_PLAN_OPERATOR_PASSWORD, "BASIC_PLAN_OPERATOR_PASSWORD"),
     ...(evolutionGoWebhookCredential ? { evolutionGoWebhookCredential } : {}),
     ...(evolutionGoBaseUrl ? { evolutionGoBaseUrl } : {}),
   };

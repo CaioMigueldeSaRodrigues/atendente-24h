@@ -234,6 +234,7 @@ test("PostgreSQL runtime webhook resolves and reuses a persistent Evolution Go c
   const instanceName="runtime-instance";
   const senderJid="5511999990000@s.whatsapp.net";
   const runtime=await createBasicPlanPostgresRuntime({
+    businessOperatorAuthorizer: { isAuthorized: async (input) => input.businessId === businessId },
     postgres:config,
     allowInsecureLocalForTests:true,
     business:{businessId,businessName:"PostgreSQL webhook test",businessType:BusinessType.OTHER,timezone:"UTC"},

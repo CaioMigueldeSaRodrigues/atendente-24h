@@ -85,7 +85,7 @@ export type BasicPlanHttpServerDependencies = {
   productPriceReadPort?: ProductPriceReadPort;
   laborPriceReadPort?: LaborPriceReadPort;
   businessCapabilityPolicy?: BusinessCapabilityPolicy;
-  businessOperatorAuthorizer?: BusinessOperatorAuthorizer;
+  businessOperatorAuthorizer: BusinessOperatorAuthorizer;
   integrationProviderAvailability?: IntegrationProviderAvailability;
   commercialEventRepository?: CommercialEventRepository;
   evolutionGoWebhookCredentials?: EvolutionGoWebhookCredential[];
@@ -353,7 +353,14 @@ async function handleRequest(
   const url = new URL(request.url ?? "/", "http://localhost");
   const pathname = url.pathname;
 
+  setSecurityHeaders(response);
+
   if (request.method === "GET" && pathname === "/operator") {
+    if (!(await isOperatorAuthorized(request, dependencies.operator.businessId, dependencies))) {
+      response.setHeader("WWW-Authenticate", 'Basic realm="Ampliview operator", charset="UTF-8"');
+      sendError(response, 401, "Unauthorized");
+      return;
+    }
     response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     response.end(renderBasicPlanOperatorUi(dependencies.operator));
     return;
@@ -373,7 +380,7 @@ async function handleRequest(
   if (request.method === "GET" && capabilityMatch) {
     const businessId = decodePathPart(capabilityMatch[1]);
     if (businessId === null) { sendError(response, 400, "Invalid path"); return; }
-    if (!(await isOperatorAuthorized(businessId, dependencies))) { sendError(response, 404, "Not found"); return; }
+    if (!(await isOperatorAuthorized(request, businessId, dependencies))) { sendError(response, 404, "Not found"); return; }
     const capabilities = await getBusinessCapabilities(businessId, dependencies);
     sendJson(response, 200, capabilities);
     return;
@@ -384,7 +391,7 @@ async function handleRequest(
     const businessId = decodePathPart(draftAuthorizeMatch[1]);
     const quoteRequestId = decodePathPart(draftAuthorizeMatch[2]);
     if (businessId === null || quoteRequestId === null) { sendError(response, 400, "Invalid path"); return; }
-    if (!(await isOperatorAuthorized(businessId, dependencies))) { sendError(response, 404, "Not found"); return; }
+    if (!(await isOperatorAuthorized(request, businessId, dependencies))) { sendError(response, 404, "Not found"); return; }
     const capabilities = await getBusinessCapabilities(businessId, dependencies);
     const gateError = integratedQuoteGateError(capabilities);
     if (gateError) { sendError(response, gateError.status, gateError.message); return; }
@@ -402,7 +409,7 @@ async function handleRequest(
     const businessId = decodePathPart(draftMatch[1]);
     const quoteRequestId = decodePathPart(draftMatch[2]);
     if (businessId === null || quoteRequestId === null) { sendError(response, 400, "Invalid path"); return; }
-    if (!(await isOperatorAuthorized(businessId, dependencies))) { sendError(response, 404, "Not found"); return; }
+    if (!(await isOperatorAuthorized(request, businessId, dependencies))) { sendError(response, 404, "Not found"); return; }
     const capabilities = await getBusinessCapabilities(businessId, dependencies);
     const gateError = integratedQuoteGateError(capabilities);
     if (gateError) { sendError(response, gateError.status, gateError.message); return; }
@@ -566,6 +573,10 @@ async function handleRequest(
       sendError(response, 400, "Invalid businessId");
       return;
     }
+    if (businessId !== dependencies.operator.businessId) {
+      sendError(response, 404, "Not found");
+      return;
+    }
     const body = await readJsonBody(request, response);
     if (body === undefined) return;
     if (!isRecord(body) || typeof body.channel !== "string" || !isChannel(body.channel)) {
@@ -600,11 +611,19 @@ async function handleRequest(
       return;
     }
     if (request.method === "GET") {
+      if (!(await isOperatorAuthorized(request, businessId, dependencies))) {
+        sendError(response, 404, "Not found");
+        return;
+      }
       const messages = await dependencies.messageRepository.listByConversation(businessId, conversationId);
       sendJson(response, 200, { messages });
       return;
     }
     if (request.method === "POST") {
+      if (businessId !== dependencies.operator.businessId) {
+        sendError(response, 404, "Not found");
+        return;
+      }
       const body = await readJsonBody(request, response);
       if (body === undefined) return;
       if (!isRecord(body) || typeof body.content !== "string" || body.content.trim().length === 0) {
@@ -625,7 +644,7 @@ async function handleRequest(
       sendError(response, 400, "Invalid path");
       return;
     }
-    if (!(await isOperatorAuthorized(businessId, dependencies))) { sendError(response, 404, "Not found"); return; }
+    if (!(await isOperatorAuthorized(request, businessId, dependencies))) { sendError(response, 404, "Not found"); return; }
     const quotes = await dependencies.quoteRequestRepository.listByConversation(businessId, conversationId);
     sendJson(response, 200, { quotes });
     return;
@@ -638,7 +657,7 @@ async function handleRequest(
       sendError(response, 400, "Invalid businessId");
       return;
     }
-    if (!(await isOperatorAuthorized(businessId, dependencies))) { sendError(response, 404, "Not found"); return; }
+    if (!(await isOperatorAuthorized(request, businessId, dependencies))) { sendError(response, 404, "Not found"); return; }
     const pendingStatuses = new Set([
       QuoteRequestStatus.REQUESTED,
       QuoteRequestStatus.WAITING_INFORMATION,
@@ -675,7 +694,7 @@ async function handleRequest(
       sendError(response, 400, "Invalid path");
       return;
     }
-    if (!(await isOperatorAuthorized(businessId, dependencies))) { sendError(response, 404, "Not found"); return; }
+    if (!(await isOperatorAuthorized(request, businessId, dependencies))) { sendError(response, 404, "Not found"); return; }
     if (!dependencies.stockCheckRepository) {
       sendError(response, 503, "Inventory read model is not configured");
       return;
@@ -735,7 +754,7 @@ async function handleRequest(
       sendError(response, 400, "Invalid path");
       return;
     }
-    if (!(await isOperatorAuthorized(businessId, dependencies))) { sendError(response, 404, "Not found"); return; }
+    if (!(await isOperatorAuthorized(request, businessId, dependencies))) { sendError(response, 404, "Not found"); return; }
     if (quoteActionMatch[3] === "respond") {
       const body = await readJsonBody(request, response);
       if (body === undefined) return;
@@ -1006,8 +1025,19 @@ function mapError(cause: unknown): { status: number; body: string } {
   return { status: 500, body: "Internal server error" };
 }
 
-async function isOperatorAuthorized(businessId: string, dependencies: BasicPlanHttpServerDependencies): Promise<boolean> {
-  return dependencies.businessOperatorAuthorizer?.isAuthorized({ businessId }) ?? businessId === dependencies.operator.businessId;
+async function isOperatorAuthorized(request: IncomingMessage, businessId: string, dependencies: BasicPlanHttpServerDependencies): Promise<boolean> {
+  const credential = request.headers.authorization;
+  return dependencies.businessOperatorAuthorizer.isAuthorized({
+    businessId,
+    ...(credential === undefined ? {} : { credential }),
+  });
+}
+
+function setSecurityHeaders(response: ServerResponse): void {
+  response.setHeader("X-Content-Type-Options", "nosniff");
+  response.setHeader("X-Frame-Options", "DENY");
+  response.setHeader("Referrer-Policy", "no-referrer");
+  response.setHeader("Cache-Control", "no-store");
 }
 
 function parseExpectedDraft(value: unknown): { draftId: string; revision: number } | null {

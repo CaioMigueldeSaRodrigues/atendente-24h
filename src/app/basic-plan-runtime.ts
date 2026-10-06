@@ -33,7 +33,7 @@ import { AssignmentBusinessCapabilityPolicy } from "../core/business-capability-
 import { UnavailableProductPriceReadAdapter } from "../infrastructure/pricing/local-product-price-read-adapter.js";
 import { UnavailableLaborPriceReadAdapter } from "../infrastructure/pricing/local-labor-price-read-adapter.js";
 import { UnavailableInventoryReadAdapter } from "../infrastructure/inventory/local-inventory-read-adapter.js";
-import { StaticBusinessOperatorAuthorizer } from "../core/business-operator-authorizer.js";
+import type { BusinessOperatorAuthorizer } from "../core/business-operator-authorizer.js";
 
 export type BasicPlanBusinessConfig = {
   businessId: string;
@@ -46,6 +46,7 @@ export type BasicPlanRuntimeOptions = {
   databasePath: string;
   interpreter: MessageInterpreter;
   business: BasicPlanBusinessConfig;
+  businessOperatorAuthorizer: BusinessOperatorAuthorizer;
   evolutionGoWebhookCredential?: EvolutionGoWebhookCredential;
   evolutionGoBaseUrl?: string;
   evolutionGoTextSender?: { sendText(message: EvolutionGoTextMessage): Promise<void> };
@@ -135,7 +136,7 @@ export async function createBasicPlanRuntime(
       productPriceReadPort: new UnavailableProductPriceReadAdapter(),
       laborPriceReadPort: new UnavailableLaborPriceReadAdapter(),
       businessCapabilityPolicy: new AssignmentBusinessCapabilityPolicy(new SqliteBusinessPlanAssignmentRepository(database), new SqliteBusinessAssistantIntegrationSettingsRepository(database), { inventory: false, productPricing: false, laborPricing: false }),
-      businessOperatorAuthorizer: new StaticBusinessOperatorAuthorizer(options.business.businessId),
+      businessOperatorAuthorizer: options.businessOperatorAuthorizer,
       commercialEventRepository,
       evolutionGoWebhookReplayGuard,
       evolutionGoConversationLinkRepository,

@@ -7,6 +7,7 @@ import { createBasicPlanRuntime } from "../../src/app/basic-plan-runtime.js";
 test("POST inventory consults the read port, persists only StockCheck, and never changes the QuoteRequest", async () => {
   const runtime = await createBasicPlanRuntime({
     databasePath: ":memory:",
+    businessOperatorAuthorizer: { isAuthorized: async ({ businessId }) => businessId === "business-a" },
     business: { businessId: "business-a", businessName: "Oficina A", businessType: BusinessType.WORKSHOP, timezone: "UTC" },
     interpreter: { interpret: async () => { throw new Error("Interpreter should not be called"); } },
     now: () => "2026-09-29T10:30:00.000Z",

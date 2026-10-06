@@ -22,11 +22,12 @@ import { PostgresBusinessAssistantIntegrationSettingsRepository } from "../infra
 import { AssignmentBusinessCapabilityPolicy } from "../core/business-capability-policy.js";
 import { UnavailableProductPriceReadAdapter } from "../infrastructure/pricing/local-product-price-read-adapter.js";
 import { UnavailableLaborPriceReadAdapter } from "../infrastructure/pricing/local-labor-price-read-adapter.js";
-import { StaticBusinessOperatorAuthorizer } from "../core/business-operator-authorizer.js";
+import type { BusinessOperatorAuthorizer } from "../core/business-operator-authorizer.js";
 
 export type BasicPlanPostgresRuntimeOptions = {
   postgres: PostgresEnvironment;
   business: { businessId: string; businessName: string; businessType: BusinessType; timezone: string };
+  businessOperatorAuthorizer: BusinessOperatorAuthorizer;
   interpreter: MessageInterpreter;
   evolutionGoWebhookCredential?: EvolutionGoWebhookCredential;
   evolutionGoBaseUrl?: string;
@@ -85,7 +86,7 @@ export async function createBasicPlanPostgresRuntime(options: BasicPlanPostgresR
       productPriceReadPort: new UnavailableProductPriceReadAdapter(),
       laborPriceReadPort: new UnavailableLaborPriceReadAdapter(),
       businessCapabilityPolicy: new AssignmentBusinessCapabilityPolicy(new PostgresBusinessPlanAssignmentRepository(database), new PostgresBusinessAssistantIntegrationSettingsRepository(database), { inventory: false, productPricing: false, laborPricing: false }),
-      businessOperatorAuthorizer: new StaticBusinessOperatorAuthorizer(options.business.businessId),
+      businessOperatorAuthorizer: options.businessOperatorAuthorizer,
       commercialEventRepository: new PostgresCommercialEventRepository(database),
       evolutionGoWebhookReplayGuard: new PostgresEvolutionGoWebhookReplayGuard(database),
       evolutionGoConversationLinkRepository: new PostgresEvolutionGoConversationLinkRepository(database),

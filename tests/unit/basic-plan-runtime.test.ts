@@ -9,6 +9,7 @@ import type { AIInterpretation } from "../../src/core/domain/types.js";
 import { SqliteAutomotiveBusinessRepository } from "../../src/infrastructure/sqlite/sqlite-automotive-business-repository.js";
 import { SqliteConversationRepository } from "../../src/infrastructure/sqlite/sqlite-conversation-repository.js";
 import { createBasicPlanRuntime } from "../../src/app/basic-plan-runtime.js";
+import { BasicBusinessOperatorAuthorizer } from "../../src/infrastructure/http/basic-business-operator-authorizer.js";
 
 const business = {
   businessId: "pilot-workshop",
@@ -16,6 +17,12 @@ const business = {
   businessType: BusinessType.WORKSHOP,
   timezone: "America/Sao_Paulo",
 };
+const operatorAuthorization = `Basic ${Buffer.from("operator:synthetic-password").toString("base64")}`;
+const businessOperatorAuthorizer = new BasicBusinessOperatorAuthorizer(
+  business.businessId,
+  "operator",
+  "synthetic-password",
+);
 const webhookCredential = {
   instanceName: "instance-synthetic-1",
   instanceToken: "fake-evolution-token-for-runtime-test-only",
@@ -31,11 +38,19 @@ const runtimeInterpretation: AIInterpretation = {
   proposedResponse: "Resposta sintética do runtime",
 };
 
+test("rejects weak operator credentials", () => {
+  assert.throws(
+    () => new BasicBusinessOperatorAuthorizer(business.businessId, "operator", "short"),
+    /Operator credentials are invalid/,
+  );
+});
+
 test("rejects an Evolution Go credential configured for another business", async () => {
   await assert.rejects(
     createBasicPlanRuntime({
       databasePath: ":memory:",
       business,
+      businessOperatorAuthorizer,
       interpreter: { interpret: async () => { throw new Error("Interpreter should not be called"); } },
       evolutionGoWebhookCredential: {
         ...webhookCredential,
@@ -62,6 +77,7 @@ test("creates and reuses the pilot business and persists conversations across ru
   try {
     firstRuntime = await createBasicPlanRuntime({
       databasePath, business, interpreter, now: () => "2026-09-24T12:00:00.000Z",
+      businessOperatorAuthorizer,
     });
     assert.equal(existsSync(databasePath), true);
     const initialBusinesses = firstRuntime.database.prepare("SELECT COUNT(*) AS count FROM automotive_businesses").get() as { count: number };
@@ -75,8 +91,22 @@ test("creates and reuses the pilot business and persists conversations across ru
     const health = await fetch(`http://127.0.0.1:${firstAddress.port}/health`);
     assert.equal(health.status, 200);
     assert.deepEqual(await health.json(), { status: "ok" });
-    const operatorPage = await fetch(`http://127.0.0.1:${firstAddress.port}/operator`);
+    const unauthenticatedOperatorPage = await fetch(`http://127.0.0.1:${firstAddress.port}/operator`);
+    assert.equal(unauthenticatedOperatorPage.status, 401);
+    assert.match(unauthenticatedOperatorPage.headers.get("www-authenticate") ?? "", /^Basic /);
+    const invalidOperatorPage = await fetch(`http://127.0.0.1:${firstAddress.port}/operator`, {
+      headers: { authorization: `Basic ${Buffer.from("operator:wrong-password").toString("base64")}` },
+    });
+    assert.equal(invalidOperatorPage.status, 401);
+    const operatorPage = await fetch(`http://127.0.0.1:${firstAddress.port}/operator`, {
+      headers: { authorization: operatorAuthorization },
+    });
     assert.equal(operatorPage.status, 200);
+    assert.equal(operatorPage.headers.get("x-frame-options"), "DENY");
+    const crossTenant = await fetch(`http://127.0.0.1:${firstAddress.port}/v1/businesses/another-business/capabilities`, {
+      headers: { authorization: operatorAuthorization },
+    });
+    assert.equal(crossTenant.status, 404);
     assert.match(await operatorPage.text(), /Oficina Piloto/);
     const closedWebhook = await fetch(
       `http://127.0.0.1:${firstAddress.port}/v1/channels/whatsapp/evolution-go/webhook`,
@@ -111,6 +141,7 @@ test("creates and reuses the pilot business and persists conversations across ru
     secondRuntime = await createBasicPlanRuntime({
       databasePath,
       business,
+      businessOperatorAuthorizer,
       interpreter: { interpret: async () => runtimeInterpretation },
       evolutionGoWebhookCredential: webhookCredential,
       evolutionGoTextSender: { sendText: async (message) => { sentMessages.push(message); } },

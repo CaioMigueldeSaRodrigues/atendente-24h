@@ -127,6 +127,7 @@ const createHarness = async ({
     humanHandoffRepository: new InMemoryHumanHandoffRepository(),
     evolutionGoWebhookTransaction: { run: <T>(operation: () => Promise<T>) => withSqliteTransaction(database, operation) },
     operator: { businessId: "business-a", businessName: "Oficina A" },
+    businessOperatorAuthorizer: { isAuthorized: async ({ businessId }) => businessId === "business-a" },
     interpreter: { interpret: async () => { throw new Error("interpreter should not be called"); } },
     now: () => timestamp,
     generateId: (prefix: string) => `${prefix}-generated`,

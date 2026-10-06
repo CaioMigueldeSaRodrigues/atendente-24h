@@ -93,6 +93,7 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
     appointmentRepository: new InMemoryAppointmentRepository(),
     humanHandoffRepository: new InMemoryHumanHandoffRepository(),
     operator: { businessId: "business-a", businessName: "Oficina A" },
+    businessOperatorAuthorizer: { isAuthorized: async (input: { businessId: string }) => input.businessId === "business-a" },
     interpreter: { interpret: async (input: { content: string }) => {
       interpreterCalls += 1;
       return input.content.startsWith("Mensagem") ? webhookInterpretation : interpretation;
@@ -507,9 +508,14 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
 
     const otherBusinessMessages = await request(`/v1/businesses/business-b/conversations/${conversationId}/messages`);
     const otherBusinessQuotes = await request(`/v1/businesses/business-b/conversations/${conversationId}/quotes`);
-    assert.deepEqual((await otherBusinessMessages.json() as { messages: unknown[] }).messages, []);
+    assert.equal(otherBusinessMessages.status, 404);
+    assert.deepEqual(await otherBusinessMessages.json(), { error: "Not found" });
     assert.equal(otherBusinessQuotes.status, 404);
     assert.deepEqual(await otherBusinessQuotes.json(), { error: "Not found" });
+    const crossTenantConversation = await post("/v1/businesses/business-b/conversations", { channel: Channel.WEB });
+    const crossTenantMessage = await post(`/v1/businesses/business-b/conversations/${conversationId}/messages`, { content: "cross tenant" });
+    assert.equal(crossTenantConversation.status, 404);
+    assert.equal(crossTenantMessage.status, 404);
     const crossTenantRespond = await post(`/v1/businesses/business-b/quotes/${quoteId}/respond`, { amountCents: 65000, currency: "BRL" });
     const crossTenantPublish = await post(`/v1/businesses/business-b/quotes/${quoteId}/publish`, {});
     assert.equal(crossTenantRespond.status, 404);

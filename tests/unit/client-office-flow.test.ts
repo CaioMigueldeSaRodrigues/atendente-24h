@@ -104,6 +104,7 @@ test("percorre dois turnos de cliente até a fila do operador sem duplicar o ped
     humanHandoffRepository: new InMemoryHumanHandoffRepository(),
     evolutionGoWebhookTransaction: { run: <T>(operation: () => Promise<T>) => withSqliteTransaction(database, operation) },
     operator: { businessId: "business-a", businessName: "Oficina A" },
+    businessOperatorAuthorizer: { isAuthorized: async ({ businessId }) => businessId === "business-a" },
     interpreter,
     now: () => timestamp,
     generateId: (prefix: string) => `${prefix}-${++sequence}`,
