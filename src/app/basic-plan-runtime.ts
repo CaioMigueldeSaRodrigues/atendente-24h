@@ -26,6 +26,12 @@ import { SqliteOpportunityRepository } from "../infrastructure/sqlite/sqlite-opp
 import { SqliteQuoteRequestRepository } from "../infrastructure/sqlite/sqlite-quote-request-repository.js";
 import { SqliteVehicleRepository } from "../infrastructure/sqlite/sqlite-vehicle-repository.js";
 import { SqliteStockCheckRepository } from "../infrastructure/sqlite/sqlite-stock-check-repository.js";
+import { SqliteQuoteDraftRepository } from "../infrastructure/sqlite/sqlite-quote-draft-repository.js";
+import { SqliteBusinessPlanAssignmentRepository } from "../infrastructure/sqlite/sqlite-business-plan-assignment-repository.js";
+import { SqliteBusinessAssistantIntegrationSettingsRepository } from "../infrastructure/sqlite/sqlite-business-assistant-integration-settings-repository.js";
+import { AssignmentBusinessCapabilityPolicy } from "../core/business-capability-policy.js";
+import { UnavailableProductPriceReadAdapter } from "../infrastructure/pricing/local-product-price-read-adapter.js";
+import { UnavailableLaborPriceReadAdapter } from "../infrastructure/pricing/local-labor-price-read-adapter.js";
 import { UnavailableInventoryReadAdapter } from "../infrastructure/inventory/local-inventory-read-adapter.js";
 
 export type BasicPlanBusinessConfig = {
@@ -123,6 +129,11 @@ export async function createBasicPlanRuntime(
       quoteRequestRepository,
       inventoryReadPort: new UnavailableInventoryReadAdapter(),
       stockCheckRepository,
+      quoteDraftRepository: new SqliteQuoteDraftRepository(database),
+      quoteTransaction: { run: (_businessId, _quoteRequestId, operation) => withSqliteTransaction(database, operation) },
+      productPriceReadPort: new UnavailableProductPriceReadAdapter(),
+      laborPriceReadPort: new UnavailableLaborPriceReadAdapter(),
+      businessCapabilityPolicy: new AssignmentBusinessCapabilityPolicy(new SqliteBusinessPlanAssignmentRepository(database), new SqliteBusinessAssistantIntegrationSettingsRepository(database), { inventory: false, productPricing: false, laborPricing: false }),
       commercialEventRepository,
       evolutionGoWebhookReplayGuard,
       evolutionGoConversationLinkRepository,
@@ -143,6 +154,7 @@ export async function createBasicPlanRuntime(
       operator: {
         businessId: options.business.businessId,
         businessName: options.business.businessName,
+        integratedQuotes: true,
       },
       interpreter: options.interpreter,
       now,

@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import type { AppointmentRepository, CommercialEventRepository, ConversationRepository, CustomerRepository, HumanHandoffRepository, MessageRepository, OpportunityRepository, OutboundDeliveryRepository, QuoteRequestRepository, StockCheckRepository, VehicleRepository } from "../../core/repositories.js";
+import type { AppointmentRepository, CommercialEventRepository, ConversationRepository, CustomerRepository, HumanHandoffRepository, MessageRepository, OpportunityRepository, OutboundDeliveryRepository, QuoteDraftRepository, QuoteRequestRepository, StockCheckRepository, VehicleRepository } from "../../core/repositories.js";
 import type { MessageInterpreter } from "../../core/message-interpreter.js";
 import { Channel, ConversationStatus, Intent, InventoryAvailability, OutboundDeliveryStatus, QuoteRequestStatus } from "../../core/domain/enums.js";
 import type { Channel as ChannelType } from "../../core/domain/enums.js";
@@ -26,6 +26,13 @@ import { AdminPlan, type AdminPlan as AdminPlanType } from "../../core/admin-pla
 import type { PlatformFilters, PlatformQueryService, SuperAdminAuthorizer } from "../../core/platform-admin-read-model.js";
 import { checkInventory } from "../../core/check-inventory.js";
 import type { InventoryReadPort } from "../../core/inventory-read-port.js";
+import type { ProductPriceReadPort } from "../../core/product-price-read-port.js";
+import type { LaborPriceReadPort } from "../../core/labor-price-read-port.js";
+import type { BusinessCapabilities, BusinessCapabilityPolicy, IntegrationProviderAvailability } from "../../core/business-capability-policy.js";
+import { authorizeQuoteDraft } from "../../core/authorize-quote-draft.js";
+import { buildQuoteDraft, QuoteDraftError, type LaborDraftInput, type ProductDraftInput } from "../../core/build-quote-draft.js";
+import type { QuotePersistenceTransaction } from "../../core/quote-persistence-transaction.js";
+import { QuoteDraftStatus } from "../../core/quote-draft.js";
 
 const MAX_BODY_BYTES = 1024 * 1024;
 
@@ -72,6 +79,12 @@ export type BasicPlanHttpServerDependencies = {
   humanHandoffRepository: HumanHandoffRepository;
   inventoryReadPort?: InventoryReadPort;
   stockCheckRepository?: StockCheckRepository;
+  quoteDraftRepository?: QuoteDraftRepository;
+  quoteTransaction?: QuotePersistenceTransaction;
+  productPriceReadPort?: ProductPriceReadPort;
+  laborPriceReadPort?: LaborPriceReadPort;
+  businessCapabilityPolicy?: BusinessCapabilityPolicy;
+  integrationProviderAvailability?: IntegrationProviderAvailability;
   commercialEventRepository?: CommercialEventRepository;
   evolutionGoWebhookCredentials?: EvolutionGoWebhookCredential[];
   evolutionGoWebhookReplayGuard?: EvolutionGoWebhookReplayGuard;
@@ -279,6 +292,7 @@ async function publishPublishedQuoteAtomically(
       const messages = await dependencies.messageRepository.listByConversation(input.businessId, conversation.id);
       const message = messages.find((candidate) => candidate.id === reservation.delivery.messageId);
       if (message === undefined) throw new Error("Published Message not found");
+      await markIntegratedDraftPublished(input.businessId, input.quoteRequestId, dependencies);
       return {
         result: {
           messageId: message.id,
@@ -295,8 +309,16 @@ async function publishPublishedQuoteAtomically(
       { ...dependencies, strictCommercialEventPersistence: true },
     );
     await dependencies.outboundDeliveryRepository.attachMessage(input.businessId, reservation.delivery.id, result.messageId, dependencies.now());
+    await markIntegratedDraftPublished(input.businessId, input.quoteRequestId, dependencies);
     return { result, outboundDeliveryId: reservation.delivery.id };
   });
+}
+
+async function markIntegratedDraftPublished(businessId: string, quoteRequestId: string, dependencies: BasicPlanHttpServerDependencies): Promise<void> {
+  const draft = await dependencies.quoteDraftRepository?.findLatestByQuoteRequest(businessId, quoteRequestId);
+  if (!draft) return; // The existing manual flow has no integrated draft.
+  if (draft.status !== QuoteDraftStatus.APPROVED && draft.status !== QuoteDraftStatus.PUBLISHED) throw new QuoteDraftError("DRAFT_NOT_APPROVABLE");
+  await dependencies.quoteDraftRepository!.markPublished(businessId, draft.id, dependencies.now());
 }
 
 function deliveryFailureResult(lastError: string | undefined): PublishedQuoteDelivery {
@@ -335,6 +357,54 @@ async function handleRequest(
 
   if (pathname.startsWith("/v1/admin/")) {
     await handleAdminRequest(url, request, response, dependencies);
+    return;
+  }
+
+  const capabilityMatch = pathname.match(/^\/v1\/businesses\/([^/]+)\/capabilities$/);
+  if (request.method === "GET" && capabilityMatch) {
+    const businessId = decodePathPart(capabilityMatch[1]);
+    if (businessId === null) { sendError(response, 400, "Invalid path"); return; }
+    const capabilities = await getBusinessCapabilities(businessId, dependencies);
+    sendJson(response, 200, capabilities);
+    return;
+  }
+
+  const draftAuthorizeMatch = pathname.match(/^\/v1\/businesses\/([^/]+)\/quotes\/([^/]+)\/draft\/authorize$/);
+  if (request.method === "POST" && draftAuthorizeMatch) {
+    const businessId = decodePathPart(draftAuthorizeMatch[1]);
+    const quoteRequestId = decodePathPart(draftAuthorizeMatch[2]);
+    if (businessId === null || quoteRequestId === null) { sendError(response, 400, "Invalid path"); return; }
+    const capabilities = await getBusinessCapabilities(businessId, dependencies);
+    const gateError = integratedQuoteGateError(capabilities);
+    if (gateError) { sendError(response, gateError.status, gateError.message); return; }
+    if (!dependencies.quoteDraftRepository || !dependencies.quoteTransaction) { sendError(response, 503, "Quote persistence is not configured"); return; }
+    const draft = await authorizeQuoteDraft({ businessId, quoteRequestId }, { quoteDraftRepository: dependencies.quoteDraftRepository, quoteTransaction: dependencies.quoteTransaction, quoteRequestRepository: dependencies.quoteRequestRepository, opportunityRepository: dependencies.opportunityRepository, ...(dependencies.commercialEventRepository ? { commercialEventRepository: dependencies.commercialEventRepository } : {}), now: dependencies.now, generateId: dependencies.generateId });
+    sendJson(response, 200, draft);
+    return;
+  }
+
+  const draftMatch = pathname.match(/^\/v1\/businesses\/([^/]+)\/quotes\/([^/]+)\/draft$/);
+  if (draftMatch && (request.method === "GET" || request.method === "POST")) {
+    const businessId = decodePathPart(draftMatch[1]);
+    const quoteRequestId = decodePathPart(draftMatch[2]);
+    if (businessId === null || quoteRequestId === null) { sendError(response, 400, "Invalid path"); return; }
+    const capabilities = await getBusinessCapabilities(businessId, dependencies);
+    const gateError = integratedQuoteGateError(capabilities);
+    if (gateError) { sendError(response, gateError.status, gateError.message); return; }
+    if (!dependencies.quoteDraftRepository || !dependencies.quoteTransaction) { sendError(response, 503, "Quote persistence is not configured"); return; }
+    if (request.method === "GET") {
+      const draft = await dependencies.quoteDraftRepository.findLatestByQuoteRequest(businessId, quoteRequestId);
+      if (!draft) { sendError(response, 404, "QuoteDraft not found"); return; }
+      sendJson(response, 200, draft);
+      return;
+    }
+    const body = await readJsonBody(request, response);
+    if (body === undefined) return;
+    const parsed = parseDraftBody(body);
+    if (parsed === null) { sendError(response, 400, "Invalid quote draft lines"); return; }
+    if (!dependencies.inventoryReadPort || !dependencies.stockCheckRepository || !dependencies.productPriceReadPort || !dependencies.laborPriceReadPort) { sendError(response, 503, "Integrated quote providers are not configured"); return; }
+    const draft = await buildQuoteDraft({ businessId, quoteRequestId, ...parsed }, { quoteRequestRepository: dependencies.quoteRequestRepository, stockCheckRepository: dependencies.stockCheckRepository, inventoryReadPort: dependencies.inventoryReadPort, productPriceReadPort: dependencies.productPriceReadPort, laborPriceReadPort: dependencies.laborPriceReadPort, quoteDraftRepository: dependencies.quoteDraftRepository, quoteTransaction: dependencies.quoteTransaction, now: dependencies.now, generateId: dependencies.generateId });
+    sendJson(response, 201, draft);
     return;
   }
 
@@ -891,6 +961,10 @@ async function readJsonBody(request: IncomingMessage, response: ServerResponse):
 }
 
 function mapError(cause: unknown): { status: number; body: string } {
+  if (cause instanceof QuoteDraftError) {
+    const status = cause.code === "QUOTE_NOT_FOUND" ? 404 : cause.code === "CAPABILITY_REQUIRED" ? 403 : cause.code === "PRICE_UNAVAILABLE" ? 503 : cause.code === "DRAFT_IMMUTABLE" || cause.code === "DRAFT_NOT_APPROVABLE" || cause.code === "QUOTE_DRAFT_CONFLICT" ? 409 : 400;
+    return { status, body: cause.code };
+  }
   const message = cause instanceof Error ? cause.message : "";
   if (message === "Conversation not found" || message === "QuoteRequest not found" || message === "Opportunity not found") {
     return { status: 404, body: message };
@@ -902,6 +976,44 @@ function mapError(cause: unknown): { status: number; body: string } {
     return { status: 400, body: message };
   }
   return { status: 500, body: "Internal server error" };
+}
+
+async function getBusinessCapabilities(businessId: string, dependencies: BasicPlanHttpServerDependencies): Promise<BusinessCapabilities> {
+  if (dependencies.businessCapabilityPolicy) return dependencies.businessCapabilityPolicy.getCapabilities(businessId, dependencies.integrationProviderAvailability);
+  return {
+    businessId,
+    plan: null,
+    entitlements: { inventoryIntegration: false, productPricingIntegration: false, laborPricingIntegration: false },
+    settings: { inventoryForAssistantEnabled: false, productPricingForAssistantEnabled: false, laborPricingForAssistantEnabled: false },
+    providerAvailability: { inventory: "PROVIDER_UNAVAILABLE", productPricing: "PROVIDER_UNAVAILABLE", laborPricing: "PROVIDER_UNAVAILABLE" },
+    capabilities: { canUseInventoryInAssistant: false, canUseProductPricingInAssistant: false, canUseLaborPricingInAssistant: false, canBuildIntegratedQuote: false },
+    canBuildIntegratedQuote: false,
+  };
+}
+
+function integratedQuoteGateError(capabilities: BusinessCapabilities): { status: number; message: string } | null {
+  if (capabilities.canBuildIntegratedQuote) return null;
+  if (!capabilities.entitlements.inventoryIntegration || !capabilities.entitlements.productPricingIntegration || !capabilities.entitlements.laborPricingIntegration) return { status: 403, message: "INTEGRATION_NOT_ENTITLED" };
+  if (!capabilities.settings.inventoryForAssistantEnabled || !capabilities.settings.productPricingForAssistantEnabled || !capabilities.settings.laborPricingForAssistantEnabled) return { status: 403, message: "DISABLED_BY_BUSINESS" };
+  return { status: 503, message: "PROVIDER_UNAVAILABLE" };
+}
+
+function parseDraftBody(value: unknown): { products: ProductDraftInput[]; labor: LaborDraftInput[] } | null {
+  if (!isRecord(value)) return null;
+  const productsValue = value.products === undefined ? [] : value.products;
+  const laborValue = value.labor === undefined ? [] : value.labor;
+  if (!Array.isArray(productsValue) || !Array.isArray(laborValue)) return null;
+  const products: ProductDraftInput[] = [];
+  for (const item of productsValue) {
+    if (!isRecord(item) || typeof item.requestedItem !== "string" || typeof item.quantity !== "number" || !Number.isSafeInteger(item.quantity) || (item.quantitySource !== "OPERATOR_CONFIRMED" && item.quantitySource !== "WORKSHOP_SYSTEM")) return null;
+    products.push({ requestedItem: item.requestedItem, quantity: item.quantity, quantitySource: item.quantitySource, ...(typeof item.inventoryReference === "string" ? { inventoryReference: item.inventoryReference } : {}), ...(typeof item.externalItemId === "string" ? { externalItemId: item.externalItemId } : {}), ...(typeof item.sku === "string" ? { sku: item.sku } : {}) });
+  }
+  const labor: LaborDraftInput[] = [];
+  for (const item of laborValue) {
+    if (!isRecord(item) || typeof item.description !== "string" || typeof item.quantity !== "number" || !Number.isSafeInteger(item.quantity) || (item.quantitySource !== "OPERATOR_CONFIRMED" && item.quantitySource !== "WORKSHOP_SYSTEM")) return null;
+    labor.push({ description: item.description, quantity: item.quantity, quantitySource: item.quantitySource, ...(typeof item.serviceReference === "string" ? { serviceReference: item.serviceReference } : {}) });
+  }
+  return { products, labor };
 }
 
 function sendJson(response: ServerResponse, statusCode: number, value: unknown): void {

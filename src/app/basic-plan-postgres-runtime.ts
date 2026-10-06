@@ -16,6 +16,12 @@ import { applyPostgresMigrations } from "../infrastructure/postgres/postgres-mig
 import { Channel, type BusinessType } from "../core/domain/enums.js";
 import { PostgresStockCheckRepository } from "../infrastructure/postgres/postgres-stock-check-repository.js";
 import { UnavailableInventoryReadAdapter } from "../infrastructure/inventory/local-inventory-read-adapter.js";
+import { PostgresQuoteDraftRepository } from "../infrastructure/postgres/postgres-quote-draft-repository.js";
+import { PostgresBusinessPlanAssignmentRepository } from "../infrastructure/postgres/postgres-business-plan-assignment-repository.js";
+import { PostgresBusinessAssistantIntegrationSettingsRepository } from "../infrastructure/postgres/postgres-business-assistant-integration-settings-repository.js";
+import { AssignmentBusinessCapabilityPolicy } from "../core/business-capability-policy.js";
+import { UnavailableProductPriceReadAdapter } from "../infrastructure/pricing/local-product-price-read-adapter.js";
+import { UnavailableLaborPriceReadAdapter } from "../infrastructure/pricing/local-labor-price-read-adapter.js";
 
 export type BasicPlanPostgresRuntimeOptions = {
   postgres: PostgresEnvironment;
@@ -69,6 +75,15 @@ export async function createBasicPlanPostgresRuntime(options: BasicPlanPostgresR
       quoteRequestRepository: new PostgresQuoteRequestRepository(database),
       inventoryReadPort: new UnavailableInventoryReadAdapter(),
       stockCheckRepository: new PostgresStockCheckRepository(database),
+      quoteDraftRepository: new PostgresQuoteDraftRepository(database),
+      quoteTransaction: { run: (businessId, quoteRequestId, operation) => database.transaction(async (client) => {
+        const locked = await client.query("SELECT id FROM quote_requests WHERE business_id=$1 AND id=$2 FOR UPDATE", [businessId, quoteRequestId]);
+        if (locked.rowCount !== 1) throw new Error("QuoteRequest not found");
+        return operation();
+      }) },
+      productPriceReadPort: new UnavailableProductPriceReadAdapter(),
+      laborPriceReadPort: new UnavailableLaborPriceReadAdapter(),
+      businessCapabilityPolicy: new AssignmentBusinessCapabilityPolicy(new PostgresBusinessPlanAssignmentRepository(database), new PostgresBusinessAssistantIntegrationSettingsRepository(database), { inventory: false, productPricing: false, laborPricing: false }),
       commercialEventRepository: new PostgresCommercialEventRepository(database),
       evolutionGoWebhookReplayGuard: new PostgresEvolutionGoWebhookReplayGuard(database),
       evolutionGoConversationLinkRepository: new PostgresEvolutionGoConversationLinkRepository(database),
@@ -84,7 +99,7 @@ export async function createBasicPlanPostgresRuntime(options: BasicPlanPostgresR
         : {}),
       appointmentRepository: new PostgresAppointmentRepository(database),
       humanHandoffRepository: new PostgresHumanHandoffRepository(database),
-      operator: { businessId: options.business.businessId, businessName: options.business.businessName },
+      operator: { businessId: options.business.businessId, businessName: options.business.businessName, integratedQuotes: true },
       interpreter: options.interpreter,
       now,
       generateId: (prefix) => `${prefix}-${randomUUID()}`,

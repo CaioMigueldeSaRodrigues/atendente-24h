@@ -121,6 +121,20 @@ export enum QuoteRequestStatus {
   CLOSED = "CLOSED",
 }
 
+export enum QuoteDraftStatus {
+  DRAFT = "DRAFT",
+  PENDING_APPROVAL = "PENDING_APPROVAL",
+  APPROVED = "APPROVED",
+  REJECTED = "REJECTED",
+  SUPERSEDED = "SUPERSEDED",
+  PUBLISHED = "PUBLISHED",
+}
+
+export enum QuoteDraftLineKind {
+  PRODUCT = "PRODUCT",
+  LABOR = "LABOR",
+}
+
 export enum OutboundDeliveryStatus {
   PENDING = "PENDING",
   SENDING = "SENDING",

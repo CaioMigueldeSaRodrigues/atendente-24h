@@ -22,6 +22,7 @@ function insert(database: DatabaseSync, sql: string, ...values: any[]): void {
 }
 
 function seedConversation(database: DatabaseSync, input: {
+  businessId?: string;
   suffix: string;
   customerName: string;
   phone?: string;
@@ -44,7 +45,7 @@ function seedConversation(database: DatabaseSync, input: {
   requestDescription: string;
   lastMessageAt: string;
 }): void {
-  const businessId = PREVIEW_ADMIN_BUSINESS_ID;
+  const businessId = input.businessId ?? PREVIEW_ADMIN_BUSINESS_ID;
   const base = "2026-09-29T10:00:00.000Z";
   const customerId = `${businessId}-customer-${input.suffix}`;
   const vehicleId = `${businessId}-vehicle-${input.suffix}`;
@@ -81,6 +82,7 @@ export function createPreviewAdminDependencies(): PreviewAdminDependencies {
   for (const [id, businessPlan] of [[businessId, AdminPlan.ADVANCED], ["preview-basic-business", AdminPlan.BASIC], ["preview-intermediate-business", AdminPlan.INTERMEDIATE]] as const) {
     insert(database, "INSERT INTO business_plan_assignments(id,business_id,plan,status,started_at,updated_at,source) VALUES(?,?,?,?,?,?,?)", `${id}-plan`, id, businessPlan, "ACTIVE", "2026-09-01T00:00:00.000Z", "2026-09-01T00:00:00.000Z", "preview-fixture");
   }
+  insert(database, "INSERT INTO business_assistant_integration_settings(business_id,inventory_for_assistant_enabled,product_pricing_for_assistant_enabled,labor_pricing_for_assistant_enabled,created_at,updated_at) VALUES(?,?,?,?,?,?)", "preview-intermediate-business", 1, 1, 1, "2026-09-29T00:00:00.000Z", "2026-09-29T00:00:00.000Z");
 
   seedConversation(database, {
     suffix: "waiting",
@@ -89,6 +91,23 @@ export function createPreviewAdminDependencies(): PreviewAdminDependencies {
     brand: "Toyota",
     model: "Corolla",
     year: 2021,
+    version: "XEi",
+    plate: "ABC1D23",
+    mileage: 48200,
+    conversationStatus: ConversationStatus.ACTIVE,
+    quoteStatus: QuoteRequestStatus.WAITING_BUSINESS,
+    intent: Intent.QUOTE_REQUEST,
+    requestDescription: "troca de óleo",
+    lastMessageAt: "2026-09-29T10:05:00.000Z",
+  });
+  seedConversation(database, {
+    businessId: "preview-intermediate-business",
+    suffix: "waiting",
+    customerName: "Ana Souza",
+    phone: "5511999990001",
+    brand: "Toyota",
+    model: "Corolla",
+    year: 2020,
     version: "XEi",
     plate: "ABC1D23",
     mileage: 48200,

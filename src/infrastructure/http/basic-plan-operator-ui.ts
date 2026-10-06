@@ -1,6 +1,8 @@
 export type BasicPlanOperatorConfig = {
   businessId: string;
   businessName: string;
+  integratedQuotes?: boolean;
+  integratedQuotePreview?: { productDescription: string; sku: string; quantity: number; unit: string; laborDescription: string; laborQuantity: number };
 };
 
 export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): string {
@@ -97,6 +99,18 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
     .action-message { min-height: 20px; margin: 9px 0 0; color: #52616b; font-size: 12px; line-height: 1.5; }
     .action-message[data-kind="error"] { color: #8a2d25; }
     .action-message[data-kind="success"] { color: #145b3d; }
+    .integrated-lines { display: grid; gap: 8px; margin: 10px 0; }
+    .integrated-line { display: grid; grid-template-columns: minmax(0, 1fr) 90px; gap: 8px; }
+    .integrated-line input { border: 1px solid #b9c9c7; background: #fff; }
+    .integrated-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+    .integrated-section { margin: 10px 0; padding: 12px; border: 1px solid #d7e6df; border-radius: 9px; background: #fff; }
+    .integrated-section h4 { margin: 0 0 8px; color: #52616b; font-size: 11px; letter-spacing: .07em; text-transform: uppercase; }
+    .integrated-section .info-value { margin-top: 4px; }
+    .integrated-total { margin: 12px 0 0; padding-top: 12px; border-top: 1px solid #d7e6df; font-size: 16px; font-weight: 800; }
+    .integrated-note { margin: 8px 0 0; color: #63727d; font-size: 12px; }
+    .secondary-action { margin: 0 20px 20px; padding: 7px 10px; background: transparent; color: #52616b; font-size: 12px; font-weight: 600; text-align: left; }
+    .secondary-action:hover:not(:disabled) { background: #eaf1f3; color: #26424e; }
+    [hidden] { display: none !important; }
     @media (max-width: 850px) {
       .header-inner, main { width: min(100% - 28px, 680px); }
       .workspace { display: block; min-height: 0; }
@@ -176,6 +190,7 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
     let historyRequest = 0;
     let sending = false;
     let loading = false;
+    let integratedCapabilities = { canBuildIntegratedQuote: false };
 
     function setFeedback(message, kind) {
       feedback.textContent = message;
@@ -379,9 +394,13 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
         heading.textContent = "Disponibilidade";
         block.append(heading);
         addInfo(block, "Status", inventoryStatusLabel(data && data.availability));
-        addInfo(block, "Quantidade", data && data.availableQuantity);
-        addInfo(block, "Unidade", data && data.unit);
-        addInfo(block, "Fonte", data && data.source);
+        if (integratedCapabilities.canBuildIntegratedQuote) {
+          addInfo(block, "Quantidade", data && data.availableQuantity !== undefined && data.unit ? String(data.availableQuantity) + " " + data.unit : data && data.availableQuantity);
+        } else {
+          addInfo(block, "Quantidade", data && data.availableQuantity);
+          addInfo(block, "Unidade", data && data.unit);
+          addInfo(block, "Fonte", data && data.source);
+        }
         addInfo(block, "Consultado em", dateTime(data && data.checkedAt));
       } catch {
         block.replaceChildren();
@@ -390,6 +409,321 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
         block.append(heading);
         addInfo(block, "Status", "Não consultado / desconhecido");
       }
+    }
+
+    async function loadIntegratedCapabilities() {
+      if (operator.integratedQuotes !== true) return;
+      try {
+        const response = await fetch("/v1/businesses/" + encodeURIComponent(operator.businessId) + "/capabilities");
+        if (!response.ok) return;
+        const data = await response.json();
+        integratedCapabilities = { canBuildIntegratedQuote: data && data.canBuildIntegratedQuote === true };
+      } catch { integratedCapabilities = { canBuildIntegratedQuote: false }; }
+    }
+
+    function friendlyIntegratedError(value) {
+      const messages = {
+        PRICE_UNAVAILABLE: "Preço do produto não encontrado na fonte configurada.",
+        IDENTITY_AMBIGUOUS: "Não foi possível confirmar a identidade do produto no estoque.",
+        DISABLED_BY_BUSINESS: "As integrações ainda não foram habilitadas pela oficina.",
+        PROVIDER_UNAVAILABLE: "A fonte de preços está indisponível no momento.",
+      };
+      return messages[value] || "Não foi possível montar o orçamento. Verifique os dados e tente novamente.";
+    }
+
+    function formatMoneyCents(value) {
+      return "R$ " + (Number(value) / 100).toFixed(2).replace(".", ",");
+    }
+
+    function makeCompositionValue(block, label, value) {
+      const line = document.createElement("p");
+      line.className = "info-value";
+      const labelNode = document.createElement("span");
+      labelNode.className = "info-label";
+      labelNode.textContent = label + ": ";
+      const valueNode = document.createElement("span");
+      valueNode.textContent = display(value);
+      line.append(labelNode, valueNode);
+      block.append(line);
+    }
+
+    function makeDraftComposition(draft) {
+      const composition = document.createElement("div");
+      const product = draft.lines && draft.lines.find((line) => line.kind === "PRODUCT");
+      const labor = draft.lines && draft.lines.find((line) => line.kind === "LABOR");
+      if (product) {
+        const productBlock = document.createElement("section");
+        productBlock.className = "integrated-section";
+        const heading = document.createElement("h4");
+        heading.textContent = "Produto";
+        productBlock.append(heading);
+        makeCompositionValue(productBlock, "Produto", product.description);
+        makeCompositionValue(productBlock, "SKU", product.externalReference);
+        makeCompositionValue(productBlock, "Quantidade", String(product.quantity) + " " + (operator.integratedQuotePreview?.unit || product.unit));
+        if (operator.integratedQuotePreview) makeCompositionValue(productBlock, "Estoque", "disponível");
+        makeCompositionValue(productBlock, "Preço unitário", formatMoneyCents(product.unitPriceCaptured.amountCents) + "/un.");
+        makeCompositionValue(productBlock, "Subtotal", formatMoneyCents(product.subtotal.amountCents));
+        composition.append(productBlock);
+      }
+      if (labor) {
+        const laborBlock = document.createElement("section");
+        laborBlock.className = "integrated-section";
+        const heading = document.createElement("h4");
+        heading.textContent = "Mão de obra";
+        laborBlock.append(heading);
+        makeCompositionValue(laborBlock, "Serviço", labor.description);
+        makeCompositionValue(laborBlock, "Quantidade", labor.quantity);
+        makeCompositionValue(laborBlock, "Valor", formatMoneyCents(labor.unitPriceCaptured.amountCents));
+        makeCompositionValue(laborBlock, "Subtotal", formatMoneyCents(labor.subtotal.amountCents));
+        composition.append(laborBlock);
+      }
+      const total = document.createElement("p");
+      total.className = "integrated-total";
+      total.textContent = "Total: " + formatMoneyCents(draft.total.amountCents);
+      composition.append(total);
+      const note = document.createElement("p");
+      note.className = "integrated-note";
+      note.textContent = "Preços consultados em: " + dateTime(draft.updatedAt);
+      composition.append(note);
+      return composition;
+    }
+
+    function makeIntegratedQuotePanelPreview(item, onDraftState) {
+      const panel = document.createElement("form");
+      panel.className = "action-panel";
+      const title = document.createElement("h3");
+      title.textContent = "Orçamento integrado";
+      const fields = document.createElement("div");
+      const productSection = document.createElement("section");
+      productSection.className = "integrated-section";
+      const productHeading = document.createElement("h4");
+      productHeading.textContent = "Produto";
+      productSection.append(productHeading);
+      const product = document.createElement("input");
+      product.value = operator.integratedQuotePreview?.productDescription || "";
+      product.required = true;
+      product.setAttribute("aria-label", "Produto");
+      const productLabel = document.createElement("label");
+      productLabel.textContent = "Produto";
+      productLabel.append(product);
+      const reference = document.createElement("input");
+      reference.value = operator.integratedQuotePreview?.sku || "";
+      reference.required = true;
+      reference.setAttribute("aria-label", "SKU");
+      const referenceLabel = document.createElement("label");
+      referenceLabel.textContent = "SKU";
+      referenceLabel.append(reference);
+      const quantity = document.createElement("input");
+      quantity.type = "number";
+      quantity.min = "1";
+      quantity.step = "1";
+      quantity.value = String(operator.integratedQuotePreview?.quantity || 1);
+      quantity.setAttribute("aria-label", "Quantidade em litros");
+      const quantityLabel = document.createElement("label");
+      quantityLabel.textContent = "Quantidade" + (operator.integratedQuotePreview ? " (" + operator.integratedQuotePreview.unit + ")" : "");
+      quantityLabel.append(quantity);
+      productSection.append(productLabel, referenceLabel, quantityLabel);
+      const stock = document.createElement("p");
+      stock.className = "integrated-note";
+      stock.textContent = "Estoque: disponível";
+      if (operator.integratedQuotePreview) productSection.append(stock);
+
+      const laborSection = document.createElement("section");
+      laborSection.className = "integrated-section";
+      const laborHeading = document.createElement("h4");
+      laborHeading.textContent = "Mão de obra";
+      laborSection.append(laborHeading);
+      const labor = document.createElement("input");
+      labor.value = operator.integratedQuotePreview?.laborDescription || item.quote.requestDescription || "";
+      labor.required = true;
+      labor.setAttribute("aria-label", "Mão de obra");
+      const laborLabel = document.createElement("label");
+      laborLabel.textContent = "Serviço";
+      laborLabel.append(labor);
+      const laborQuantity = document.createElement("input");
+      laborQuantity.type = "number";
+      laborQuantity.min = "1";
+      laborQuantity.step = "1";
+      laborQuantity.value = String(operator.integratedQuotePreview?.laborQuantity || 1);
+      laborQuantity.setAttribute("aria-label", "Quantidade de mão de obra");
+      const laborQuantityLabel = document.createElement("label");
+      laborQuantityLabel.textContent = "Quantidade";
+      laborQuantityLabel.append(laborQuantity);
+      laborSection.append(laborLabel, laborQuantityLabel);
+      fields.append(productSection, laborSection);
+
+      const composition = document.createElement("div");
+      composition.hidden = true;
+      const message = document.createElement("p");
+      message.className = "action-message";
+      message.setAttribute("aria-live", "polite");
+      const buttons = document.createElement("div");
+      buttons.className = "integrated-buttons";
+      const build = document.createElement("button");
+      build.type = "submit";
+      build.textContent = "Montar orçamento";
+      build.disabled = true;
+      const authorize = document.createElement("button");
+      authorize.type = "button";
+      authorize.textContent = "Autorizar";
+      authorize.hidden = true;
+      const publish = document.createElement("button");
+      publish.type = "button";
+      publish.textContent = "Enviar ao cliente";
+      publish.hidden = true;
+      buttons.append(build, authorize, publish);
+      panel.append(title, fields, composition, buttons, message);
+      let draft = null;
+      const showDraft = (value) => {
+        draft = value;
+        onDraftState(true);
+        fields.hidden = true;
+        composition.replaceChildren(makeDraftComposition(value));
+        composition.hidden = false;
+        build.hidden = true;
+        authorize.hidden = !draft || draft.status !== "PENDING_APPROVAL";
+        publish.hidden = !draft || draft.status !== "APPROVED";
+        message.textContent = draft.status === "PENDING_APPROVAL" ? "Revise a composição antes de autorizar." : "Orçamento autorizado. O envio continua separado.";
+        message.dataset.kind = "info";
+      };
+      void fetch("/v1/businesses/" + encodeURIComponent(operator.businessId) + "/quotes/" + encodeURIComponent(item.quote.id) + "/draft")
+        .then(async (response) => {
+          if (response.ok) {
+            showDraft(await response.json());
+          } else if (response.status === 404) {
+            build.disabled = false;
+            onDraftState(false);
+          } else {
+            message.textContent = "Não foi possível verificar o orçamento integrado. Atualize o atendimento.";
+            message.dataset.kind = "error";
+          }
+        })
+        .catch(() => {
+          message.textContent = "Não foi possível verificar o orçamento integrado. Atualize o atendimento.";
+          message.dataset.kind = "error";
+        });
+      panel.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        build.disabled = true;
+        try {
+          const response = await fetch("/v1/businesses/" + encodeURIComponent(operator.businessId) + "/quotes/" + encodeURIComponent(item.quote.id) + "/draft", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ products: [{ requestedItem: product.value, inventoryReference: reference.value, quantity: Number(quantity.value), quantitySource: "OPERATOR_CONFIRMED" }], labor: [{ description: labor.value, quantity: Number(laborQuantity.value), quantitySource: "OPERATOR_CONFIRMED" }] }) });
+          const value = await response.json();
+          if (!response.ok) throw new Error(value && value.error ? value.error : "UNKNOWN_ERROR");
+          showDraft(value);
+        } catch (error) { message.textContent = friendlyIntegratedError(error instanceof Error ? error.message : ""); message.dataset.kind = "error"; }
+        finally { build.disabled = false; }
+      });
+      authorize.addEventListener("click", async () => {
+        authorize.disabled = true;
+        const response = await fetch("/v1/businesses/" + encodeURIComponent(operator.businessId) + "/quotes/" + encodeURIComponent(item.quote.id) + "/draft/authorize", { method: "POST" });
+        if (response.ok) showDraft(await response.json());
+        else { message.textContent = "Não foi possível autorizar o orçamento."; message.dataset.kind = "error"; authorize.disabled = false; }
+      });
+      publish.addEventListener("click", async () => {
+        publish.disabled = true;
+        const response = await fetch("/v1/businesses/" + encodeURIComponent(operator.businessId) + "/quotes/" + encodeURIComponent(item.quote.id) + "/publish", { method: "POST" });
+        if (response.ok) {
+          message.textContent = "Orçamento enviado ao cliente.";
+          message.dataset.kind = "success";
+          await loadQueue();
+        } else { message.textContent = "Não foi possível enviar o orçamento."; message.dataset.kind = "error"; publish.disabled = false; }
+      });
+      return panel;
+    }
+
+    function makeManualQuotePanel(item, onBack) {
+      const action = document.createElement("form");
+      action.className = "action-panel";
+      const actionTitle = document.createElement("h3");
+      actionTitle.textContent = "Orçamento manual";
+      const inputId = "authorized-price";
+      const label = document.createElement("label");
+      label.className = "price-label";
+      label.htmlFor = inputId;
+      label.textContent = "Valor autorizado";
+      const control = document.createElement("div");
+      control.className = "price-control";
+      const prefix = document.createElement("span");
+      prefix.className = "price-prefix";
+      prefix.textContent = "R$";
+      const input = document.createElement("input");
+      input.id = inputId;
+      input.type = "text";
+      input.inputMode = "decimal";
+      input.autocomplete = "off";
+      input.setAttribute("aria-label", "Valor autorizado em reais");
+      control.append(prefix, input);
+      const submit = document.createElement("button");
+      submit.type = "submit";
+      submit.className = "send-button";
+      submit.textContent = "Autorizar";
+      const publish = document.createElement("button");
+      publish.type = "button";
+      publish.className = "send-button";
+      publish.textContent = "Enviar ao cliente";
+      publish.hidden = true;
+      const back = document.createElement("button");
+      back.type = "button";
+      back.className = "secondary-action";
+      back.textContent = "Voltar ao orçamento integrado";
+      back.addEventListener("click", onBack);
+      const actionMessage = document.createElement("p");
+      actionMessage.className = "action-message";
+      actionMessage.setAttribute("aria-live", "polite");
+      action.append(actionTitle, label, control, submit, publish, back, actionMessage);
+      action.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const amountCents = priceToCents(input.value);
+        if (amountCents === null) {
+          actionMessage.textContent = "Informe um valor válido.";
+          actionMessage.dataset.kind = "error";
+          input.focus();
+          return;
+        }
+        if (sending) return;
+        sending = true;
+        submit.disabled = true;
+        try {
+          const response = await fetch("/v1/businesses/" + encodeURIComponent(operator.businessId) + "/quotes/" + encodeURIComponent(item.quote.id) + "/respond", {
+            method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ amountCents, currency: "BRL" }),
+          });
+          if (!response.ok) throw new Error("authorization failed");
+          label.hidden = true;
+          control.hidden = true;
+          submit.hidden = true;
+          back.hidden = true;
+          publish.hidden = false;
+          actionMessage.textContent = "Valor autorizado. O envio ao cliente é uma etapa separada.";
+          actionMessage.dataset.kind = "success";
+        } catch {
+          actionMessage.textContent = "Não foi possível autorizar o valor. Verifique os dados e tente novamente.";
+          actionMessage.dataset.kind = "error";
+          submit.disabled = false;
+        } finally { sending = false; }
+      });
+      publish.addEventListener("click", async () => {
+        if (sending) return;
+        sending = true;
+        publish.disabled = true;
+        try {
+          const response = await fetch("/v1/businesses/" + encodeURIComponent(operator.businessId) + "/quotes/" + encodeURIComponent(item.quote.id) + "/publish", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+          const result = await response.json().catch(() => null);
+          const delivery = result && result.delivery;
+          const delivered = operator.integratedQuotePreview
+            ? response.ok
+            : response.ok && delivery && (delivery.status === "DELIVERED" || delivery.status === "ALREADY_DELIVERED");
+          if (!delivered) throw new Error("delivery failed");
+          actionMessage.textContent = "Orçamento enviado ao cliente.";
+          actionMessage.dataset.kind = "success";
+          setFeedback("Orçamento enviado com sucesso.", "success");
+          await loadQueue();
+        } catch {
+          actionMessage.textContent = "Valor autorizado, mas o envio não foi concluído. Tente enviar novamente.";
+          actionMessage.dataset.kind = "error";
+          publish.disabled = false;
+        } finally { sending = false; }
+      });
+      return action;
     }
 
     function priceToCents(value) {
@@ -529,6 +863,31 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
 
       content.append(toolbar, grid, historyHeading, historyArea);
       void loadInventory(item, inventory);
+      if (integratedCapabilities.canBuildIntegratedQuote && item.quote.status === "WAITING_BUSINESS") {
+        const manualToggle = document.createElement("button");
+        manualToggle.type = "button";
+        manualToggle.className = "secondary-action";
+        manualToggle.textContent = "Fazer orçamento manualmente";
+        manualToggle.hidden = true;
+        const integratedPanel = makeIntegratedQuotePanelPreview(item, (hasDraft) => {
+          manualToggle.hidden = hasDraft;
+        });
+        manualToggle.addEventListener("click", () => {
+          integratedPanel.hidden = true;
+          manualToggle.hidden = true;
+          const manualPanel = makeManualQuotePanel(item, () => {
+            manualPanel.remove();
+            integratedPanel.hidden = false;
+            manualToggle.hidden = false;
+          });
+          content.append(manualPanel);
+        });
+        content.append(integratedPanel, manualToggle);
+        detailPanel.replaceChildren(content);
+        void loadHistory(item, historyList, historyArea, retryButton);
+        if (moveFocus) title.focus({ preventScroll: true });
+        return;
+      }
       if (item.quote.status === "WAITING_BUSINESS") {
         const action = document.createElement("form");
         action.className = "action-panel";
@@ -614,7 +973,7 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
 
     refreshButton.addEventListener("click", () => void loadQueue());
     renderQueue();
-    void loadQueue();
+    void loadIntegratedCapabilities().then(() => loadQueue());
     window.setInterval(() => {
       if (!sending) void loadQueue();
     }, 30000);

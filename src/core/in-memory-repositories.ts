@@ -13,6 +13,11 @@ import type {
   QuoteRequest,
   Vehicle,
 } from "./domain/entities.js";
+import type { QuoteDraft } from "./quote-draft.js";
+import { QuoteDraftStatus } from "./quote-draft.js";
+import { assertDraftSave } from "./quote-draft-write-policy.js";
+import { QuoteDraftError } from "./build-quote-draft.js";
+import type { BusinessAssistantIntegrationSettings, BusinessAssistantIntegrationSettingsRepository } from "./business-assistant-integration-settings.js";
 import {
   OutboundDeliveryStatus,
 } from "./domain/enums.js";
@@ -33,6 +38,7 @@ import type {
   OpportunityRepository,
   QuoteRequestRepository,
   VehicleRepository,
+  QuoteDraftRepository,
 } from "./repositories.js";
 
 function compareEventOrder(left: { occurredAt: string; id: string }, right: { occurredAt: string; id: string }): number {
@@ -439,4 +445,44 @@ export class InMemoryHumanHandoffRepository implements HumanHandoffRepository {
     }
     businessHandoffs.set(entity.id, entity);
   }
+}
+
+export class InMemoryQuoteDraftRepository implements QuoteDraftRepository {
+  private readonly drafts = new Map<string, Map<string, QuoteDraft>>();
+  async findById(businessId: string, id: string): Promise<QuoteDraft | null> { return cloneDraft(this.drafts.get(businessId)?.get(id)); }
+  async findLatestByQuoteRequest(businessId: string, quoteRequestId: string): Promise<QuoteDraft | null> {
+    const drafts = [...(this.drafts.get(businessId)?.values() ?? [])].filter((draft) => draft.quoteRequestId === quoteRequestId).sort((left, right) => right.revision - left.revision || right.id.localeCompare(left.id));
+    return cloneDraft(drafts[0]);
+  }
+  async save(entity: QuoteDraft): Promise<void> {
+    let businessDrafts = this.drafts.get(entity.businessId);
+    if (!businessDrafts) { businessDrafts = new Map(); this.drafts.set(entity.businessId, businessDrafts); }
+    assertDraftSave(cloneDraft(businessDrafts.get(entity.id)), entity);
+    if ([...businessDrafts.values()].some((draft) => draft.id !== entity.id && draft.quoteRequestId === entity.quoteRequestId && draft.revision === entity.revision)) throw new QuoteDraftError("QUOTE_DRAFT_CONFLICT");
+    businessDrafts.set(entity.id, cloneDraft(entity)!);
+  }
+  async approve(businessId: string, id: string, authorizedAt: string): Promise<void> {
+    const draft = this.drafts.get(businessId)?.get(id);
+    if (!draft || draft.status !== QuoteDraftStatus.PENDING_APPROVAL) throw new QuoteDraftError("DRAFT_NOT_APPROVABLE");
+    this.drafts.get(businessId)!.set(id, { ...draft, status: QuoteDraftStatus.APPROVED, authorizedAt, updatedAt: authorizedAt });
+  }
+  async markPublished(businessId: string, id: string, updatedAt: string): Promise<void> {
+    const draft = this.drafts.get(businessId)?.get(id);
+    if (!draft || (draft.status !== QuoteDraftStatus.APPROVED && draft.status !== QuoteDraftStatus.PUBLISHED)) throw new QuoteDraftError("DRAFT_NOT_APPROVABLE");
+    if (draft.status === QuoteDraftStatus.APPROVED) this.drafts.get(businessId)!.set(id, { ...draft, status: QuoteDraftStatus.PUBLISHED, updatedAt });
+  }
+}
+
+export class InMemoryBusinessAssistantIntegrationSettingsRepository implements BusinessAssistantIntegrationSettingsRepository {
+  private readonly settings = new Map<string, BusinessAssistantIntegrationSettings>();
+  async findByBusinessId(businessId: string): Promise<BusinessAssistantIntegrationSettings | null> {
+    const value = this.settings.get(businessId);
+    return value ? { ...value } : null;
+  }
+  async save(value: BusinessAssistantIntegrationSettings): Promise<void> { this.settings.set(value.businessId, { ...value }); }
+}
+
+function cloneDraft(draft: QuoteDraft | undefined): QuoteDraft | null {
+  if (!draft) return null;
+  return { ...draft, lines: draft.lines.map((line) => ({ ...line, unitPriceCaptured: { ...line.unitPriceCaptured }, subtotal: { ...line.subtotal } })), productsSubtotal: { ...draft.productsSubtotal }, laborSubtotal: { ...draft.laborSubtotal }, total: { ...draft.total } };
 }

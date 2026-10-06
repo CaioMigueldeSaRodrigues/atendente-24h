@@ -15,6 +15,7 @@ import type {
   Vehicle,
 } from "./domain/entities.js";
 import { InventoryAvailability, OutboundDeliveryStatus } from "./domain/enums.js";
+import type { QuoteDraft } from "./quote-draft.js";
 
 export interface CommercialEventRepository {
   append(event: CommercialEvent): Promise<void>;
@@ -87,6 +88,16 @@ export interface QuoteRequestRepository {
   ): Promise<QuoteRequest[]>;
   save(entity: QuoteRequest): Promise<void>;
 }
+
+export interface QuoteDraftRepository {
+  findById(businessId: string, id: string): Promise<QuoteDraft | null>;
+  findLatestByQuoteRequest(businessId: string, quoteRequestId: string): Promise<QuoteDraft | null>;
+  save(entity: QuoteDraft): Promise<void>;
+  approve(businessId: string, id: string, authorizedAt: string): Promise<void>;
+  markPublished(businessId: string, id: string, updatedAt: string): Promise<void>;
+}
+
+export type { BusinessAssistantIntegrationSettingsRepository } from "./business-assistant-integration-settings.js";
 
 export type OutboundDeliveryClaimResult = {
   claimed: boolean;
