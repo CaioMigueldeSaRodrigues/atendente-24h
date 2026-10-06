@@ -508,7 +508,8 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
     const otherBusinessMessages = await request(`/v1/businesses/business-b/conversations/${conversationId}/messages`);
     const otherBusinessQuotes = await request(`/v1/businesses/business-b/conversations/${conversationId}/quotes`);
     assert.deepEqual((await otherBusinessMessages.json() as { messages: unknown[] }).messages, []);
-    assert.deepEqual((await otherBusinessQuotes.json() as { quotes: unknown[] }).quotes, []);
+    assert.equal(otherBusinessQuotes.status, 404);
+    assert.deepEqual(await otherBusinessQuotes.json(), { error: "Not found" });
     const crossTenantRespond = await post(`/v1/businesses/business-b/quotes/${quoteId}/respond`, { amountCents: 65000, currency: "BRL" });
     const crossTenantPublish = await post(`/v1/businesses/business-b/quotes/${quoteId}/publish`, {});
     assert.equal(crossTenantRespond.status, 404);
@@ -562,7 +563,8 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
       QuoteRequestStatus.WAITING_INFORMATION,
     ]);
     const secondBusinessQueue = await request("/v1/businesses/business-b/quotes/pending");
-    assert.deepEqual(await secondBusinessQueue.json(), { items: [] });
+    assert.equal(secondBusinessQueue.status, 404);
+    assert.deepEqual(await secondBusinessQueue.json(), { error: "Not found" });
 
     const unknownRoute = await request("/not-a-route");
     assert.equal(unknownRoute.status, 404);

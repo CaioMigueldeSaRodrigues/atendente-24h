@@ -57,17 +57,22 @@ async function waitForAdvisoryLockWaiters(database: PostgresDatabase, expected: 
 }
 
 test("PostgreSQL migrations and repositories persist tenant data and serialize conversation resolution", { skip: !enabled }, async () => {
-  const db = new PostgresDatabase(config, { allowInsecureLocal: true });
+  const adminDatabase = new PostgresDatabase(config, { allowInsecureLocal: true });
+  const schema = `att24_test_${process.pid}_${Date.now()}`;
+  await adminDatabase.query(`CREATE SCHEMA "${schema}"`);
+  const db = new PostgresDatabase(config, { allowInsecureLocal: true, searchPath: schema });
   const businessId = `pg-test-${process.pid}-${Date.now()}`;
   try {
     const first = await applyPostgresMigrations(db);
-    assert.ok(first.every((version)=>[
+    assert.deepEqual(first, [
       "001_initial_schema.sql",
       "002_appointment_and_handoff_repositories.sql",
       "003_evolution_go_webhook_processing.sql",
       "004_outbound_delivery_outbox.sql",
       "005_stock_checks_read_only.sql",
-    ].includes(version)));
+      "006_business_plan_assignments.sql",
+      "007_quote_drafts.sql",
+    ]);
     assert.deepEqual(await applyPostgresMigrations(db),[]);
     const transferBusinessId=`transfer-test-${businessId}`;
     const directory=mkdtempSync(join(tmpdir(),"att24-pg-transfer-"));
@@ -76,9 +81,29 @@ test("PostgreSQL migrations and repositories persist tenant data and serialize c
     initializeSqliteSchema(source);
     source.prepare("INSERT INTO automotive_businesses(id,name,business_type,timezone,active,created_at,updated_at) VALUES(?,?,?,?,?,?,?)")
       .run(transferBusinessId,transferBusinessId,BusinessType.OTHER,"UTC",1,"2026-01-01","2026-01-01");
+    source.prepare("INSERT INTO conversations(id,business_id,channel,status,started_at,last_message_at) VALUES(?,?,?,?,?,?)").run(`${transferBusinessId}-conversation`, transferBusinessId, Channel.WEB, ConversationStatus.ACTIVE, "2026-01-01", "2026-01-01");
+    source.prepare("INSERT INTO opportunities(id,business_id,conversation_id,status,created_at,updated_at) VALUES(?,?,?,?,?,?)").run(`${transferBusinessId}-opportunity`, transferBusinessId, `${transferBusinessId}-conversation`, OpportunityStatus.WAITING_BUSINESS, "2026-01-01", "2026-01-01");
+    source.prepare("INSERT INTO quote_requests(id,business_id,opportunity_id,conversation_id,request_description,status,requested_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)").run(`${transferBusinessId}-quote`, transferBusinessId, `${transferBusinessId}-opportunity`, `${transferBusinessId}-conversation`, "transfer quote", QuoteRequestStatus.WAITING_BUSINESS, "2026-01-01", "2026-01-01", "2026-01-01");
+    source.prepare("INSERT INTO business_plan_assignments(id,business_id,plan,status,started_at,updated_at,source) VALUES(?,?,?,?,?,?,?)").run(`${transferBusinessId}-assignment`, transferBusinessId, "INTERMEDIATE", "ACTIVE", "2026-01-01", "2026-01-01", "test");
+    source.prepare("INSERT INTO business_assistant_integration_settings(business_id,inventory_for_assistant_enabled,product_pricing_for_assistant_enabled,labor_pricing_for_assistant_enabled,created_at,updated_at) VALUES(?,?,?,?,?,?)").run(transferBusinessId, 1, 0, 1, "2026-01-01", "2026-01-01");
+    source.prepare("INSERT INTO quote_drafts(id,business_id,conversation_id,quote_request_id,revision,status,products_subtotal_amount_cents,products_subtotal_currency,labor_subtotal_amount_cents,labor_subtotal_currency,total_amount_cents,total_currency,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)").run(`${transferBusinessId}-draft`, transferBusinessId, `${transferBusinessId}-conversation`, `${transferBusinessId}-quote`, 3, "PENDING_APPROVAL", 4800, "BRL", 9000, "BRL", 13800, "BRL", "2026-01-01", "2026-01-01");
+    source.prepare("INSERT INTO quote_draft_lines(id,business_id,quote_draft_id,kind,description,quantity,unit,unit_price_captured_amount_cents,unit_price_captured_currency,subtotal_amount_cents,subtotal_currency,source,checked_at,quantity_source) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)").run(`${transferBusinessId}-product-line`, transferBusinessId, `${transferBusinessId}-draft`, "PRODUCT", "Óleo", 1, "UN", 4800, "BRL", 4800, "BRL", "test", "2026-01-01", "OPERATOR_CONFIRMED");
+    source.prepare("INSERT INTO quote_draft_lines(id,business_id,quote_draft_id,kind,description,quantity,unit,unit_price_captured_amount_cents,unit_price_captured_currency,subtotal_amount_cents,subtotal_currency,source,checked_at,quantity_source) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)").run(`${transferBusinessId}-labor-line`, transferBusinessId, `${transferBusinessId}-draft`, "LABOR", "Serviço", 1, "SERVICO", 9000, "BRL", 9000, "BRL", "test", "2026-01-01", "WORKSHOP_SYSTEM");
     source.close();
     await transferSqliteToPostgres(sqlitePath,db);
     assert.equal((await new PostgresAutomotiveBusinessRepository(db).findById(transferBusinessId))?.active,true);
+    const transferred = await db.query("SELECT a.plan,s.inventory_for_assistant_enabled,s.product_pricing_for_assistant_enabled,s.labor_pricing_for_assistant_enabled,d.id,d.revision,d.status,d.products_subtotal_amount_cents,d.labor_subtotal_amount_cents,d.total_amount_cents,l.kind,l.quantity_source FROM automotive_businesses b JOIN business_plan_assignments a ON a.business_id=b.id JOIN business_assistant_integration_settings s ON s.business_id=b.id JOIN quote_drafts d ON d.business_id=b.id JOIN quote_draft_lines l ON l.business_id=d.business_id AND l.quote_draft_id=d.id WHERE b.id=$1 ORDER BY l.kind", [transferBusinessId]);
+    assert.deepEqual(transferred.rows, [
+      { plan: "INTERMEDIATE", inventory_for_assistant_enabled: true, product_pricing_for_assistant_enabled: false, labor_pricing_for_assistant_enabled: true, id: `${transferBusinessId}-draft`, revision: 3, status: "PENDING_APPROVAL", products_subtotal_amount_cents: "4800", labor_subtotal_amount_cents: "9000", total_amount_cents: "13800", kind: "LABOR", quantity_source: "WORKSHOP_SYSTEM" },
+      { plan: "INTERMEDIATE", inventory_for_assistant_enabled: true, product_pricing_for_assistant_enabled: false, labor_pricing_for_assistant_enabled: true, id: `${transferBusinessId}-draft`, revision: 3, status: "PENDING_APPROVAL", products_subtotal_amount_cents: "4800", labor_subtotal_amount_cents: "9000", total_amount_cents: "13800", kind: "PRODUCT", quantity_source: "OPERATOR_CONFIRMED" },
+    ]);
+    await db.query("DELETE FROM quote_draft_lines WHERE business_id=$1",[transferBusinessId]);
+    await db.query("DELETE FROM quote_drafts WHERE business_id=$1",[transferBusinessId]);
+    await db.query("DELETE FROM business_assistant_integration_settings WHERE business_id=$1",[transferBusinessId]);
+    await db.query("DELETE FROM business_plan_assignments WHERE business_id=$1",[transferBusinessId]);
+    await db.query("DELETE FROM quote_requests WHERE business_id=$1",[transferBusinessId]);
+    await db.query("DELETE FROM opportunities WHERE business_id=$1",[transferBusinessId]);
+    await db.query("DELETE FROM conversations WHERE business_id=$1",[transferBusinessId]);
     await db.query("DELETE FROM automotive_businesses WHERE id=$1",[transferBusinessId]);
     rmSync(directory,{recursive:true,force:true});
     const businesses = new PostgresAutomotiveBusinessRepository(db);
@@ -199,6 +224,8 @@ test("PostgreSQL migrations and repositories persist tenant data and serialize c
     await db.query("DELETE FROM automotive_businesses WHERE id=$1",[businessId]);
   } finally {
     await db.close();
+    try { await adminDatabase.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`); }
+    finally { await adminDatabase.close(); }
   }
 });
 

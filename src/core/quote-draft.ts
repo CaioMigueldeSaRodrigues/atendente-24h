@@ -15,6 +15,7 @@ export type QuoteDraftLine = {
   subtotal: Money;
   source: string;
   checkedAt: string;
+  quantitySource: "OPERATOR_CONFIRMED" | "WORKSHOP_SYSTEM";
 };
 
 export type QuoteDraft = {

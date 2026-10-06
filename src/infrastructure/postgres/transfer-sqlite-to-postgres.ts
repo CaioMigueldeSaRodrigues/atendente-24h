@@ -5,7 +5,8 @@ const TABLES = [
   "automotive_businesses", "customers", "vehicles", "conversations",
   "evolution_go_conversation_links", "messages", "opportunities", "quote_requests",
   "commercial_events", "assistant_health_events", "evolution_go_webhook_receipts",
-  "evolution_go_webhook_claims", "outbound_deliveries", "stock_checks",
+  "evolution_go_webhook_claims", "outbound_deliveries", "stock_checks", "business_plan_assignments",
+  "business_assistant_integration_settings", "quote_drafts", "quote_draft_lines",
 ] as const;
 
 export async function transferSqliteToPostgres(filename: string, target: PostgresDatabase): Promise<void> {
@@ -21,7 +22,7 @@ export async function transferSqliteToPostgres(filename: string, target: Postgre
       const rows = source.prepare(`SELECT * FROM ${table}`).all() as Record<string, unknown>[];
       await target.transaction(async (client) => {
         for (const row of rows) {
-          const values = names.map((name) => name === "active" && typeof row[name] === "number" ? row[name] === 1 : row[name]);
+          const values = names.map((name) => ["active", "inventory_for_assistant_enabled", "product_pricing_for_assistant_enabled", "labor_pricing_for_assistant_enabled"].includes(name) && typeof row[name] === "number" ? row[name] === 1 : row[name]);
           const slots = values.map((_, index) => `$${index + 1}`).join(",");
           const quotedColumns = names.map((name) => `"${name}"`).join(",");
           await client.query(

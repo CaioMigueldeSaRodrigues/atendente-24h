@@ -291,7 +291,8 @@ test("percorre dois turnos de cliente até a fila do operador sem duplicar o ped
     assert.equal((await commercialEventRepository.listByBusiness("business-a")).length, 3);
 
     const otherBusinessQueue = await request("/v1/businesses/business-b/quotes/pending");
-    assert.deepEqual(await otherBusinessQueue.json(), { items: [] });
+    assert.equal(otherBusinessQueue.status, 404);
+    assert.deepEqual(await otherBusinessQueue.json(), { error: "Not found" });
 
     const operatorPage = await request("/operator");
     assert.equal(operatorPage.status, 200);

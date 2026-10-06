@@ -4,7 +4,7 @@ import type { QuoteDraftRepository, QuoteRequestRepository, OpportunityRepositor
 import { QuoteDraftError } from "./build-quote-draft.js";
 import type { QuotePersistenceTransaction } from "./quote-persistence-transaction.js";
 
-export async function authorizeQuoteDraft(input: { businessId: string; quoteRequestId: string }, dependencies: {
+export async function authorizeQuoteDraft(input: { businessId: string; quoteRequestId: string; expectedDraftId: string; expectedRevision: number }, dependencies: {
   quoteDraftRepository: QuoteDraftRepository; quoteRequestRepository: QuoteRequestRepository; opportunityRepository: OpportunityRepository;
   commercialEventRepository?: CommercialEventRepository; now: () => string; generateId?: (prefix: string) => string;
   quoteTransaction: QuotePersistenceTransaction;
@@ -12,6 +12,7 @@ export async function authorizeQuoteDraft(input: { businessId: string; quoteRequ
   return dependencies.quoteTransaction.run(input.businessId, input.quoteRequestId, async () => {
     const draft = await dependencies.quoteDraftRepository.findLatestByQuoteRequest(input.businessId, input.quoteRequestId);
     if (!draft || draft.status !== QuoteDraftStatus.PENDING_APPROVAL) throw new QuoteDraftError("DRAFT_NOT_APPROVABLE", "Current quote draft is not pending approval");
+    if (draft.id !== input.expectedDraftId || draft.revision !== input.expectedRevision) throw new QuoteDraftError("QUOTE_DRAFT_STALE");
     await respondToQuote({ businessId: input.businessId, quoteRequestId: input.quoteRequestId, authorizedPrice: draft.total }, dependencies);
     const authorizedAt = dependencies.now();
     await dependencies.quoteDraftRepository.approve(input.businessId, draft.id, authorizedAt);

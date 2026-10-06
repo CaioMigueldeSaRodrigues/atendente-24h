@@ -32,6 +32,7 @@ import type { BusinessCapabilities, BusinessCapabilityPolicy, IntegrationProvide
 import { authorizeQuoteDraft } from "../../core/authorize-quote-draft.js";
 import { buildQuoteDraft, QuoteDraftError, type LaborDraftInput, type ProductDraftInput } from "../../core/build-quote-draft.js";
 import type { QuotePersistenceTransaction } from "../../core/quote-persistence-transaction.js";
+import type { BusinessOperatorAuthorizer } from "../../core/business-operator-authorizer.js";
 import { QuoteDraftStatus } from "../../core/quote-draft.js";
 
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -84,6 +85,7 @@ export type BasicPlanHttpServerDependencies = {
   productPriceReadPort?: ProductPriceReadPort;
   laborPriceReadPort?: LaborPriceReadPort;
   businessCapabilityPolicy?: BusinessCapabilityPolicy;
+  businessOperatorAuthorizer?: BusinessOperatorAuthorizer;
   integrationProviderAvailability?: IntegrationProviderAvailability;
   commercialEventRepository?: CommercialEventRepository;
   evolutionGoWebhookCredentials?: EvolutionGoWebhookCredential[];
@@ -273,7 +275,12 @@ async function publishPublishedQuoteAtomically(
     conversationId: conversation.id,
     channel: conversation.channel,
   }, dependencies);
-  return dependencies.evolutionGoWebhookTransaction.run(async () => {
+  const publish = async () => {
+    const currentQuote = await dependencies.quoteRequestRepository.findById(input.businessId, input.quoteRequestId);
+    if (!currentQuote) throw new Error("QuoteRequest not found");
+    const draft = await dependencies.quoteDraftRepository?.findLatestByQuoteRequest(input.businessId, input.quoteRequestId);
+    if (draft && (draft.status !== QuoteDraftStatus.APPROVED || currentQuote.authorizedPrice?.amountCents !== draft.total.amountCents || currentQuote.authorizedPrice.currency !== draft.total.currency)) throw new QuoteDraftError("DRAFT_NOT_APPROVABLE");
+    return dependencies.evolutionGoWebhookTransaction.run(async () => {
     const now = dependencies.now();
     const reservation = await dependencies.outboundDeliveryRepository.reserve({
       id: dependencies.generateId("outbound-delivery"),
@@ -311,7 +318,9 @@ async function publishPublishedQuoteAtomically(
     await dependencies.outboundDeliveryRepository.attachMessage(input.businessId, reservation.delivery.id, result.messageId, dependencies.now());
     await markIntegratedDraftPublished(input.businessId, input.quoteRequestId, dependencies);
     return { result, outboundDeliveryId: reservation.delivery.id };
-  });
+    });
+  };
+  return dependencies.quoteTransaction ? dependencies.quoteTransaction.run(input.businessId, input.quoteRequestId, publish) : publish();
 }
 
 async function markIntegratedDraftPublished(businessId: string, quoteRequestId: string, dependencies: BasicPlanHttpServerDependencies): Promise<void> {
@@ -364,6 +373,7 @@ async function handleRequest(
   if (request.method === "GET" && capabilityMatch) {
     const businessId = decodePathPart(capabilityMatch[1]);
     if (businessId === null) { sendError(response, 400, "Invalid path"); return; }
+    if (!(await isOperatorAuthorized(businessId, dependencies))) { sendError(response, 404, "Not found"); return; }
     const capabilities = await getBusinessCapabilities(businessId, dependencies);
     sendJson(response, 200, capabilities);
     return;
@@ -374,11 +384,15 @@ async function handleRequest(
     const businessId = decodePathPart(draftAuthorizeMatch[1]);
     const quoteRequestId = decodePathPart(draftAuthorizeMatch[2]);
     if (businessId === null || quoteRequestId === null) { sendError(response, 400, "Invalid path"); return; }
+    if (!(await isOperatorAuthorized(businessId, dependencies))) { sendError(response, 404, "Not found"); return; }
     const capabilities = await getBusinessCapabilities(businessId, dependencies);
     const gateError = integratedQuoteGateError(capabilities);
     if (gateError) { sendError(response, gateError.status, gateError.message); return; }
     if (!dependencies.quoteDraftRepository || !dependencies.quoteTransaction) { sendError(response, 503, "Quote persistence is not configured"); return; }
-    const draft = await authorizeQuoteDraft({ businessId, quoteRequestId }, { quoteDraftRepository: dependencies.quoteDraftRepository, quoteTransaction: dependencies.quoteTransaction, quoteRequestRepository: dependencies.quoteRequestRepository, opportunityRepository: dependencies.opportunityRepository, ...(dependencies.commercialEventRepository ? { commercialEventRepository: dependencies.commercialEventRepository } : {}), now: dependencies.now, generateId: dependencies.generateId });
+    if (request.headers["content-length"] === "0") { sendError(response, 400, "INVALID_DRAFT_REFERENCE"); return; }
+    const body = await readJsonBody(request, response); if (body === undefined) return;
+    const expected = parseExpectedDraft(body); if (expected === null) { sendError(response, 400, "INVALID_DRAFT_REFERENCE"); return; }
+    const draft = await authorizeQuoteDraft({ businessId, quoteRequestId, expectedDraftId: expected.draftId, expectedRevision: expected.revision }, { quoteDraftRepository: dependencies.quoteDraftRepository, quoteTransaction: dependencies.quoteTransaction, quoteRequestRepository: dependencies.quoteRequestRepository, opportunityRepository: dependencies.opportunityRepository, ...(dependencies.commercialEventRepository ? { commercialEventRepository: dependencies.commercialEventRepository } : {}), now: dependencies.now, generateId: dependencies.generateId });
     sendJson(response, 200, draft);
     return;
   }
@@ -388,6 +402,7 @@ async function handleRequest(
     const businessId = decodePathPart(draftMatch[1]);
     const quoteRequestId = decodePathPart(draftMatch[2]);
     if (businessId === null || quoteRequestId === null) { sendError(response, 400, "Invalid path"); return; }
+    if (!(await isOperatorAuthorized(businessId, dependencies))) { sendError(response, 404, "Not found"); return; }
     const capabilities = await getBusinessCapabilities(businessId, dependencies);
     const gateError = integratedQuoteGateError(capabilities);
     if (gateError) { sendError(response, gateError.status, gateError.message); return; }
@@ -400,7 +415,8 @@ async function handleRequest(
     }
     const body = await readJsonBody(request, response);
     if (body === undefined) return;
-    const parsed = parseDraftBody(body);
+    const parsedValue = parseDraftBody(body);
+    const parsed = parsedValue === null ? null : { products: parsedValue.products.map((product) => ({ ...product, quantitySource: "OPERATOR_CONFIRMED" as const })), labor: parsedValue.labor.map((labor) => ({ ...labor, quantitySource: "OPERATOR_CONFIRMED" as const })) };
     if (parsed === null) { sendError(response, 400, "Invalid quote draft lines"); return; }
     if (!dependencies.inventoryReadPort || !dependencies.stockCheckRepository || !dependencies.productPriceReadPort || !dependencies.laborPriceReadPort) { sendError(response, 503, "Integrated quote providers are not configured"); return; }
     const draft = await buildQuoteDraft({ businessId, quoteRequestId, ...parsed }, { quoteRequestRepository: dependencies.quoteRequestRepository, stockCheckRepository: dependencies.stockCheckRepository, inventoryReadPort: dependencies.inventoryReadPort, productPriceReadPort: dependencies.productPriceReadPort, laborPriceReadPort: dependencies.laborPriceReadPort, quoteDraftRepository: dependencies.quoteDraftRepository, quoteTransaction: dependencies.quoteTransaction, now: dependencies.now, generateId: dependencies.generateId });
@@ -609,6 +625,7 @@ async function handleRequest(
       sendError(response, 400, "Invalid path");
       return;
     }
+    if (!(await isOperatorAuthorized(businessId, dependencies))) { sendError(response, 404, "Not found"); return; }
     const quotes = await dependencies.quoteRequestRepository.listByConversation(businessId, conversationId);
     sendJson(response, 200, { quotes });
     return;
@@ -621,14 +638,15 @@ async function handleRequest(
       sendError(response, 400, "Invalid businessId");
       return;
     }
+    if (!(await isOperatorAuthorized(businessId, dependencies))) { sendError(response, 404, "Not found"); return; }
     const pendingStatuses = new Set([
       QuoteRequestStatus.REQUESTED,
       QuoteRequestStatus.WAITING_INFORMATION,
       QuoteRequestStatus.WAITING_BUSINESS,
+      QuoteRequestStatus.RESPONDED,
     ]);
-    const quotes = (await dependencies.quoteRequestRepository.listByBusiness(businessId))
-      .filter((quote) => pendingStatuses.has(quote.status));
-    const items = await Promise.all(quotes.map(async (quote) => {
+    const quotes = (await dependencies.quoteRequestRepository.listByBusiness(businessId)).filter((quote) => pendingStatuses.has(quote.status));
+    const items = (await Promise.all(quotes.map(async (quote) => {
       const [customer, vehicle, conversation] = await Promise.all([
         quote.customerId === undefined
           ? Promise.resolve(null)
@@ -638,8 +656,13 @@ async function handleRequest(
           : dependencies.vehicleRepository.findById(businessId, quote.vehicleId),
         dependencies.conversationRepository.findById(businessId, quote.conversationId),
       ]);
-      return { quote, customer, vehicle, conversation };
-    }));
+      const draft = await dependencies.quoteDraftRepository?.findLatestByQuoteRequest(businessId, quote.id);
+      const delivery = conversation === null ? null : await dependencies.outboundDeliveryRepository.findByQuoteRequestAndChannel(businessId, quote.id, conversation.channel);
+      const actionable = quote.status === QuoteRequestStatus.RESPONDED
+        ? (dependencies.quoteDraftRepository !== undefined && (draft === null || draft === undefined || [QuoteDraftStatus.PENDING_APPROVAL, QuoteDraftStatus.APPROVED].includes(draft.status) || (draft.status === QuoteDraftStatus.PUBLISHED && delivery !== null && delivery.status !== OutboundDeliveryStatus.DELIVERED)))
+        : true;
+      return actionable ? { quote, customer, vehicle, conversation } : null;
+    }))).filter((item): item is NonNullable<typeof item> => item !== null);
     sendJson(response, 200, { items });
     return;
   }
@@ -652,6 +675,7 @@ async function handleRequest(
       sendError(response, 400, "Invalid path");
       return;
     }
+    if (!(await isOperatorAuthorized(businessId, dependencies))) { sendError(response, 404, "Not found"); return; }
     if (!dependencies.stockCheckRepository) {
       sendError(response, 503, "Inventory read model is not configured");
       return;
@@ -665,10 +689,11 @@ async function handleRequest(
       sendJson(response, 200, result);
       return;
     }
-    if (!dependencies.inventoryReadPort) {
-      sendError(response, 503, "Inventory provider is not configured");
-      return;
-    }
+    const capabilities = await getBusinessCapabilities(businessId, dependencies);
+    const inventoryPort = !dependencies.businessCapabilityPolicy || !capabilities.capabilities.canUseInventoryInAssistant
+      ? { check: async () => ({ availability: InventoryAvailability.UNKNOWN, source: "provider-unavailable" }) }
+      : dependencies.inventoryReadPort;
+    if (!inventoryPort) { sendError(response, 503, "Inventory provider is not configured"); return; }
     const quote = await dependencies.quoteRequestRepository.findById(businessId, quoteRequestId);
     if (quote === null) {
       sendError(response, 404, "QuoteRequest not found");
@@ -694,7 +719,7 @@ async function handleRequest(
           ...(vehicle.version === undefined ? {} : { version: vehicle.version }),
         },
       }),
-    }, dependencies.inventoryReadPort, dependencies.stockCheckRepository, {
+    }, inventoryPort, dependencies.stockCheckRepository, {
       now: dependencies.now,
       generateId: () => dependencies.generateId("stock-check"),
     });
@@ -710,6 +735,7 @@ async function handleRequest(
       sendError(response, 400, "Invalid path");
       return;
     }
+    if (!(await isOperatorAuthorized(businessId, dependencies))) { sendError(response, 404, "Not found"); return; }
     if (quoteActionMatch[3] === "respond") {
       const body = await readJsonBody(request, response);
       if (body === undefined) return;
@@ -717,11 +743,13 @@ async function handleRequest(
         sendError(response, 400, "Invalid authorized price");
         return;
       }
-      const result = await respondToQuote({
-        businessId,
-        quoteRequestId,
-        authorizedPrice: { amountCents: body.amountCents, currency: "BRL" },
-      }, dependencies);
+      const amountCents = body.amountCents;
+      const operation = async () => {
+        const draft = await dependencies.quoteDraftRepository?.findLatestByQuoteRequest(businessId, quoteRequestId);
+        if (draft && [QuoteDraftStatus.PENDING_APPROVAL, QuoteDraftStatus.APPROVED, QuoteDraftStatus.PUBLISHED].includes(draft.status)) throw new QuoteDraftError("MANUAL_QUOTE_CONFLICT");
+        return respondToQuote({ businessId, quoteRequestId, authorizedPrice: { amountCents, currency: "BRL" } }, dependencies);
+      };
+      const result = dependencies.quoteTransaction ? await dependencies.quoteTransaction.run(businessId, quoteRequestId, operation) : await operation();
       sendJson(response, 200, result);
       return;
     }
@@ -962,7 +990,7 @@ async function readJsonBody(request: IncomingMessage, response: ServerResponse):
 
 function mapError(cause: unknown): { status: number; body: string } {
   if (cause instanceof QuoteDraftError) {
-    const status = cause.code === "QUOTE_NOT_FOUND" ? 404 : cause.code === "CAPABILITY_REQUIRED" ? 403 : cause.code === "PRICE_UNAVAILABLE" ? 503 : cause.code === "DRAFT_IMMUTABLE" || cause.code === "DRAFT_NOT_APPROVABLE" || cause.code === "QUOTE_DRAFT_CONFLICT" ? 409 : 400;
+    const status = cause.code === "QUOTE_NOT_FOUND" ? 404 : cause.code === "CAPABILITY_REQUIRED" ? 403 : cause.code === "PRICE_UNAVAILABLE" ? 503 : ["DRAFT_IMMUTABLE", "DRAFT_NOT_APPROVABLE", "QUOTE_DRAFT_CONFLICT", "QUOTE_DRAFT_STALE", "MANUAL_QUOTE_CONFLICT"].includes(cause.code) ? 409 : 400;
     return { status, body: cause.code };
   }
   const message = cause instanceof Error ? cause.message : "";
@@ -976,6 +1004,15 @@ function mapError(cause: unknown): { status: number; body: string } {
     return { status: 400, body: message };
   }
   return { status: 500, body: "Internal server error" };
+}
+
+async function isOperatorAuthorized(businessId: string, dependencies: BasicPlanHttpServerDependencies): Promise<boolean> {
+  return dependencies.businessOperatorAuthorizer?.isAuthorized({ businessId }) ?? businessId === dependencies.operator.businessId;
+}
+
+function parseExpectedDraft(value: unknown): { draftId: string; revision: number } | null {
+  if (!isRecord(value) || typeof value.draftId !== "string" || value.draftId.trim() === "" || typeof value.revision !== "number" || !Number.isSafeInteger(value.revision) || value.revision <= 0) return null;
+  return { draftId: value.draftId, revision: value.revision };
 }
 
 async function getBusinessCapabilities(businessId: string, dependencies: BasicPlanHttpServerDependencies): Promise<BusinessCapabilities> {

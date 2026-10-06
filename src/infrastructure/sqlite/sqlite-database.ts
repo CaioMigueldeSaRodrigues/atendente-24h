@@ -400,9 +400,9 @@ const INITIAL_SCHEMA = `
     id TEXT NOT NULL, business_id TEXT NOT NULL, conversation_id TEXT NOT NULL, quote_request_id TEXT NOT NULL,
     vehicle_id TEXT, revision INTEGER NOT NULL CHECK (revision > 0),
     status TEXT NOT NULL CHECK (status IN ('DRAFT','PENDING_APPROVAL','APPROVED','REJECTED','SUPERSEDED','PUBLISHED')),
-    products_subtotal_amount_cents INTEGER NOT NULL CHECK (products_subtotal_amount_cents >= 0), products_subtotal_currency TEXT NOT NULL CHECK (products_subtotal_currency = 'BRL'),
-    labor_subtotal_amount_cents INTEGER NOT NULL CHECK (labor_subtotal_amount_cents >= 0), labor_subtotal_currency TEXT NOT NULL CHECK (labor_subtotal_currency = 'BRL'),
-    total_amount_cents INTEGER NOT NULL CHECK (total_amount_cents >= 0), total_currency TEXT NOT NULL CHECK (total_currency = 'BRL'),
+    products_subtotal_amount_cents INTEGER NOT NULL CHECK (typeof(products_subtotal_amount_cents) = 'integer' AND products_subtotal_amount_cents BETWEEN 0 AND 9007199254740991), products_subtotal_currency TEXT NOT NULL CHECK (products_subtotal_currency = 'BRL'),
+    labor_subtotal_amount_cents INTEGER NOT NULL CHECK (typeof(labor_subtotal_amount_cents) = 'integer' AND labor_subtotal_amount_cents BETWEEN 0 AND 9007199254740991), labor_subtotal_currency TEXT NOT NULL CHECK (labor_subtotal_currency = 'BRL'),
+    total_amount_cents INTEGER NOT NULL CHECK (typeof(total_amount_cents) = 'integer' AND total_amount_cents BETWEEN 0 AND 9007199254740991), total_currency TEXT NOT NULL CHECK (total_currency = 'BRL'),
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL, authorized_at TEXT,
     PRIMARY KEY (business_id, id), UNIQUE (business_id, quote_request_id, revision), FOREIGN KEY (business_id) REFERENCES automotive_businesses(id),
     FOREIGN KEY (business_id, conversation_id) REFERENCES conversations(business_id, id),
@@ -413,10 +413,10 @@ const INITIAL_SCHEMA = `
   CREATE TABLE IF NOT EXISTS quote_draft_lines (
     id TEXT NOT NULL, business_id TEXT NOT NULL, quote_draft_id TEXT NOT NULL,
     kind TEXT NOT NULL CHECK (kind IN ('PRODUCT','LABOR')), description TEXT NOT NULL, external_reference TEXT,
-    quantity INTEGER NOT NULL CHECK (quantity > 0), unit TEXT NOT NULL,
-    unit_price_captured_amount_cents INTEGER NOT NULL CHECK (unit_price_captured_amount_cents >= 0), unit_price_captured_currency TEXT NOT NULL CHECK (unit_price_captured_currency = 'BRL'),
-    subtotal_amount_cents INTEGER NOT NULL CHECK (subtotal_amount_cents >= 0), subtotal_currency TEXT NOT NULL CHECK (subtotal_currency = 'BRL'),
-    source TEXT NOT NULL, checked_at TEXT NOT NULL, PRIMARY KEY (business_id, id),
+    quantity INTEGER NOT NULL CHECK (typeof(quantity) = 'integer' AND quantity > 0 AND quantity <= 9007199254740991), unit TEXT NOT NULL,
+    unit_price_captured_amount_cents INTEGER NOT NULL CHECK (typeof(unit_price_captured_amount_cents) = 'integer' AND unit_price_captured_amount_cents >= 0 AND unit_price_captured_amount_cents <= 9007199254740991), unit_price_captured_currency TEXT NOT NULL CHECK (unit_price_captured_currency = 'BRL'),
+    subtotal_amount_cents INTEGER NOT NULL CHECK (typeof(subtotal_amount_cents) = 'integer' AND subtotal_amount_cents >= 0 AND subtotal_amount_cents <= 9007199254740991), subtotal_currency TEXT NOT NULL CHECK (subtotal_currency = 'BRL'),
+    source TEXT NOT NULL, checked_at TEXT NOT NULL, quantity_source TEXT NOT NULL CHECK (quantity_source IN ('OPERATOR_CONFIRMED','WORKSHOP_SYSTEM')), PRIMARY KEY (business_id, id),
     FOREIGN KEY (business_id, quote_draft_id) REFERENCES quote_drafts(business_id, id)
   );
   CREATE INDEX IF NOT EXISTS quote_drafts_business_quote_revision_idx ON quote_drafts (business_id, quote_request_id, revision DESC);
@@ -443,6 +443,12 @@ export function createSqliteDatabase({ filename }: SqliteDatabaseOptions) {
 export function initializeSqliteSchema(database: DatabaseSync): void {
   database.exec(INITIAL_SCHEMA);
   migrateEvolutionGoWebhookReceipts(database);
+  migrateQuoteDraftQuantitySource(database);
+}
+
+function migrateQuoteDraftQuantitySource(database: DatabaseSync): void {
+  const columns = new Set((database.prepare("PRAGMA table_info(quote_draft_lines)").all() as Array<{ name: string }>).map(({ name }) => name));
+  if (!columns.has("quantity_source")) database.exec("ALTER TABLE quote_draft_lines ADD COLUMN quantity_source TEXT NOT NULL DEFAULT 'OPERATOR_CONFIRMED' CHECK (quantity_source IN ('OPERATOR_CONFIRMED','WORKSHOP_SYSTEM'))");
 }
 
 function migrateEvolutionGoWebhookReceipts(database: DatabaseSync): void {

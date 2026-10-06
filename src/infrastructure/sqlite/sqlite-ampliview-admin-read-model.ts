@@ -1,5 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
-import type { AdminConversationDetail, AdminConversationList, AdminConversationListFilters, AdminConversationListItem, AdminCustomer, AdminDelivery, AdminLastMessage, AdminOpportunity, AdminOverview, AdminQueryService, AdminQuoteRequest, AdminScope, AdminVehicle, AdminDemand, AdminDemandFilters, AdminDemandQuoteRow, AdminInventory, AdminInventoryFilters } from "../../core/admin-read-model.js";
+import type { AdminConversationDetail, AdminConversationList, AdminConversationListFilters, AdminConversationListItem, AdminCustomer, AdminOverview, AdminQueryService, AdminScope, AdminVehicle, AdminDemand, AdminDemandFilters, AdminDemandQuoteRow, AdminInventory, AdminInventoryFilters } from "../../core/admin-read-model.js";
 import { buildAdminInventory } from "../../core/admin-inventory.js";
 import { buildAdminDemand } from "../../core/admin-demand.js";
 import { parseNextAction, toAverageMoney, toMoney } from "../../core/admin-read-model.js";

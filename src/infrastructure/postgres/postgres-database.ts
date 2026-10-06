@@ -37,9 +37,12 @@ export class PostgresDatabase {
   private readonly transactionContext = new AsyncLocalStorage<PoolClient>();
   private readonly pool: Pool;
 
-  constructor(config: PostgresEnvironment, options: { allowInsecureLocal?: boolean } = {}) {
+  constructor(config: PostgresEnvironment, options: { allowInsecureLocal?: boolean; searchPath?: string } = {}) {
     if (options.allowInsecureLocal && !["localhost", "127.0.0.1", "::1"].includes(config.host)) {
       throw new Error("Insecure PostgreSQL is restricted to loopback hosts");
+    }
+    if (options.searchPath !== undefined && !/^[a-z_][a-z0-9_]*$/.test(options.searchPath)) {
+      throw new Error("PostgreSQL searchPath must be a safe identifier");
     }
     const poolConfig: PoolConfig = {
       ...config,
@@ -47,6 +50,7 @@ export class PostgresDatabase {
       connectionTimeoutMillis: 5_000,
       idleTimeoutMillis: 30_000,
       ...(options.allowInsecureLocal ? {} : { ssl: { rejectUnauthorized: true } }),
+      ...(options.searchPath === undefined ? {} : { options: `-c search_path=${options.searchPath}` }),
       application_name: "atendente-24h",
     };
     this.pool = new Pool(poolConfig);

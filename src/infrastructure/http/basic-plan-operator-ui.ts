@@ -449,9 +449,9 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
 
     function makeDraftComposition(draft) {
       const composition = document.createElement("div");
-      const product = draft.lines && draft.lines.find((line) => line.kind === "PRODUCT");
-      const labor = draft.lines && draft.lines.find((line) => line.kind === "LABOR");
-      if (product) {
+      const products = (draft.lines || []).filter((line) => line.kind === "PRODUCT");
+      const laborLines = (draft.lines || []).filter((line) => line.kind === "LABOR");
+      for (const product of products) {
         const productBlock = document.createElement("section");
         productBlock.className = "integrated-section";
         const heading = document.createElement("h4");
@@ -465,7 +465,7 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
         makeCompositionValue(productBlock, "Subtotal", formatMoneyCents(product.subtotal.amountCents));
         composition.append(productBlock);
       }
-      if (labor) {
+      for (const labor of laborLines) {
         const laborBlock = document.createElement("section");
         laborBlock.className = "integrated-section";
         const heading = document.createElement("h4");
@@ -615,18 +615,23 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
       });
       authorize.addEventListener("click", async () => {
         authorize.disabled = true;
-        const response = await fetch("/v1/businesses/" + encodeURIComponent(operator.businessId) + "/quotes/" + encodeURIComponent(item.quote.id) + "/draft/authorize", { method: "POST" });
-        if (response.ok) showDraft(await response.json());
-        else { message.textContent = "Não foi possível autorizar o orçamento."; message.dataset.kind = "error"; authorize.disabled = false; }
+        try {
+          const response = await fetch("/v1/businesses/" + encodeURIComponent(operator.businessId) + "/quotes/" + encodeURIComponent(item.quote.id) + "/draft/authorize", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ draftId: draft.id, revision: draft.revision }) });
+          if (!response.ok) throw new Error("authorize failed");
+          showDraft(await response.json());
+        } catch { message.textContent = "Não foi possível autorizar o orçamento. Atualize o atendimento."; message.dataset.kind = "error"; await loadQueue().catch(() => undefined); }
+        finally { authorize.disabled = false; }
       });
       publish.addEventListener("click", async () => {
         publish.disabled = true;
-        const response = await fetch("/v1/businesses/" + encodeURIComponent(operator.businessId) + "/quotes/" + encodeURIComponent(item.quote.id) + "/publish", { method: "POST" });
-        if (response.ok) {
+        try {
+          const response = await fetch("/v1/businesses/" + encodeURIComponent(operator.businessId) + "/quotes/" + encodeURIComponent(item.quote.id) + "/publish", { method: "POST" });
+          if (!response.ok) throw new Error("publish failed");
           message.textContent = "Orçamento enviado ao cliente.";
           message.dataset.kind = "success";
           await loadQueue();
-        } else { message.textContent = "Não foi possível enviar o orçamento."; message.dataset.kind = "error"; publish.disabled = false; }
+        } catch { message.textContent = "Não foi possível enviar o orçamento. Atualize o atendimento."; message.dataset.kind = "error"; await loadQueue().catch(() => undefined); }
+        finally { publish.disabled = false; }
       });
       return panel;
     }
@@ -739,67 +744,30 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
       }
     }
 
-    async function authorizeAndPublish(item, input, button, message) {
+    async function authorizeManual(item, input, button, message) {
       const amountCents = priceToCents(input.value);
-      if (amountCents === null) {
-        message.textContent = "Informe um valor válido.";
-        message.dataset.kind = "error";
-        input.focus();
-        return;
-      }
+      if (amountCents === null) { message.textContent = "Informe um valor válido."; message.dataset.kind = "error"; input.focus(); return; }
       if (sending) return;
-      sending = true;
-      button.disabled = true;
-      button.textContent = "Processando...";
-      message.textContent = "Processando...";
-      message.dataset.kind = "info";
-      let priceAuthorized = false;
-      let keepActionDisabled = false;
-      let refreshAfterSuccess = false;
-      const base = "/v1/businesses/" + encodeURIComponent(operator.businessId) +
-        "/quotes/" + encodeURIComponent(item.quote.id);
+      sending = true; button.disabled = true; button.textContent = "Processando...";
       try {
-        const respond = await fetch(base + "/respond", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ amountCents, currency: "BRL" }),
-        });
-        if (!respond.ok) {
-          message.textContent = "Não foi possível autorizar o preço. Verifique os dados e tente novamente.";
-          message.dataset.kind = "error";
-          return;
-        }
-        priceAuthorized = true;
-        const publish = await fetch(base + "/publish", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: "{}",
-        });
-        const publishBody = await publish.json().catch(() => null);
-        const deliveryStatus = publishBody && typeof publishBody === "object" &&
-          "delivery" in publishBody && publishBody.delivery && typeof publishBody.delivery === "object" &&
-          "status" in publishBody.delivery && typeof publishBody.delivery.status === "string"
-          ? publishBody.delivery.status
-          : null;
-        if (!publish.ok || (deliveryStatus !== "DELIVERED" && deliveryStatus !== "ALREADY_DELIVERED")) {
-          throw new Error("publish delivery failed");
-        }
-        setFeedback("Orçamento enviado com sucesso.", "success");
-        refreshAfterSuccess = true;
-      } catch {
-        const error = priceAuthorized
-          ? "Preço autorizado, mas o envio não foi concluído. Não autorize novamente. Verifique o atendimento."
-          : "Não foi possível concluir a operação. Verifique sua conexão e tente novamente.";
-        keepActionDisabled = priceAuthorized;
-        message.textContent = error;
-        message.dataset.kind = "error";
-        setFeedback(error, "error");
-      } finally {
-        sending = false;
-        button.disabled = keepActionDisabled;
-        button.textContent = keepActionDisabled ? "Preço autorizado" : "Autorizar e enviar";
-      }
-      if (refreshAfterSuccess) await loadQueue();
+        const response = await fetch("/v1/businesses/" + encodeURIComponent(operator.businessId) + "/quotes/" + encodeURIComponent(item.quote.id) + "/respond", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ amountCents, currency: "BRL" }) });
+        if (!response.ok) throw new Error("authorize failed");
+        message.textContent = "Valor autorizado. O envio ao cliente é uma etapa separada."; message.dataset.kind = "success";
+        await loadQueue();
+      } catch { message.textContent = "Não foi possível autorizar o valor. Verifique a conexão e tente novamente."; message.dataset.kind = "error"; await loadQueue().catch(() => undefined); }
+      finally { sending = false; button.disabled = false; button.textContent = "Autorizar"; }
+    }
+
+    async function publishManual(item, button, message) {
+      if (sending) return;
+      sending = true; button.disabled = true; button.textContent = "Processando...";
+      try {
+        const response = await fetch("/v1/businesses/" + encodeURIComponent(operator.businessId) + "/quotes/" + encodeURIComponent(item.quote.id) + "/publish", { method: "POST" });
+        if (!response.ok) throw new Error("publish failed");
+        message.textContent = "Orçamento enviado ao cliente."; message.dataset.kind = "success";
+        await loadQueue();
+      } catch { message.textContent = "Não foi possível enviar o orçamento. Atualize o atendimento."; message.dataset.kind = "error"; await loadQueue().catch(() => undefined); }
+      finally { sending = false; button.disabled = false; button.textContent = "Enviar ao cliente"; }
     }
 
     function renderDetail(item, moveFocus) {
@@ -863,7 +831,7 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
 
       content.append(toolbar, grid, historyHeading, historyArea);
       void loadInventory(item, inventory);
-      if (integratedCapabilities.canBuildIntegratedQuote && item.quote.status === "WAITING_BUSINESS") {
+      if (integratedCapabilities.canBuildIntegratedQuote && (item.quote.status === "WAITING_BUSINESS" || item.quote.status === "RESPONDED")) {
         const manualToggle = document.createElement("button");
         manualToggle.type = "button";
         manualToggle.className = "secondary-action";
@@ -888,11 +856,11 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
         if (moveFocus) title.focus({ preventScroll: true });
         return;
       }
-      if (item.quote.status === "WAITING_BUSINESS") {
+      if (item.quote.status === "WAITING_BUSINESS" || item.quote.status === "RESPONDED") {
         const action = document.createElement("form");
         action.className = "action-panel";
         const actionTitle = document.createElement("h3");
-        actionTitle.textContent = "Autorizar valor";
+        actionTitle.textContent = item.quote.status === "RESPONDED" ? "Enviar orçamento" : "Autorizar valor";
         const inputId = "authorized-price";
         const label = document.createElement("label");
         label.className = "price-label";
@@ -913,14 +881,15 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
         const submit = document.createElement("button");
         submit.type = "submit";
         submit.className = "send-button";
-        submit.textContent = "Autorizar e enviar";
+        submit.textContent = item.quote.status === "RESPONDED" ? "Enviar ao cliente" : "Autorizar";
         const actionMessage = document.createElement("p");
         actionMessage.className = "action-message";
         actionMessage.setAttribute("aria-live", "polite");
         action.append(actionTitle, label, control, submit, actionMessage);
         action.addEventListener("submit", (event) => {
           event.preventDefault();
-          void authorizeAndPublish(item, input, submit, actionMessage);
+          if (item.quote.status === "RESPONDED") void publishManual(item, submit, actionMessage);
+          else void authorizeManual(item, input, submit, actionMessage);
         });
         content.append(action);
       } else if (item.quote.status === "WAITING_INFORMATION" || item.quote.status === "REQUESTED") {

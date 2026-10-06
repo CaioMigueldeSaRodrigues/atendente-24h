@@ -150,7 +150,6 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse)
     return;
   }
   if (request.method === "GET" && pathname === "/admin") {
-    const url = new URL(request.url ?? "/", `http://${HOST}:${PORT}`);
     sendHtml(response, renderAmpliviewAdminUi({ businessId: BUSINESS_ID, marketMapping: {
       regions: MANAUS_COMMERCIAL_REGIONS,
       clusters: MANAUS_COMMERCIAL_CLUSTERS,
@@ -172,8 +171,13 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse)
   if (request.method === "POST" && draftAuthorizeMatch) {
     const quoteRequestId = decodePathPart(draftAuthorizeMatch[1]);
     if (quoteRequestId === null) { sendJson(response, 400, { error: "Invalid path" }); return; }
+    if (request.headers["content-length"] === "0") { sendJson(response, 400, { error: "INVALID_DRAFT_REFERENCE" }); return; }
+    const body = await readJsonBody(request, response);
+    if (body === undefined) return;
+    const expected = parseExpectedDraftReference(body);
+    if (expected === null) { sendJson(response, 400, { error: "INVALID_DRAFT_REFERENCE" }); return; }
     try {
-      const draft = await authorizeQuoteDraft({ businessId: OPERATOR_BUSINESS_ID, quoteRequestId }, {
+      const draft = await authorizeQuoteDraft({ businessId: OPERATOR_BUSINESS_ID, quoteRequestId, expectedDraftId: expected.draftId, expectedRevision: expected.revision }, {
         quoteDraftRepository: previewQuoteDraftRepository,
         quoteRequestRepository: previewQuoteRequestRepository,
         opportunityRepository: previewOpportunityRepository,
@@ -204,7 +208,8 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse)
     }
     const body = await readJsonBody(request, response);
     if (body === undefined) return;
-    const parsed = parseIntegratedDraftBody(body);
+    const parsedValue = parseIntegratedDraftBody(body);
+    const parsed = parsedValue === null ? null : { products: parsedValue.products.map((product) => ({ ...product, quantitySource: "OPERATOR_CONFIRMED" as const })), labor: parsedValue.labor.map((labor) => ({ ...labor, quantitySource: "OPERATOR_CONFIRMED" as const })) };
     if (parsed === null) { sendJson(response, 400, { error: "Invalid quote draft lines" }); return; }
     try {
       const draft = await buildQuoteDraft({ businessId: OPERATOR_BUSINESS_ID, quoteRequestId, ...parsed }, {
@@ -373,9 +378,14 @@ function parseIntegratedDraftBody(value: unknown): { products: ProductDraftInput
   return { products, labor };
 }
 
+function parseExpectedDraftReference(value: unknown): { draftId: string; revision: number } | null {
+  if (!isRecord(value) || typeof value.draftId !== "string" || value.draftId.trim() === "" || typeof value.revision !== "number" || !Number.isSafeInteger(value.revision) || value.revision <= 0) return null;
+  return { draftId: value.draftId, revision: value.revision };
+}
+
 function sendIntegratedError(response: ServerResponse, error: unknown): void {
   if (error instanceof QuoteDraftError) {
-    const status = error.code === "QUOTE_NOT_FOUND" ? 404 : error.code === "PRICE_UNAVAILABLE" ? 503 : error.code === "DRAFT_IMMUTABLE" || error.code === "DRAFT_NOT_APPROVABLE" || error.code === "QUOTE_DRAFT_CONFLICT" ? 409 : 400;
+    const status = error.code === "QUOTE_NOT_FOUND" ? 404 : error.code === "PRICE_UNAVAILABLE" ? 503 : error.code === "DRAFT_IMMUTABLE" || error.code === "DRAFT_NOT_APPROVABLE" || error.code === "QUOTE_DRAFT_CONFLICT" || error.code === "QUOTE_DRAFT_STALE" ? 409 : 400;
     sendJson(response, status, { error: error.code });
     return;
   }

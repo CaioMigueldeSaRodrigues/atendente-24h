@@ -37,10 +37,10 @@ export class SqliteQuoteDraftRepository implements QuoteDraftRepository {
         entity.total.amountCents, entity.total.currency, entity.createdAt, entity.updatedAt, entity.authorizedAt ?? null,
       );
       for (const line of entity.lines) {
-        this.database.prepare(`INSERT INTO quote_draft_lines(id,business_id,quote_draft_id,kind,description,external_reference,quantity,unit,unit_price_captured_amount_cents,unit_price_captured_currency,subtotal_amount_cents,subtotal_currency,source,checked_at)
-          VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+        this.database.prepare(`INSERT INTO quote_draft_lines(id,business_id,quote_draft_id,kind,description,external_reference,quantity,unit,unit_price_captured_amount_cents,unit_price_captured_currency,subtotal_amount_cents,subtotal_currency,source,checked_at,quantity_source)
+          VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
           line.id, line.businessId, line.quoteDraftId, line.kind, line.description, line.externalReference ?? null, line.quantity, line.unit,
-          line.unitPriceCaptured.amountCents, line.unitPriceCaptured.currency, line.subtotal.amountCents, line.subtotal.currency, line.source, line.checkedAt,
+          line.unitPriceCaptured.amountCents, line.unitPriceCaptured.currency, line.subtotal.amountCents, line.subtotal.currency, line.source, line.checkedAt, line.quantitySource,
         );
       }
     });
@@ -84,5 +84,5 @@ function mapDraft(row: Row, lineRows: Row[]): QuoteDraft {
 }
 function mapLine(row: Row): QuoteDraftLine {
   const externalReference = optionalText(row, "external_reference");
-  return { id: text(row, "id"), businessId: text(row, "business_id"), quoteDraftId: text(row, "quote_draft_id"), kind: text(row, "kind") as QuoteDraftLineKind, description: text(row, "description"), ...(externalReference === undefined ? {} : { externalReference }), quantity: numberValue(row, "quantity"), unit: text(row, "unit"), unitPriceCaptured: { amountCents: numberValue(row, "unit_price_captured_amount_cents"), currency: "BRL" }, subtotal: { amountCents: numberValue(row, "subtotal_amount_cents"), currency: "BRL" }, source: text(row, "source"), checkedAt: text(row, "checked_at") };
+  return { id: text(row, "id"), businessId: text(row, "business_id"), quoteDraftId: text(row, "quote_draft_id"), kind: text(row, "kind") as QuoteDraftLineKind, description: text(row, "description"), ...(externalReference === undefined ? {} : { externalReference }), quantity: numberValue(row, "quantity"), unit: text(row, "unit"), unitPriceCaptured: { amountCents: numberValue(row, "unit_price_captured_amount_cents"), currency: "BRL" }, subtotal: { amountCents: numberValue(row, "subtotal_amount_cents"), currency: "BRL" }, source: text(row, "source"), checkedAt: text(row, "checked_at"), quantitySource: text(row, "quantity_source") as "OPERATOR_CONFIRMED" | "WORKSHOP_SYSTEM" };
 }

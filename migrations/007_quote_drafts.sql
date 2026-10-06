@@ -16,11 +16,11 @@ CREATE TABLE IF NOT EXISTS quote_drafts (
   vehicle_id TEXT,
   revision INTEGER NOT NULL CHECK (revision > 0),
   status TEXT NOT NULL CHECK (status IN ('DRAFT','PENDING_APPROVAL','APPROVED','REJECTED','SUPERSEDED','PUBLISHED')),
-  products_subtotal_amount_cents BIGINT NOT NULL CHECK (products_subtotal_amount_cents >= 0),
+  products_subtotal_amount_cents BIGINT NOT NULL CHECK (products_subtotal_amount_cents BETWEEN 0 AND 9007199254740991),
   products_subtotal_currency TEXT NOT NULL CHECK (products_subtotal_currency = 'BRL'),
-  labor_subtotal_amount_cents BIGINT NOT NULL CHECK (labor_subtotal_amount_cents >= 0),
+  labor_subtotal_amount_cents BIGINT NOT NULL CHECK (labor_subtotal_amount_cents BETWEEN 0 AND 9007199254740991),
   labor_subtotal_currency TEXT NOT NULL CHECK (labor_subtotal_currency = 'BRL'),
-  total_amount_cents BIGINT NOT NULL CHECK (total_amount_cents >= 0),
+  total_amount_cents BIGINT NOT NULL CHECK (total_amount_cents BETWEEN 0 AND 9007199254740991),
   total_currency TEXT NOT NULL CHECK (total_currency = 'BRL'),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
@@ -40,17 +40,22 @@ CREATE TABLE IF NOT EXISTS quote_draft_lines (
   kind TEXT NOT NULL CHECK (kind IN ('PRODUCT','LABOR')),
   description TEXT NOT NULL,
   external_reference TEXT,
-  quantity INTEGER NOT NULL CHECK (quantity > 0),
+  quantity INTEGER NOT NULL CHECK (quantity > 0 AND quantity <= 9007199254740991),
   unit TEXT NOT NULL,
-  unit_price_captured_amount_cents BIGINT NOT NULL CHECK (unit_price_captured_amount_cents >= 0),
+  unit_price_captured_amount_cents BIGINT NOT NULL CHECK (unit_price_captured_amount_cents BETWEEN 0 AND 9007199254740991),
   unit_price_captured_currency TEXT NOT NULL CHECK (unit_price_captured_currency = 'BRL'),
-  subtotal_amount_cents BIGINT NOT NULL CHECK (subtotal_amount_cents >= 0),
+  subtotal_amount_cents BIGINT NOT NULL CHECK (subtotal_amount_cents BETWEEN 0 AND 9007199254740991),
   subtotal_currency TEXT NOT NULL CHECK (subtotal_currency = 'BRL'),
   source TEXT NOT NULL,
   checked_at TEXT NOT NULL,
+  quantity_source TEXT NOT NULL CHECK (quantity_source IN ('OPERATOR_CONFIRMED','WORKSHOP_SYSTEM')),
   PRIMARY KEY (business_id, id),
   FOREIGN KEY (business_id, quote_draft_id) REFERENCES quote_drafts(business_id, id)
 );
+
+ALTER TABLE quote_draft_lines
+  ADD COLUMN IF NOT EXISTS quantity_source TEXT NOT NULL DEFAULT 'OPERATOR_CONFIRMED'
+  CHECK (quantity_source IN ('OPERATOR_CONFIRMED','WORKSHOP_SYSTEM'));
 
 CREATE INDEX IF NOT EXISTS quote_drafts_business_quote_revision_idx
   ON quote_drafts (business_id, quote_request_id, revision DESC);

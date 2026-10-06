@@ -14,7 +14,7 @@ export type LaborDraftInput = { description: string; quantity: number; quantityS
 export type BuildQuoteDraftInput = { businessId: string; quoteRequestId: string; products: ProductDraftInput[]; labor: LaborDraftInput[] };
 
 export class QuoteDraftError extends Error {
-  constructor(public readonly code: "QUOTE_NOT_FOUND" | "PRICE_UNAVAILABLE" | "IDENTITY_AMBIGUOUS" | "PRODUCT_IDENTITY_UNAVAILABLE" | "PRODUCT_UNAVAILABLE" | "INVALID_QUANTITY" | "DRAFT_IMMUTABLE" | "DRAFT_NOT_APPROVABLE" | "QUOTE_DRAFT_CONFLICT" | "CAPABILITY_REQUIRED", message: string = code) {
+  constructor(public readonly code: "QUOTE_NOT_FOUND" | "PRICE_UNAVAILABLE" | "IDENTITY_AMBIGUOUS" | "PRODUCT_IDENTITY_UNAVAILABLE" | "PRODUCT_UNAVAILABLE" | "INVALID_QUANTITY" | "DRAFT_IMMUTABLE" | "DRAFT_NOT_APPROVABLE" | "QUOTE_DRAFT_CONFLICT" | "QUOTE_DRAFT_STALE" | "MANUAL_QUOTE_CONFLICT" | "CAPABILITY_REQUIRED", message: string = code) {
     super(message);
   }
 }
@@ -50,7 +50,7 @@ export async function buildQuoteDraft(input: BuildQuoteDraftInput, dependencies:
       id: dependencies.generateId("quote-draft-line"), businessId: input.businessId, quoteDraftId: "pending",
       kind: QuoteDraftLineKind.PRODUCT, description, ...(identity.inventoryReference || identity.externalItemId || identity.sku ? { externalReference: identity.inventoryReference || identity.externalItemId || identity.sku } : {}),
       quantity: product.quantity, unit: "UN", unitPriceCaptured: price.price,
-      subtotal: { amountCents: product.quantity * price.price.amountCents, currency: "BRL" }, source: price.source, checkedAt: price.checkedAt,
+      subtotal: { amountCents: product.quantity * price.price.amountCents, currency: "BRL" }, source: price.source, checkedAt: price.checkedAt, quantitySource: product.quantitySource,
     };
     await readAndSaveInventory(input.businessId, quote, product, identity, stock, dependencies);
     lines.push(line);
@@ -65,6 +65,7 @@ export async function buildQuoteDraft(input: BuildQuoteDraftInput, dependencies:
       id: dependencies.generateId("quote-draft-line"), businessId: input.businessId, quoteDraftId: "pending", kind: QuoteDraftLineKind.LABOR, description,
       ...(labor.serviceReference?.trim() ? { externalReference: labor.serviceReference.trim() } : {}), quantity: labor.quantity, unit: "SERVICO",
       unitPriceCaptured: price.price, subtotal: { amountCents: labor.quantity * price.price.amountCents, currency: "BRL" }, source: price.source, checkedAt: price.checkedAt,
+      quantitySource: labor.quantitySource,
     });
   }
   const draftId = dependencies.generateId("quote-draft");
@@ -99,9 +100,9 @@ async function readProductIdentity(businessId: string, product: ProductDraftInpu
   const discovered = cleanIdentity({ ...(result.externalItemId ? { externalItemId: result.externalItemId } : {}), ...(result.sku ? { sku: result.sku } : {}) });
   if (!discovered) throw new QuoteDraftError("PRODUCT_IDENTITY_UNAVAILABLE");
   const expected = cleanIdentity(product);
-  for (const value of Object.values(expected ?? {})) {
-    if (!Object.values(discovered).some((actual) => actual.toLowerCase() === value.toLowerCase())) throw new QuoteDraftError("IDENTITY_AMBIGUOUS", "Requested product reference differs from inventory");
-  }
+  if (expected?.sku !== undefined && discovered.sku?.toLowerCase() !== expected.sku.toLowerCase()) throw new QuoteDraftError("IDENTITY_AMBIGUOUS", "Requested SKU differs from inventory");
+  if (expected?.externalItemId !== undefined && discovered.externalItemId?.toLowerCase() !== expected.externalItemId.toLowerCase()) throw new QuoteDraftError("IDENTITY_AMBIGUOUS", "Requested product id differs from inventory");
+  if (expected?.inventoryReference !== undefined && expected.inventoryReference.toLowerCase() !== (discovered.inventoryReference ?? discovered.sku ?? discovered.externalItemId ?? "").toLowerCase()) throw new QuoteDraftError("IDENTITY_AMBIGUOUS", "Requested inventory reference differs from inventory");
   return { identity: discovered, stock: result };
 }
 

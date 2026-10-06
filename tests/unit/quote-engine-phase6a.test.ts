@@ -62,6 +62,7 @@ test("pricing is deterministic and keeps product and labor subtotals", async () 
   assert.equal(draft.laborSubtotal.amountCents, 9000);
   assert.equal(draft.total.amountCents, 28200);
   assert.deepEqual(draft.lines.map((line) => line.kind), ["PRODUCT", "LABOR"]);
+  assert.deepEqual(draft.lines.map((line) => line.quantitySource), ["OPERATOR_CONFIRMED", "OPERATOR_CONFIRMED"]);
   assert.equal(h.stockChecks.values.length, 1);
 });
 
@@ -89,7 +90,7 @@ test("snapshot does not change when external price changes and a new revision su
 test("approved draft is immutable and authorize writes the QuoteRequest total", async () => {
   const h = harness();
   const draft = await buildQuoteDraft(input(), h.dependencies);
-  const approved = await authorizeQuoteDraft({ businessId: "business-a", quoteRequestId: "quote-a" }, { quoteDraftRepository: h.drafts, quoteTransaction: h.dependencies.quoteTransaction, quoteRequestRepository: h.quoteRequests, opportunityRepository: h.opportunities, commercialEventRepository: new InMemoryCommercialEventRepository(), now: h.dependencies.now, generateId: h.dependencies.generateId });
+  const approved = await authorizeQuoteDraft({ businessId: "business-a", quoteRequestId: "quote-a", expectedDraftId: draft.id, expectedRevision: draft.revision }, { quoteDraftRepository: h.drafts, quoteTransaction: h.dependencies.quoteTransaction, quoteRequestRepository: h.quoteRequests, opportunityRepository: h.opportunities, commercialEventRepository: new InMemoryCommercialEventRepository(), now: h.dependencies.now, generateId: h.dependencies.generateId });
   assert.equal(approved.status, "APPROVED");
   assert.equal((await h.quoteRequests.findById("business-a", "quote-a"))?.authorizedPrice?.amountCents, draft.total.amountCents);
   await assert.rejects(buildQuoteDraft(input(), h.dependencies), (error: unknown) => error instanceof QuoteDraftError && error.code === "DRAFT_IMMUTABLE");
@@ -123,6 +124,12 @@ test("product price receives only the inventory-confirmed identity and rejects m
   assert.deepEqual(seen, [{ externalItemId: "oil-5w30" }]);
   await assert.rejects(buildQuoteDraft({ ...input(), products: [{ ...input().products[0]!, externalItemId: "other-item" }] }, h.dependencies), (error: unknown) => error instanceof QuoteDraftError && error.code === "IDENTITY_AMBIGUOUS");
   assert.equal(seen.length, 1);
+});
+
+test("typed product references cannot be swapped between SKU and external id", async () => {
+  const h = harness();
+  h.dependencies.inventoryReadPort = { check: async () => ({ availability: InventoryAvailability.AVAILABLE, sku: "sku-from-stock", externalItemId: "id-from-stock" }) };
+  await assert.rejects(buildQuoteDraft({ ...input(), products: [{ ...input().products[0]!, sku: "id-from-stock", externalItemId: "sku-from-stock" }] }, h.dependencies), (error: unknown) => error instanceof QuoteDraftError && error.code === "IDENTITY_AMBIGUOUS");
 });
 
 test("quantity source is required, trusted and separate from arithmetic", async () => {

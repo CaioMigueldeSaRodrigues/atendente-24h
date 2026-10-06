@@ -49,7 +49,7 @@ test("integrated authorization rolls back quote and opportunity when draft appro
       approve: async () => { throw new Error("simulated draft persistence failure"); },
       markPublished: (business, id, at) => h.drafts.markPublished(business, id, at),
     };
-    await assert.rejects(authorizeQuoteDraft({ businessId, quoteRequestId }, { quoteDraftRepository: failingDrafts, quoteTransaction: h.transaction, quoteRequestRepository: h.quotes, opportunityRepository: h.opportunities, now }), /simulated draft persistence failure/);
+    await assert.rejects(authorizeQuoteDraft({ businessId, quoteRequestId, expectedDraftId: draft.id, expectedRevision: draft.revision }, { quoteDraftRepository: failingDrafts, quoteTransaction: h.transaction, quoteRequestRepository: h.quotes, opportunityRepository: h.opportunities, now }), /simulated draft persistence failure/);
     assert.equal((await h.quotes.findById(businessId, quoteRequestId))?.status, QuoteRequestStatus.WAITING_BUSINESS);
     assert.equal((await h.quotes.findById(businessId, quoteRequestId))?.authorizedPrice, undefined);
     assert.equal((await h.opportunities.findById(businessId, `${businessId}-opportunity-waiting`))?.status, "WAITING_BUSINESS");
@@ -73,7 +73,7 @@ test("SQLite refuses mutations of approved and published snapshots", async () =>
   const h = fixture();
   try {
     const draft = await buildQuoteDraft(input(), h.dependencies);
-    const approved = await authorizeQuoteDraft({ businessId, quoteRequestId }, { quoteDraftRepository: h.drafts, quoteTransaction: h.transaction, quoteRequestRepository: h.quotes, opportunityRepository: h.opportunities, now });
+    const approved = await authorizeQuoteDraft({ businessId, quoteRequestId, expectedDraftId: draft.id, expectedRevision: draft.revision }, { quoteDraftRepository: h.drafts, quoteTransaction: h.transaction, quoteRequestRepository: h.quotes, opportunityRepository: h.opportunities, now });
     assert.equal(approved.status, "APPROVED");
     await assert.rejects(h.drafts.save({ ...approved, lines: approved.lines.map((line) => ({ ...line, quantity: 9 })) }), (error: unknown) => error instanceof QuoteDraftError && error.code === "DRAFT_IMMUTABLE");
     await h.drafts.markPublished(businessId, draft.id, now());
