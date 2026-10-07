@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "test:llm:live": "npm run build && node --env-file-if-exists=.env.local dist/integrations/llm/run-live-smoke.js",
     "test:e2e": "tsc -p tsconfig.test.json && node dist-test/tests/e2e/run-gate.js",
     "typecheck": "tsc --noEmit",
     "test": "tsc -p tsconfig.test.json && node --test dist-test/tests/unit/*.test.js",

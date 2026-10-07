@@ -1,20 +1,13 @@
 import type { AIInterpretation } from "./domain/types.js";
 
-// Baseline do MVP; futuramente poderá ser configurado por business/catalog item.
-export const DEFAULT_QUOTE_REQUIRED_FIELDS = [
-  "brand",
-  "model",
-  "year",
-  "version",
-] as const;
-
-export function getMissingQuoteRequiredFields(
-  vehicleData: AIInterpretation["extractedVehicleData"],
-): readonly string[] {
-  return DEFAULT_QUOTE_REQUIRED_FIELDS.filter((field) => {
-    const value = vehicleData[field];
-    return typeof value === "string"
-      ? value.trim().length === 0
-      : value === undefined;
-  });
+// O modelo interpreta o objeto comercial; não define exigências da oficina.
+// Sem política explícita, dados cadastrais/veiculares não bloqueiam o registro.
+export function getQuoteIntakeMissingData(
+  interpretation: Pick<AIInterpretation, "requestedItem" | "symptomDescription">,
+): string[] {
+  const hasCommercialObject = [
+    interpretation.requestedItem,
+    interpretation.symptomDescription,
+  ].some((value) => value !== undefined && value.trim().length > 0);
+  return hasCommercialObject ? [] : ["requestedItem"];
 }

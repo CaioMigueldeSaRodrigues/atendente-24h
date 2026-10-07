@@ -74,7 +74,7 @@ test("human handoff takes priority over appointment response", () => {
   );
 });
 
-test("requests only the first two known fields by priority", () => {
+test("does not request optional vehicle fields suggested by the model", () => {
   assert.equal(
     resolveSafeReply({
       intent: Intent.QUOTE_REQUEST,
@@ -83,24 +83,24 @@ test("requests only the first two known fields by priority", () => {
       suggestedNextAction: requestInformation,
       missingData: ["brand", "version", "licensePlate", "mileage"],
     }),
-    "Para preparar o orçamento, preciso de mais algumas informações: marca e versão. Pode me informar?",
+    "Solicitação de orçamento registrada. A equipe precisa confirmar o valor.",
   );
 });
 
-test("uses singular wording for one missing field", () => {
+test("requests the commercial object when required by the domain", () => {
   assert.equal(
     resolveSafeReply({
       intent: Intent.QUOTE_REQUEST,
       proposedResponse: "Resposta livre da IA.",
       requiresHuman: false,
       suggestedNextAction: requestInformation,
-      missingData: ["version"],
+      missingData: ["requestedItem"],
     }),
-    "Para preparar o orçamento, preciso de mais uma informação: versão. Pode me informar?",
+    "Qual serviço ou produto você deseja orçar? Pode também descrever o sintoma.",
   );
 });
 
-test("uses a safe generic message when no missing field is recognized", () => {
+test("does not create requirements from unknown missing fields", () => {
   assert.equal(
     resolveSafeReply({
       intent: Intent.QUOTE_REQUEST,
@@ -109,7 +109,7 @@ test("uses a safe generic message when no missing field is recognized", () => {
       suggestedNextAction: requestInformation,
       missingData: ["unsupportedInternalField"],
     }),
-    "Para preparar o orçamento, preciso de algumas informações adicionais. Pode me informar?",
+    "Solicitação de orçamento registrada. A equipe precisa confirmar o valor.",
   );
 });
 
@@ -122,7 +122,7 @@ test("does not use a proposed price for quote information collection", () => {
       suggestedNextAction: requestInformation,
       missingData: ["licensePlate"],
     }),
-    "Para preparar o orçamento, preciso de mais uma informação: placa. Pode me informar?",
+    "Solicitação de orçamento registrada. A equipe precisa confirmar o valor.",
   );
 });
 

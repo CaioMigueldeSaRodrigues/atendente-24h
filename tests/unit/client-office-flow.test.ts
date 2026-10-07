@@ -44,7 +44,7 @@ const secondTurn: AIInterpretation = {
   proposedResponse: "Vou encaminhar o pedido para a oficina.",
 };
 
-test("percorre dois turnos de cliente até a fila do operador sem duplicar o pedido", async () => {
+test("registra orçamento no primeiro turno e aceita dados opcionais depois sem duplicar o pedido", async () => {
   const database = createSqliteDatabase({ filename: ":memory:" });
   const businessRepository = new SqliteAutomotiveBusinessRepository(database);
   const conversationRepository = new SqliteConversationRepository(database);
@@ -147,8 +147,9 @@ test("percorre dois turnos de cliente até a fila do operador sem duplicar o ped
     const firstQuoteRequests = await quoteRequestRepository.listByConversation("business-a", conversationId);
     assert.equal(firstOpportunities.length, 1);
     assert.equal(firstQuoteRequests.length, 1);
-    assert.equal(firstOpportunities[0]?.status, OpportunityStatus.WAITING_CUSTOMER);
-    assert.equal(firstQuoteRequests[0]?.status, QuoteRequestStatus.WAITING_INFORMATION);
+    assert.equal(firstOpportunities[0]?.status, OpportunityStatus.WAITING_BUSINESS);
+    assert.equal(firstQuoteRequests[0]?.status, QuoteRequestStatus.WAITING_BUSINESS);
+    assert.equal(firstBody.reply, "Solicitação de orçamento registrada. A equipe precisa confirmar o valor.");
 
     const secondResponse = await post(`/v1/businesses/business-a/conversations/${conversationId}/messages`, { content: message2 });
     assert.equal(secondResponse.status, 200);

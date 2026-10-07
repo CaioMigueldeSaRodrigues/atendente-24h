@@ -175,6 +175,13 @@ test("instructions define extraction, missing-data handling and safety rules", a
   assert.match(instructions, /UNKNOWN_INFORMATION/i);
   assert.match(instructions, /Nunca invente preço/i);
   assert.match(instructions, /Não confirme diagnósticos ou agendamentos/i);
+  assert.match(instructions, /MINIMIZAÇÃO DE DADOS/);
+  assert.match(instructions, /Nunca solicite dados apenas para completar cadastro/);
+  assert.match(instructions, /Não invente requisitos da oficina/);
+  assert.match(instructions, /WhatsApp já fornece um meio de contato/);
+  assert.match(instructions, /Onix 2020/);
+  assert.match(instructions, /Não pedir automaticamente placa, telefone, quilometragem ou versão/);
+  assert.doesNotMatch(instructions, /\uFFFD|OlÃ|orÃ/);
 });
 
 test("throws the parse error when output_parsed is null or undefined", async () => {
@@ -184,4 +191,25 @@ test("throws the parse error when output_parsed is null or undefined", async () 
       message: "AI response could not be parsed",
     });
   }
+});
+
+test("rejects malformed, incompatible and textual output without an unsafe fallback", async () => {
+  for (const output of ["{broken", { intent: "QUOTE_REQUEST" }, { ...validModelOutput(), missingData: "placa" }, { ...validModelOutput(), extra: "unsupported" }]) {
+    const { interpreter } = makeInterpreter(output);
+    await assert.rejects(interpreter.interpret(makeInput()));
+  }
+});
+
+test("preserves explicitly declared phone and plate through structured parsing", async () => {
+  const output = validModelOutput();
+  const { interpreter } = makeInterpreter({
+    ...output,
+    intent: Intent.GENERAL_INFORMATION,
+    extractedCustomerData: { ...output.extractedCustomerData, primaryPhone: "11999999999" },
+    extractedVehicleData: { ...output.extractedVehicleData, licensePlate: "ABC1D23" },
+  });
+  const result = await interpreter.interpret({ ...makeInput(), content: "Meu telefone é 11999999999 e a placa é ABC1D23." });
+  assert.deepEqual(result.extractedCustomerData, { primaryPhone: "11999999999" });
+  assert.deepEqual(result.extractedVehicleData, { licensePlate: "ABC1D23" });
+  assert.deepEqual(result.missingData, []);
 });

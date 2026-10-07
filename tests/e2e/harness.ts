@@ -129,11 +129,11 @@ export class Harness {
           intent: quote ? Intent.QUOTE_REQUEST : Intent.GENERAL_INFORMATION,
           extractedCustomerData: content.includes("João") ? { name: "João Açúcar" } : {},
           extractedVehicleData: content.includes("Toyota") ? { brand: "Toyota", model: "Corolla", year: 2020, version: "XEi" } : {},
-          missingData: incomplete ? ["brand", "model", "year", "version"] : [],
+          missingData: incomplete ? ["requestedItem"] : [],
           suggestedNextAction: { type: quote ? "PROVIDE_QUOTE" : "NONE", description: "Gate 1" },
           requiresHuman: content === "Quero atendente",
           proposedResponse: "Olá! Atendimento São José — ação, ç, ã, 🚗.",
-          ...(quote ? { requestedItem: "Troca de óleo" } : {}),
+          ...(quote && !incomplete ? { requestedItem: "Troca de óleo" } : {}),
         };
         return interpretation;
       } },

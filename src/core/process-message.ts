@@ -1,6 +1,6 @@
 import { requiresExplicitHumanHandoff } from "./business-rules.js";
 import { resolveSafeReply } from "./response-policy.js";
-import { getMissingQuoteRequiredFields } from "./quote-intake-policy.js";
+import { getQuoteIntakeMissingData } from "./quote-intake-policy.js";
 import type {
   Appointment,
   CommercialEvent,
@@ -191,7 +191,7 @@ export async function processMessage(
 
   const quoteRequested = interpretation.intent === Intent.QUOTE_REQUEST;
   const quoteMissingData = quoteRequested
-    ? getMissingQuoteRequiredFields(effectiveVehicleData)
+    ? getQuoteIntakeMissingData(interpretation)
     : [];
   const quoteNextAction: NextAction = quoteMissingData.length > 0
     ? {
@@ -258,7 +258,7 @@ export async function processMessage(
         ...activeOpportunity,
         ...(customerId !== undefined ? { customerId } : {}),
         requestDescription:
-          interpretation.requestedItem ?? activeOpportunity.requestDescription ?? input.content,
+          interpretation.requestedItem?.trim() || activeOpportunity.requestDescription || input.content,
         status: opportunityStatus,
         nextAction: quoteNextAction,
         updatedAt: now,
@@ -268,7 +268,7 @@ export async function processMessage(
         ...activeQuoteRequest,
         ...(customerId !== undefined ? { customerId } : {}),
         requestDescription:
-          interpretation.requestedItem ?? activeQuoteRequest.requestDescription,
+          interpretation.requestedItem?.trim() || activeQuoteRequest.requestDescription,
         ...(interpretation.symptomDescription !== undefined
           ? { symptomDescription: interpretation.symptomDescription }
           : {}),
@@ -277,7 +277,7 @@ export async function processMessage(
       });
     } else {
       const requestDescription =
-        interpretation.requestedItem ?? input.content;
+        interpretation.requestedItem?.trim() || input.content;
       const opportunity: Opportunity = {
         id: dependencies.generateId("opportunity"),
         businessId: conversation.businessId,

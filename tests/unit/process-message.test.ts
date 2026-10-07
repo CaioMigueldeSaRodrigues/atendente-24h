@@ -172,6 +172,7 @@ const runQuoteRequest = async (
   const harness = createHarness(
     makeInterpretation({
       intent: Intent.QUOTE_REQUEST,
+      requestedItem: "Pastilhas de freio",
       extractedVehicleData: {
         brand: "Toyota",
         model: "Corolla",
@@ -224,6 +225,79 @@ const runAppointmentRequest = async (
   );
   return { harness, result };
 };
+
+for (const scenario of [
+  { id: "S01", content: "Olá. Quero orçamento para troca de óleo do meu Onix 2020.", requestedItem: "Troca de óleo", vehicle: { model: "Onix", year: 2020 } },
+  { id: "S03", content: "Preciso trocar as pastilhas de freio do Corolla 2021.", requestedItem: "Pastilhas de freio", vehicle: { model: "Corolla", year: 2021 } },
+]) {
+  test(`${scenario.id}: a disobedient interpreter cannot impose registration requirements`, async () => {
+    const { harness, result } = await runQuoteRequest({
+      requestedItem: scenario.requestedItem,
+      extractedVehicleData: scenario.vehicle,
+      missingData: ["placa", "telefone", "quilometragem", "versao", "email", "CPF", "chassi"],
+      suggestedNextAction: { type: "REQUEST_INFORMATION", description: "Completar cadastro antes de orçar" },
+      proposedResponse: "Informe placa, telefone, quilometragem, versão, e-mail, CPF e chassi. O preço é R$ 500.",
+    }, scenario.content);
+    assert.equal(result.intent, Intent.QUOTE_REQUEST);
+    assert.equal(result.reply, "Solicitação de orçamento registrada. A equipe precisa confirmar o valor.");
+    const [quote] = await harness.quoteRequestRepository.listByConversation("business-a", "conversation-1");
+    const [opportunity] = await harness.opportunityRepository.listByConversation("business-a", "conversation-1");
+    assert.equal(quote?.status, QuoteRequestStatus.WAITING_BUSINESS);
+    assert.equal(opportunity?.status, OpportunityStatus.WAITING_BUSINESS);
+    assert.equal(opportunity?.nextAction?.type, "PROVIDE_QUOTE");
+    assert.equal(quote?.requestDescription, scenario.requestedItem);
+    assert.equal((await harness.vehicleRepository.findById("business-a", "vehicle-1"))?.brand, undefined);
+    const messages = await harness.messageRepository.listByConversation("business-a", "conversation-1");
+    assert.equal(messages[0]?.content, scenario.content);
+    assert.equal(messages[1]?.content, result.reply);
+    assert.doesNotMatch(result.reply, /\uFFFD|R\$|placa|telefone|quilometragem|versão|CPF|chassi|e-mail/);
+  });
+}
+
+test("S02: asks only for the absent commercial object even if the model requests a full registration", async () => {
+  const { harness, result } = await runQuoteRequest({
+    requestedItem: "",
+    missingData: ["placa", "telefone", "versão"],
+    proposedResponse: "Informe todos os dados cadastrais.",
+  }, "Quero orçamento.");
+  assert.equal(result.reply, "Qual serviço ou produto você deseja orçar? Pode também descrever o sintoma.");
+  assert.equal(result.requiresHuman, false);
+  const [quote] = await harness.quoteRequestRepository.listByConversation("business-a", "conversation-1");
+  assert.equal(quote?.status, QuoteRequestStatus.WAITING_INFORMATION);
+});
+
+test("S04: stores the symptom, preserves diagnostic handoff and never confirms a diagnosis", async () => {
+  const symptom = "Barulho metálico ao frear";
+  const { harness, result } = await runQuoteRequest({
+    requestedItem: "",
+    symptomDescription: symptom,
+    extractedVehicleData: {},
+    requiresHuman: true,
+    handoffReason: HandoffReason.DIAGNOSIS_REQUIRED,
+    proposedResponse: "O disco de freio está defeituoso.",
+  }, "Meu carro está fazendo um barulho metálico ao frear.");
+  const [quote] = await harness.quoteRequestRepository.listByConversation("business-a", "conversation-1");
+  assert.equal(quote?.symptomDescription, symptom);
+  assert.equal(quote?.status, QuoteRequestStatus.WAITING_BUSINESS);
+  assert.equal(result.reply, "Vou encaminhar sua solicitação para a equipe responsável.");
+  assert.equal((await harness.humanHandoffRepository.findById("business-a", "handoff-1"))?.reason, HandoffReason.DIAGNOSIS_REQUIRED);
+});
+
+test("S05: voluntarily declared contact/plate are stored without making them required in another conversation", async () => {
+  const harness = createHarness([
+    makeInterpretation({ intent: Intent.GENERAL_INFORMATION, extractedCustomerData: { primaryPhone: "11999999999" }, extractedVehicleData: { licensePlate: "ABC1D23" } }),
+    makeInterpretation({ requestedItem: "Troca de óleo", missingData: ["telefone", "placa"], suggestedNextAction: { type: "REQUEST_INFORMATION", description: "Cadastro" } }),
+  ]);
+  await processQuoteOnHarness(harness, "Meu telefone é 11999999999 e a placa é ABC1D23.");
+  assert.equal((await harness.customerRepository.findById("business-a", "customer-1"))?.primaryPhone, "11999999999");
+  assert.equal((await harness.vehicleRepository.findById("business-a", "vehicle-1"))?.licensePlate, "ABC1D23");
+  await harness.conversationRepository.save(makeConversation({ id: "conversation-2" }));
+  const result = await processMessage({ businessId: "business-a", conversationId: "conversation-2", content: "Quero orçamento de troca de óleo." }, harness.dependencies);
+  const [quote] = await harness.quoteRequestRepository.listByConversation("business-a", "conversation-2");
+  assert.equal(quote?.status, QuoteRequestStatus.WAITING_BUSINESS);
+  assert.equal((await harness.conversationRepository.findById("business-a", "conversation-2"))?.customerId, undefined);
+  assert.equal(result.reply, "Solicitação de orçamento registrada. A equipe precisa confirmar o valor.");
+});
 
 test("processes a normal message and saves customer and assistant messages", async () => {
   const interpretation = makeInterpretation({
@@ -420,8 +494,9 @@ test("QUOTE_REQUEST QuoteRequest waits for the business", async () => {
   assert.equal(quoteRequest?.status, QuoteRequestStatus.WAITING_BUSINESS);
 });
 
-test("QUOTE_REQUEST with missing baseline data waits for the customer", async () => {
+test("QUOTE_REQUEST without a commercial object waits for the customer", async () => {
   const { harness } = await runQuoteRequest({
+    requestedItem: "",
     extractedVehicleData: { model: "Corolla", year: 2020 },
     missingData: ["licensePlate", "mileage", "name", "primaryPhone", "email"],
     suggestedNextAction: {
@@ -442,7 +517,7 @@ test("QUOTE_REQUEST with missing baseline data waits for the customer", async ()
   assert.equal(quoteRequest?.status, QuoteRequestStatus.WAITING_INFORMATION);
 });
 
-test("ignores model missingData and suggestedNextAction when baseline fields are complete", async () => {
+test("ignores model missingData and suggestedNextAction when a commercial object exists", async () => {
   const { harness, result } = await runQuoteRequest({
     extractedVehicleData: {
       brand: "Toyota",
@@ -520,7 +595,7 @@ test("uses requestedItem as the request description when provided", async () => 
 
 test("uses the customer's original content when requestedItem is absent", async () => {
   const content = "Quero orçamento para trocar os pneus.";
-  const { harness } = await runQuoteRequest({}, content);
+  const { harness } = await runQuoteRequest({ requestedItem: "", symptomDescription: "Pneus desgastados" }, content);
   const opportunity = await harness.opportunityRepository.findById(
     "business-a",
     "opportunity-1",
@@ -589,8 +664,9 @@ test("QUOTE_REQUEST saves the safe response instead of proposedResponse", async 
   assert.equal(messages[1]?.content, result.reply);
 });
 
-test("QUOTE_REQUEST requests missing customer data without human handoff", async () => {
+test("QUOTE_REQUEST asks only for the commercial object without human handoff", async () => {
   const { harness, result } = await runQuoteRequest({
+    requestedItem: "",
     extractedVehicleData: { model: "Corolla", year: 2020 },
     missingData: ["brand", "version", "licensePlate", "mileage"],
     suggestedNextAction: {
@@ -623,7 +699,7 @@ test("QUOTE_REQUEST requests missing customer data without human handoff", async
 
   assert.equal(
     messages[1]?.content,
-    "Para preparar o orçamento, preciso de mais algumas informações: marca e versão. Pode me informar?",
+    "Qual serviço ou produto você deseja orçar? Pode também descrever o sintoma.",
   );
   assert.equal(result.requiresHuman, false);
   assert.equal(handoff, null);
@@ -679,6 +755,7 @@ test("continues the latest active Opportunity and linked QuoteRequest without du
 
 test("moves an active quote pair from customer waiting to business waiting", async () => {
   const harness = createHarness(makeInterpretation({
+    requestedItem: "Pastilhas de freio",
     extractedVehicleData: {
       brand: "Toyota",
       model: "Corolla",
@@ -716,6 +793,7 @@ test("moves an active quote pair from customer waiting to business waiting", asy
 
 test("does not reuse a closed Opportunity or responded QuoteRequest", async () => {
   const harness = createHarness(makeInterpretation({
+    requestedItem: "Troca de óleo",
     extractedVehicleData: {
       brand: "Toyota",
       model: "Corolla",
@@ -880,8 +958,8 @@ test("HUMAN_REQUEST returns the safe handoff response", async () => {
 test("persists and incrementally merges vehicle data across quote turns", async () => {
   const harness = createHarness([
     makeInterpretation({ extractedVehicleData: { model: "Corolla", year: 2020 } }),
-    makeInterpretation({ extractedVehicleData: { brand: "Toyota", version: "XEi" } }),
-    makeInterpretation({ extractedVehicleData: { licensePlate: "ABC1D23", mileage: 42000 } }),
+    makeInterpretation({ requestedItem: "Troca de óleo", extractedVehicleData: { brand: "Toyota", version: "XEi" } }),
+    makeInterpretation({ requestedItem: "Troca de óleo", extractedVehicleData: { licensePlate: "ABC1D23", mileage: 42000 } }),
   ]);
 
   await processQuoteOnHarness(harness, "I have a Corolla 2020.");
@@ -893,7 +971,7 @@ test("persists and incrementally merges vehicle data across quote turns", async 
   assert.equal(firstOpportunity?.status, OpportunityStatus.WAITING_CUSTOMER);
   assert.equal(firstQuote?.status, QuoteRequestStatus.WAITING_INFORMATION);
 
-  await processQuoteOnHarness(harness, "It is Toyota XEi.");
+  await processQuoteOnHarness(harness, "É Toyota XEi. Quero troca de óleo.");
   const [secondOpportunity] = await harness.opportunityRepository.listByConversation("business-a", "conversation-1");
   const [secondQuote] = await harness.quoteRequestRepository.listByConversation("business-a", "conversation-1");
   const vehicleAfterSecondTurn = await harness.vehicleRepository.findById("business-a", vehicleId!);
