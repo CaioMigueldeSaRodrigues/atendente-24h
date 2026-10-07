@@ -49,7 +49,7 @@ export async function buildQuoteDraft(input: BuildQuoteDraftInput, dependencies:
     const line: QuoteDraftLine = {
       id: dependencies.generateId("quote-draft-line"), businessId: input.businessId, quoteDraftId: "pending",
       kind: QuoteDraftLineKind.PRODUCT, description, ...(identity.inventoryReference || identity.externalItemId || identity.sku ? { externalReference: identity.inventoryReference || identity.externalItemId || identity.sku } : {}),
-      quantity: product.quantity, unit: "UN", unitPriceCaptured: price.price,
+      quantity: product.quantity, unit: stock.unit?.trim() || "UN", unitPriceCaptured: price.price,
       subtotal: { amountCents: product.quantity * price.price.amountCents, currency: "BRL" }, source: price.source, checkedAt: price.checkedAt, quantitySource: product.quantitySource,
     };
     await readAndSaveInventory(input.businessId, quote, product, identity, stock, dependencies);

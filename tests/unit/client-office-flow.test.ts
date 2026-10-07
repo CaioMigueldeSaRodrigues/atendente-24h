@@ -241,7 +241,9 @@ test("percorre dois turnos de cliente até a fila do operador sem duplicar o ped
     ].sort());
 
     const queueAfterRespond = await request("/v1/businesses/business-a/quotes/pending");
-    assert.deepEqual(await queueAfterRespond.json(), { items: [] });
+    const authorizedItems = (await queueAfterRespond.json() as { items: Array<{ quote: { status: string } }> }).items;
+    assert.equal(authorizedItems.length, 1);
+    assert.equal(authorizedItems[0]?.quote.status, QuoteRequestStatus.RESPONDED);
 
     const publishResponse = await post(`/v1/businesses/business-a/quotes/${quoteId}/publish`, {});
     assert.equal(publishResponse.status, 200);

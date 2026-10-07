@@ -525,7 +525,10 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
     assert.equal(responded.status, 200);
     assert.deepEqual((await responded.json() as { authorizedPrice: unknown }).authorizedPrice, { amountCents: 65000, currency: "BRL" });
     const queueAfterRespond = await request("/v1/businesses/business-a/quotes/pending");
-    assert.deepEqual(await queueAfterRespond.json(), { items: [] });
+    const authorizedQueue = await queueAfterRespond.json() as { items: Array<{ quote: { id: string; status: string } }> };
+    assert.equal(authorizedQueue.items.length, 1);
+    assert.equal(authorizedQueue.items[0]?.quote.id, quoteId);
+    assert.equal(authorizedQueue.items[0]?.quote.status, QuoteRequestStatus.RESPONDED);
     const secondResponse = await post(`/v1/businesses/business-a/quotes/${quoteId}/respond`, { amountCents: 65000, currency: "BRL" });
     assert.equal(secondResponse.status, 409);
 
@@ -565,6 +568,7 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
     }).items.map(({ quote }) => quote.status).sort();
     assert.deepEqual(statusesInQueue, [
       QuoteRequestStatus.REQUESTED,
+      QuoteRequestStatus.RESPONDED,
       QuoteRequestStatus.WAITING_BUSINESS,
       QuoteRequestStatus.WAITING_INFORMATION,
     ]);

@@ -279,10 +279,13 @@ async function publishPublishedQuoteAtomically(
     const currentQuote = await dependencies.quoteRequestRepository.findById(input.businessId, input.quoteRequestId);
     if (!currentQuote) throw new Error("QuoteRequest not found");
     const draft = await dependencies.quoteDraftRepository?.findLatestByQuoteRequest(input.businessId, input.quoteRequestId);
-    if (draft && (draft.status !== QuoteDraftStatus.APPROVED || currentQuote.authorizedPrice?.amountCents !== draft.total.amountCents || currentQuote.authorizedPrice.currency !== draft.total.currency)) throw new QuoteDraftError("DRAFT_NOT_APPROVABLE");
+    if (draft && (![QuoteDraftStatus.APPROVED, QuoteDraftStatus.PUBLISHED].includes(draft.status) || currentQuote.authorizedPrice?.amountCents !== draft.total.amountCents || currentQuote.authorizedPrice.currency !== draft.total.currency)) throw new QuoteDraftError("DRAFT_NOT_APPROVABLE");
     return dependencies.evolutionGoWebhookTransaction.run(async () => {
     const now = dependencies.now();
-    const reservation = await dependencies.outboundDeliveryRepository.reserve({
+    const existingDelivery = await dependencies.outboundDeliveryRepository.findByQuoteRequestAndChannel(input.businessId, quote.id, conversation.channel);
+    // A published snapshot can only reuse its persisted publication, never create another.
+    if (draft?.status === QuoteDraftStatus.PUBLISHED && existingDelivery === null) throw new QuoteDraftError("DRAFT_NOT_APPROVABLE");
+    const reservation = existingDelivery === null ? await dependencies.outboundDeliveryRepository.reserve({
       id: dependencies.generateId("outbound-delivery"),
       businessId: input.businessId,
       quoteRequestId: quote.id,
@@ -293,7 +296,7 @@ async function publishPublishedQuoteAtomically(
       attempts: 0,
       createdAt: now,
       updatedAt: now,
-    });
+    }) : { created: false, delivery: existingDelivery };
     if (!reservation.created) {
       if (reservation.delivery.messageId === undefined) throw new Error("OutboundDelivery has no published message");
       const messages = await dependencies.messageRepository.listByConversation(input.businessId, conversation.id);
@@ -678,9 +681,9 @@ async function handleRequest(
       const draft = await dependencies.quoteDraftRepository?.findLatestByQuoteRequest(businessId, quote.id);
       const delivery = conversation === null ? null : await dependencies.outboundDeliveryRepository.findByQuoteRequestAndChannel(businessId, quote.id, conversation.channel);
       const actionable = quote.status === QuoteRequestStatus.RESPONDED
-        ? (dependencies.quoteDraftRepository !== undefined && (draft === null || draft === undefined || [QuoteDraftStatus.PENDING_APPROVAL, QuoteDraftStatus.APPROVED].includes(draft.status) || (draft.status === QuoteDraftStatus.PUBLISHED && delivery !== null && delivery.status !== OutboundDeliveryStatus.DELIVERED)))
+        ? (delivery === null || ![OutboundDeliveryStatus.DELIVERED, OutboundDeliveryStatus.FAILED_FINAL].includes(delivery.status))
         : true;
-      return actionable ? { quote, customer, vehicle, conversation } : null;
+      return actionable ? { quote, customer, vehicle, conversation, draft: draft ?? null, delivery } : null;
     }))).filter((item): item is NonNullable<typeof item> => item !== null);
     sendJson(response, 200, { items });
     return;

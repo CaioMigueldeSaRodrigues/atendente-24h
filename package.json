@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "test:e2e": "tsc -p tsconfig.test.json && node dist-test/tests/e2e/run-gate.js",
     "typecheck": "tsc --noEmit",
     "test": "tsc -p tsconfig.test.json && node --test dist-test/tests/unit/*.test.js",
     "build": "tsc",
@@ -14,6 +15,7 @@
     "preview:operator": "node dist/app/run-operator-preview.js"
   },
   "devDependencies": {
+    "@playwright/test": "1.63.0",
     "@types/node": "^26.6.2",
     "@types/pg": "^8.23.1",
     "typescript": "6.0.3"

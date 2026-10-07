@@ -6,6 +6,8 @@
 node_modules/
 dist/
 dist-test/
+test-results/
+playwright-report/
 *.log
 *.db
 *.db-shm

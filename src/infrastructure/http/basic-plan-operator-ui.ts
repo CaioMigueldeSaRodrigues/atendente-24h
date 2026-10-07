@@ -461,7 +461,7 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
         makeCompositionValue(productBlock, "SKU", product.externalReference);
         makeCompositionValue(productBlock, "Quantidade", String(product.quantity) + " " + (operator.integratedQuotePreview?.unit || product.unit));
         if (operator.integratedQuotePreview) makeCompositionValue(productBlock, "Estoque", "disponível");
-        makeCompositionValue(productBlock, "Preço unitário", formatMoneyCents(product.unitPriceCaptured.amountCents) + "/un.");
+        makeCompositionValue(productBlock, "Preço unitário", formatMoneyCents(product.unitPriceCaptured.amountCents) + "/" + product.unit);
         makeCompositionValue(productBlock, "Subtotal", formatMoneyCents(product.subtotal.amountCents));
         composition.append(productBlock);
       }
@@ -582,7 +582,7 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
         composition.hidden = false;
         build.hidden = true;
         authorize.hidden = !draft || draft.status !== "PENDING_APPROVAL";
-        publish.hidden = !draft || draft.status !== "APPROVED";
+        publish.hidden = !draft || (draft.status !== "APPROVED" && !(draft.status === "PUBLISHED" && item.delivery?.status === "FAILED_RETRYABLE"));
         message.textContent = draft.status === "PENDING_APPROVAL" ? "Revise a composição antes de autorizar." : "Orçamento autorizado. O envio continua separado.";
         message.dataset.kind = "info";
       };
@@ -619,7 +619,7 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
           const response = await fetch("/v1/businesses/" + encodeURIComponent(operator.businessId) + "/quotes/" + encodeURIComponent(item.quote.id) + "/draft/authorize", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ draftId: draft.id, revision: draft.revision }) });
           if (!response.ok) throw new Error("authorize failed");
           showDraft(await response.json());
-        } catch { message.textContent = "Não foi possível autorizar o orçamento. Atualize o atendimento."; message.dataset.kind = "error"; await loadQueue().catch(() => undefined); }
+        } catch { setFeedback("Não foi possível confirmar a autorização. Confira o estado atualizado do atendimento.", "error"); await loadQueue(true).catch(() => undefined); }
         finally { authorize.disabled = false; }
       });
       publish.addEventListener("click", async () => {
@@ -629,8 +629,8 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
           if (!response.ok) throw new Error("publish failed");
           message.textContent = "Orçamento enviado ao cliente.";
           message.dataset.kind = "success";
-          await loadQueue();
-        } catch { message.textContent = "Não foi possível enviar o orçamento. Atualize o atendimento."; message.dataset.kind = "error"; await loadQueue().catch(() => undefined); }
+          await loadQueue(true);
+        } catch { setFeedback("Não foi possível confirmar o envio. Confira o estado atualizado do atendimento.", "error"); await loadQueue(true).catch(() => undefined); }
         finally { publish.disabled = false; }
       });
       return panel;
@@ -704,6 +704,8 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
           actionMessage.textContent = "Não foi possível autorizar o valor. Verifique os dados e tente novamente.";
           actionMessage.dataset.kind = "error";
           submit.disabled = false;
+          setFeedback(actionMessage.textContent, "error");
+          await loadQueue(true);
         } finally { sending = false; }
       });
       publish.addEventListener("click", async () => {
@@ -721,18 +723,20 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
           actionMessage.textContent = "Orçamento enviado ao cliente.";
           actionMessage.dataset.kind = "success";
           setFeedback("Orçamento enviado com sucesso.", "success");
-          await loadQueue();
+          await loadQueue(true);
         } catch {
           actionMessage.textContent = "Valor autorizado, mas o envio não foi concluído. Tente enviar novamente.";
           actionMessage.dataset.kind = "error";
           publish.disabled = false;
+          setFeedback(actionMessage.textContent, "error");
+          await loadQueue(true);
         } finally { sending = false; }
       });
       return action;
     }
 
     function priceToCents(value) {
-      const match = /^(\d+)(?:[,.](\d{1,2}))?$/.exec(value.trim());
+      const match = /^([0-9]+)(?:[,.]([0-9]{1,2}))?$/.exec(value.trim());
       if (!match) return null;
       try {
         const cents = BigInt(match[1]) * 100n + BigInt((match[2] || "").padEnd(2, "0"));
@@ -753,8 +757,8 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
         const response = await fetch("/v1/businesses/" + encodeURIComponent(operator.businessId) + "/quotes/" + encodeURIComponent(item.quote.id) + "/respond", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ amountCents, currency: "BRL" }) });
         if (!response.ok) throw new Error("authorize failed");
         message.textContent = "Valor autorizado. O envio ao cliente é uma etapa separada."; message.dataset.kind = "success";
-        await loadQueue();
-      } catch { message.textContent = "Não foi possível autorizar o valor. Verifique a conexão e tente novamente."; message.dataset.kind = "error"; await loadQueue().catch(() => undefined); }
+        await loadQueue(true);
+      } catch { setFeedback("Não foi possível confirmar a autorização. Confira o estado atualizado do atendimento.", "error"); await loadQueue(true).catch(() => undefined); }
       finally { sending = false; button.disabled = false; button.textContent = "Autorizar"; }
     }
 
@@ -765,8 +769,8 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
         const response = await fetch("/v1/businesses/" + encodeURIComponent(operator.businessId) + "/quotes/" + encodeURIComponent(item.quote.id) + "/publish", { method: "POST" });
         if (!response.ok) throw new Error("publish failed");
         message.textContent = "Orçamento enviado ao cliente."; message.dataset.kind = "success";
-        await loadQueue();
-      } catch { message.textContent = "Não foi possível enviar o orçamento. Atualize o atendimento."; message.dataset.kind = "error"; await loadQueue().catch(() => undefined); }
+        await loadQueue(true);
+      } catch { setFeedback("Não foi possível confirmar o envio. Confira o estado atualizado do atendimento.", "error"); await loadQueue(true).catch(() => undefined); }
       finally { sending = false; button.disabled = false; button.textContent = "Enviar ao cliente"; }
     }
 
@@ -831,7 +835,7 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
 
       content.append(toolbar, grid, historyHeading, historyArea);
       void loadInventory(item, inventory);
-      if (integratedCapabilities.canBuildIntegratedQuote && (item.quote.status === "WAITING_BUSINESS" || item.quote.status === "RESPONDED")) {
+      if (integratedCapabilities.canBuildIntegratedQuote && (item.quote.status === "WAITING_BUSINESS" || (item.quote.status === "RESPONDED" && item.draft))) {
         const manualToggle = document.createElement("button");
         manualToggle.type = "button";
         manualToggle.className = "secondary-action";
@@ -903,8 +907,8 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
       if (moveFocus) title.focus({ preventScroll: true });
     }
 
-    async function loadQueue() {
-      if (loading || sending) return;
+    async function loadQueue(reconcile = false) {
+      if (loading || (sending && !reconcile)) return;
       loading = true;
       refreshButton.disabled = true;
       const previousFeedbackKind = feedback.dataset.kind;
@@ -917,7 +921,7 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
         renderQueue();
         const selected = items.find((item) => item.quote.id === selectedQuoteId);
         if (selected) {
-          if (selected.quote.status !== selectedQuoteStatus) {
+          if (reconcile || selected.quote.status !== selectedQuoteStatus) {
             selectedQuoteStatus = selected.quote.status;
             renderDetail(selected, false);
           }
