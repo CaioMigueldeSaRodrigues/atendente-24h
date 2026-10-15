@@ -14,3 +14,6 @@ playwright-report/
 *.db-wal
 *.sqlite
 *.sqlite3
+mp_order_response.json
+mp_qr.png
+mp_qr_payload.txt
