@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import type {
   EvolutionGoProcessedWebhook,
+  EvolutionGoProviderReceipt,
   EvolutionGoWebhookReplayClaim,
   EvolutionGoWebhookReplayClaimKey,
   EvolutionGoWebhookReplayGuard,
@@ -145,16 +146,33 @@ export class SqliteEvolutionGoWebhookReplayGuard implements EvolutionGoWebhookRe
     });
   }
 
-  markSent(input: Omit<EvolutionGoWebhookReplayClaimKey, "claimToken"> & { sentAt: string }): boolean {
+  markSent(input: Omit<EvolutionGoWebhookReplayClaimKey, "claimToken"> & { sentAt: string; providerMessageId?: string }): boolean {
     return tryWithSqliteConnectionLock(this.database, () => {
       const result = this.database.prepare(`
         UPDATE evolution_go_webhook_receipts
-        SET status = 'sent', sent_at = ?
+        SET status = 'sent', sent_at = ?, provider_message_id = COALESCE(?, provider_message_id),
+            provider_status = CASE WHEN ? IS NULL THEN provider_status ELSE 'ACCEPTED_BY_PROVIDER' END,
+            provider_accepted_at = CASE WHEN ? IS NULL THEN provider_accepted_at ELSE ? END
         WHERE business_id = ? AND instance_name = ? AND external_message_id = ?
           AND status = 'processed'
-      `).run(input.sentAt, input.businessId, input.instanceName, input.externalMessageId);
-      return result.changes === 1;
+      `).run(input.sentAt, input.providerMessageId ?? null, input.providerMessageId ?? null, input.providerMessageId ?? null, input.sentAt, input.businessId, input.instanceName, input.externalMessageId);
+      if (result.changes !== 1 || !input.providerMessageId) return result.changes === 1;
+      const events = this.database.prepare(`SELECT provider_status, occurred_at FROM evolution_go_delivery_receipts WHERE business_id = ? AND instance_name = ? AND provider_message_id = ? ORDER BY CASE provider_status WHEN 'READ' THEN 2 ELSE 1 END DESC, occurred_at DESC`).all(input.businessId, input.instanceName, input.providerMessageId) as Array<{ provider_status: string; occurred_at: string }>;
+      for (const event of events) this.applyProviderStatus(input.businessId, input.instanceName, input.providerMessageId, event.provider_status, event.occurred_at);
+      return true;
     });
+  }
+
+  applyProviderReceipt(input: EvolutionGoProviderReceipt): boolean {
+    return tryWithSqliteConnectionLock(this.database, () => {
+      this.database.prepare(`INSERT OR IGNORE INTO evolution_go_delivery_receipts (business_id, instance_name, provider_message_id, provider_status, occurred_at, received_at) VALUES (?, ?, ?, ?, ?, ?)`).run(input.businessId, input.instanceName, input.providerMessageId, input.status, input.occurredAt, new Date().toISOString());
+      this.applyProviderStatus(input.businessId, input.instanceName, input.providerMessageId, input.status, input.occurredAt);
+      return true;
+    });
+  }
+
+  private applyProviderStatus(businessId: string, instanceName: string, providerMessageId: string, status: string, occurredAt: string): void {
+    this.database.prepare(`UPDATE evolution_go_webhook_receipts SET provider_status = CASE WHEN provider_status='READ' OR (?='DELIVERED' AND provider_status='DELIVERED') THEN provider_status ELSE ? END, delivered_at = CASE WHEN ? IN ('DELIVERED','READ') THEN COALESCE(delivered_at,?) ELSE delivered_at END, read_at = CASE WHEN ?='READ' THEN COALESCE(read_at,?) ELSE read_at END WHERE business_id=? AND instance_name=? AND provider_message_id=?`).run(status, status, status, occurredAt, status, occurredAt, businessId, instanceName, providerMessageId);
   }
 
   complete(input: EvolutionGoWebhookReplayClaimKey): boolean {

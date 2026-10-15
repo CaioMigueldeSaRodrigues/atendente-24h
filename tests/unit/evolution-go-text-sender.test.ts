@@ -41,9 +41,9 @@ test("sends text with the exact Evolution Go request", async () => {
       formatJid: false,
     });
     response.writeHead(200, { "Content-Type": "application/json" });
-    response.end("{}");
+    response.end(JSON.stringify({ data: { Info: { ID: "provider-message-synthetic" } } }));
   }, async (baseUrl) => {
-    await new EvolutionGoTextSender({ baseUrl, instanceToken: token }).sendText({ recipientJid, content });
+    assert.deepEqual(await new EvolutionGoTextSender({ baseUrl, instanceToken: token }).sendText({ recipientJid, content }), { providerMessageId: "provider-message-synthetic" });
   });
 });
 

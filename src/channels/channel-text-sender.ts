@@ -3,6 +3,10 @@ export type ChannelTextMessage = {
   content: string;
 };
 
+export type ChannelTextSendResult = {
+  providerMessageId: string;
+};
+
 export interface ChannelTextSender {
-  sendText(message: ChannelTextMessage): Promise<void>;
+  sendText(message: ChannelTextMessage): Promise<void | ChannelTextSendResult>;
 }

@@ -14,6 +14,7 @@ test("creates an in-memory database and initializes the schema", () => {
     `).all().map((table) => ({ ...table }));
 
     assert.deepEqual(tables, [
+      { name: "appointments" },
       { name: "assistant_health_events" },
       { name: "automotive_businesses" },
       { name: "business_assistant_integration_settings" },
@@ -22,6 +23,7 @@ test("creates an in-memory database and initializes the schema", () => {
       { name: "conversations" },
       { name: "customers" },
       { name: "evolution_go_conversation_links" },
+      { name: "evolution_go_delivery_receipts" },
       { name: "evolution_go_webhook_claims" },
       { name: "evolution_go_webhook_receipts" },
       { name: "messages" },

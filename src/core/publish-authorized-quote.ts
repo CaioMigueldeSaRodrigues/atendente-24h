@@ -47,24 +47,6 @@ export async function publishAuthorizedQuote(
     throw new Error("Conversation not found");
   }
 
-  const existingPublishedMessage = (await dependencies.messageRepository.listByConversation(
-    input.businessId,
-    conversation.id,
-  )).find((candidate) =>
-    candidate.senderType === SenderType.ASSISTANT &&
-    candidate.channel === conversation.channel &&
-    candidate.content === content,
-  );
-  if (existingPublishedMessage) {
-    return {
-      messageId: existingPublishedMessage.id,
-      conversationId: conversation.id,
-      quoteRequestId: quoteRequest.id,
-      content: existingPublishedMessage.content,
-      channel: existingPublishedMessage.channel,
-    };
-  }
-
   const now = dependencies.now();
   const message: Message = {
     id: dependencies.generateId("message"),

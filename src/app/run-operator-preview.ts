@@ -87,8 +87,9 @@ type PreviewQuoteItem = {
     id: string;
     businessId: string;
     name: string;
-    primaryPhone?: string;
+    email?: string;
   };
+  contactLabel?: string;
   vehicle: {
     id: string;
     businessId: string;
@@ -111,7 +112,8 @@ let items: PreviewQuoteItem[] = [{
     requestDescription: "troca de óleo", status: QuoteRequestStatus.WAITING_BUSINESS,
     requestedAt: "2026-09-29T10:00:00.000Z", createdAt: "2026-09-29T10:00:00.000Z", updatedAt: "2026-09-29T10:05:00.000Z",
   },
-  customer: { id: `${OPERATOR_BUSINESS_ID}-customer-waiting`, businessId: OPERATOR_BUSINESS_ID, name: "Ana Souza", primaryPhone: "5511999990001" },
+  customer: { id: `${OPERATOR_BUSINESS_ID}-customer-waiting`, businessId: OPERATOR_BUSINESS_ID, name: "Ana Souza" },
+  contactLabel: "WhatsApp •••• 0001",
   vehicle: { id: `${OPERATOR_BUSINESS_ID}-vehicle-waiting`, businessId: OPERATOR_BUSINESS_ID, brand: "Toyota", model: "Corolla", year: 2020, version: "XEi" },
   conversation: { id: `${OPERATOR_BUSINESS_ID}-conversation-waiting`, businessId: OPERATOR_BUSINESS_ID, channel: "WHATSAPP" },
 }];

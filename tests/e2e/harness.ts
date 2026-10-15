@@ -58,7 +58,7 @@ export class Harness {
   async start(empty = false) {
     this.db = new PostgresDatabase(this.config, { allowInsecureLocal: true, searchPath: this.schema });
     const applied = await applyPostgresMigrations(this.db);
-    assert.deepEqual(applied.map((name) => name.slice(0, 3)), empty ? ["001", "002", "003", "004", "005", "006", "007"] : []);
+    assert.deepEqual(applied.map((name) => name.slice(0, 3)), empty ? ["001", "002", "003", "004", "005", "006", "007", "008", "009"] : []);
     assert.deepEqual(await applyPostgresMigrations(this.db), []);
     const now = () => new Date().toISOString();
     const businesses = new R.PostgresAutomotiveBusinessRepository(this.db);

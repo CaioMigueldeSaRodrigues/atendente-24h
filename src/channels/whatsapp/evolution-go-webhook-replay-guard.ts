@@ -27,11 +27,20 @@ export interface EvolutionGoProcessedWebhook {
   reply: string;
 }
 
+export type EvolutionGoProviderReceipt = {
+  businessId: string;
+  instanceName: string;
+  providerMessageId: string;
+  status: "DELIVERED" | "READ";
+  occurredAt: string;
+};
+
 export interface EvolutionGoWebhookReplayGuard {
   claim(input: EvolutionGoWebhookReplayClaim): EvolutionGoWebhookClaimResult | Promise<EvolutionGoWebhookClaimResult>;
   lockForProcessing(input: EvolutionGoWebhookReplayClaimKey): boolean | Promise<boolean>;
   markProcessed(input: EvolutionGoWebhookReplayClaimKey & EvolutionGoProcessedWebhook): boolean | Promise<boolean>;
-  markSent(input: Omit<EvolutionGoWebhookReplayClaimKey, "claimToken"> & { sentAt: string }): boolean | Promise<boolean>;
+  markSent(input: Omit<EvolutionGoWebhookReplayClaimKey, "claimToken"> & { sentAt: string; providerMessageId?: string }): boolean | Promise<boolean>;
+  applyProviderReceipt(input: EvolutionGoProviderReceipt): boolean | Promise<boolean>;
   complete(input: EvolutionGoWebhookReplayClaimKey): boolean | Promise<boolean>;
   release(input: EvolutionGoWebhookReplayClaimKey): boolean | Promise<boolean>;
 }

@@ -314,6 +314,15 @@ export class InMemoryOutboundDeliveryRepository implements OutboundDeliveryRepos
       .find((delivery) => delivery.quoteRequestId === quoteRequestId && delivery.channel === channel) ?? null;
   }
 
+  async findByAppointmentAndChannel(
+    businessId: string,
+    appointmentId: string,
+    channel: OutboundDelivery["channel"],
+  ): Promise<OutboundDelivery | null> {
+    return [...(this.deliveries.get(businessId)?.values() ?? [])]
+      .find((delivery) => delivery.appointmentId === appointmentId && delivery.channel === channel) ?? null;
+  }
+
   async create(entity: OutboundDelivery): Promise<OutboundDelivery> {
     return (await this.reserve(entity)).delivery;
   }
@@ -325,7 +334,11 @@ export class InMemoryOutboundDeliveryRepository implements OutboundDeliveryRepos
       this.deliveries.set(entity.businessId, businessDeliveries);
     }
     const existing = [...businessDeliveries.values()]
-      .find((delivery) => delivery.quoteRequestId === entity.quoteRequestId && delivery.channel === entity.channel);
+      .find((delivery) => delivery.channel === entity.channel && (
+        entity.quoteRequestId !== undefined
+          ? delivery.quoteRequestId === entity.quoteRequestId
+          : delivery.appointmentId === entity.appointmentId
+      ));
     if (existing) return { created: false, delivery: existing };
     businessDeliveries.set(entity.id, entity);
     return { created: true, delivery: entity };
@@ -418,6 +431,11 @@ export class InMemoryAppointmentRepository implements AppointmentRepository {
 
   async findById(businessId: string, id: string): Promise<Appointment | null> {
     return this.appointments.get(businessId)?.get(id) ?? null;
+  }
+
+  async listByConversation(businessId: string, conversationId: string): Promise<Appointment[]> {
+    return [...(this.appointments.get(businessId)?.values() ?? [])]
+      .filter((appointment) => appointment.conversationId === conversationId);
   }
 
   async save(entity: Appointment): Promise<void> {

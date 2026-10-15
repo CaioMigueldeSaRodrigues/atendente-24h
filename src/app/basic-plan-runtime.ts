@@ -11,7 +11,7 @@ import {
   InMemoryAppointmentRepository,
   InMemoryHumanHandoffRepository,
 } from "../core/in-memory-repositories.js";
-import { createBasicPlanHttpServer } from "../infrastructure/http/basic-plan-http-server.js";
+import { createBasicPlanHttpServer, type BasicPlanOperationalEvent } from "../infrastructure/http/basic-plan-http-server.js";
 import { createSqliteDatabase } from "../infrastructure/sqlite/sqlite-database.js";
 import { SqliteEvolutionGoWebhookReplayGuard } from "../infrastructure/sqlite/sqlite-evolution-go-webhook-replay-guard.js";
 import { withSqliteTransaction } from "../infrastructure/sqlite/sqlite-connection-lock.js";
@@ -49,7 +49,8 @@ export type BasicPlanRuntimeOptions = {
   businessOperatorAuthorizer: BusinessOperatorAuthorizer;
   evolutionGoWebhookCredential?: EvolutionGoWebhookCredential;
   evolutionGoBaseUrl?: string;
-  evolutionGoTextSender?: { sendText(message: EvolutionGoTextMessage): Promise<void> };
+  evolutionGoTextSender?: { sendText(message: EvolutionGoTextMessage): Promise<void | { providerMessageId: string }> };
+  operationalLog?: (event: BasicPlanOperationalEvent) => void;
   now?: () => string;
 };
 
@@ -160,6 +161,7 @@ export async function createBasicPlanRuntime(
         integratedQuotes: true,
       },
       interpreter: options.interpreter,
+      ...(options.operationalLog ? { operationalLog: options.operationalLog } : {}),
       now,
       generateId: (prefix) => `${prefix}-${randomUUID()}`,
     });

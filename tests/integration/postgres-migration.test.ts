@@ -72,6 +72,8 @@ test("PostgreSQL migrations and repositories persist tenant data and serialize c
       "005_stock_checks_read_only.sql",
       "006_business_plan_assignments.sql",
       "007_quote_drafts.sql",
+      "008_evolution_go_delivery_truth.sql",
+      "009_outbound_delivery_appointment.sql",
     ]);
     assert.deepEqual(await applyPostgresMigrations(db),[]);
     const transferBusinessId=`transfer-test-${businessId}`;
@@ -191,6 +193,21 @@ test("PostgreSQL migrations and repositories persist tenant data and serialize c
     const appointments=new PostgresAppointmentRepository(db);
     await appointments.save(appointment);
     assert.deepEqual(await appointments.findById(businessId,appointment.id),appointment);
+    await db.query(`INSERT INTO outbound_deliveries
+      (id,business_id,quote_request_id,appointment_id,conversation_id,channel,status,attempts,provider_message_id,created_at,updated_at)
+      VALUES ($1,$2,$3,NULL,$4,$5,'DELIVERED',1,$6,$7,$7),
+             ($8,$2,NULL,$9,$4,$5,'DELIVERED',1,$10,$7,$7)`, [
+      "quote-delivery-1", businessId, quote.id, conversation.id, Channel.WHATSAPP, "provider-quote-1", "2026-01-02",
+      "appointment-delivery-1", appointment.id, "provider-appointment-1",
+    ]);
+    const migratedDeliveries = await db.query(
+      "SELECT id,quote_request_id,appointment_id,provider_message_id FROM outbound_deliveries WHERE business_id=$1 ORDER BY id",
+      [businessId],
+    );
+    assert.deepEqual(migratedDeliveries.rows, [
+      { id: "appointment-delivery-1", quote_request_id: null, appointment_id: appointment.id, provider_message_id: "provider-appointment-1" },
+      { id: "quote-delivery-1", quote_request_id: quote.id, appointment_id: null, provider_message_id: "provider-quote-1" },
+    ]);
     const handoff={id:"handoff-1",businessId,conversationId:conversation.id,reason:HandoffReason.CUSTOMER_REQUEST,summary:"handoff",status:HandoffStatus.REQUESTED,requestedAt:"2026-01-02",createdAt:"2026-01-02",updatedAt:"2026-01-02"};
     const handoffs=new PostgresHumanHandoffRepository(db);
     await handoffs.save(handoff);
@@ -209,6 +226,7 @@ test("PostgreSQL migrations and repositories persist tenant data and serialize c
 
     await db.query("DELETE FROM evolution_go_conversation_links WHERE business_id=$1",[businessId]);
     await db.query("DELETE FROM evolution_go_webhook_receipts WHERE business_id=$1",[businessId]);
+    await db.query("DELETE FROM outbound_deliveries WHERE business_id=$1",[businessId]);
     await db.query("DELETE FROM assistant_health_events WHERE business_id=$1",[businessId]);
     await db.query("DELETE FROM commercial_events WHERE business_id=$1",[businessId]);
     await db.query("DELETE FROM quote_requests WHERE business_id=$1",[businessId]);

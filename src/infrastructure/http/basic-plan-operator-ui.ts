@@ -59,6 +59,7 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
     .option-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
     .option-customer { margin: 0; font-size: 14px; font-weight: 750; }
     .option-request { display: block; margin-top: 7px; color: #63727d; font-size: 12px; line-height: 1.4; }
+    .option-contact { display: block; margin-top: 5px; color: #52616b; font-size: 12px; line-height: 1.4; }
     .status { display: inline-flex; flex-shrink: 0; padding: 5px 8px; border-radius: 999px; background: #fff2de; color: #80520d; font-size: 10px; font-weight: 750; }
     .empty-state, .detail-placeholder { display: grid; min-height: 220px; place-items: center; padding: 25px; color: #63727d; text-align: center; }
     .empty-state strong { color: #243640; }
@@ -90,6 +91,7 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
     .message-time { font-weight: 400; white-space: nowrap; }
     .message-content { margin: 0; color: #263943; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; white-space: pre-wrap; }
     .action-panel { margin: 0 20px 20px; padding: 16px; border: 1px solid #d7e6df; border-radius: 10px; background: #f3f8f5; }
+    .appointment-action-panel { border-color: #e8b85c; background: #fff9eb; }
     .action-panel h3 { margin: 0 0 12px; font-size: 14px; }
     .price-label { display: block; margin-bottom: 7px; color: #44545d; font-size: 13px; font-weight: 650; }
     .price-control { display: flex; align-items: center; max-width: 290px; margin-bottom: 11px; border: 1px solid #b9c9c7; border-radius: 8px; background: #fff; }
@@ -187,6 +189,9 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
     let items = [];
     let selectedQuoteId = null;
     let selectedQuoteStatus = null;
+    let selectedQuoteSnapshot = null;
+    let selectedQuoteStale = false;
+    let refreshSelectedHistory = null;
     let historyRequest = 0;
     let sending = false;
     let loading = false;
@@ -202,6 +207,96 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
       if (typeof value === "string" && value.trim()) return value;
       if (typeof value === "number" && Number.isFinite(value)) return String(value);
       return "—";
+    }
+
+    function snapshotItem(item) {
+      const quote = item && item.quote || {};
+      const draft = item && item.draft || null;
+      return {
+        quoteId: quote.id || "",
+        quoteUpdatedAt: quote.updatedAt || "",
+        quoteStatus: quote.status || "",
+        quoteActionable: item && item.quoteActionable === true,
+        deliveryStatus: item && item.delivery && item.delivery.status || "",
+        appointmentId: item && item.appointment && item.appointment.id || "",
+        appointmentUpdatedAt: item && item.appointment && item.appointment.updatedAt || "",
+        appointmentStatus: item && item.appointment && item.appointment.status || "",
+        appointmentDate: item && item.appointment && item.appointment.requestedDate || "",
+        appointmentTime: item && item.appointment && item.appointment.requestedTime || "",
+        draftId: draft && draft.id || "",
+        draftRevision: draft && draft.revision || null,
+        draftStatus: draft && draft.status || "",
+      };
+    }
+
+    function sameSnapshot(left, right) {
+      return Boolean(left && right) && left.quoteId === right.quoteId &&
+        left.quoteUpdatedAt === right.quoteUpdatedAt && left.quoteStatus === right.quoteStatus &&
+        left.quoteActionable === right.quoteActionable && left.deliveryStatus === right.deliveryStatus &&
+        left.appointmentId === right.appointmentId && left.appointmentUpdatedAt === right.appointmentUpdatedAt &&
+        left.appointmentStatus === right.appointmentStatus && left.appointmentDate === right.appointmentDate &&
+        left.appointmentTime === right.appointmentTime &&
+        left.draftId === right.draftId && left.draftRevision === right.draftRevision &&
+        left.draftStatus === right.draftStatus;
+    }
+
+    function stampActionIdentity(element, item) {
+      const snapshot = snapshotItem(item);
+      element.dataset.quoteRequestId = snapshot.quoteId;
+      element.dataset.quoteRequestUpdatedAt = snapshot.quoteUpdatedAt;
+      element.dataset.quoteRequestStatus = snapshot.quoteStatus;
+      element.dataset.quoteActionable = String(snapshot.quoteActionable);
+      element.dataset.deliveryStatus = snapshot.deliveryStatus;
+      element.dataset.appointmentId = snapshot.appointmentId;
+      element.dataset.appointmentUpdatedAt = snapshot.appointmentUpdatedAt;
+      element.dataset.appointmentStatus = snapshot.appointmentStatus;
+      element.dataset.appointmentDate = snapshot.appointmentDate;
+      element.dataset.appointmentTime = snapshot.appointmentTime;
+      element.dataset.quoteDraftId = snapshot.draftId;
+      element.dataset.quoteDraftRevision = snapshot.draftRevision === null ? "" : String(snapshot.draftRevision);
+      element.dataset.quoteDraftStatus = snapshot.draftStatus;
+    }
+
+    function markSelectedQuoteStale(actionRoot) {
+      selectedQuoteStale = true;
+      const message = actionRoot && actionRoot.querySelector(".action-message");
+      if (message) {
+        message.textContent = "Este atendimento foi atualizado. Clique em Atualizar antes de autorizar ou enviar.";
+        message.dataset.kind = "error";
+      }
+      if (actionRoot) {
+        actionRoot.dataset.stale = "true";
+        for (const button of actionRoot.querySelectorAll("button")) {
+          if (!button.classList.contains("secondary-action")) button.disabled = true;
+        }
+      }
+      setFeedback("O atendimento selecionado mudou. Atualize a fila antes de continuar.", "error");
+    }
+
+    function validateActionIdentity(item, actionRoot) {
+      const current = items.find((candidate) => candidate.quote && candidate.quote.id === item.quote.id);
+      const currentSnapshot = current && snapshotItem(current);
+      const actionSnapshot = actionRoot && {
+        quoteId: actionRoot.dataset.quoteRequestId || "",
+        quoteUpdatedAt: actionRoot.dataset.quoteRequestUpdatedAt || "",
+        quoteStatus: actionRoot.dataset.quoteRequestStatus || "",
+        quoteActionable: actionRoot.dataset.quoteActionable === "true",
+        deliveryStatus: actionRoot.dataset.deliveryStatus || "",
+        appointmentId: actionRoot.dataset.appointmentId || "",
+        appointmentUpdatedAt: actionRoot.dataset.appointmentUpdatedAt || "",
+        appointmentStatus: actionRoot.dataset.appointmentStatus || "",
+        appointmentDate: actionRoot.dataset.appointmentDate || "",
+        appointmentTime: actionRoot.dataset.appointmentTime || "",
+        draftId: actionRoot.dataset.quoteDraftId || "",
+        draftRevision: actionRoot.dataset.quoteDraftRevision ? Number(actionRoot.dataset.quoteDraftRevision) : null,
+        draftStatus: actionRoot.dataset.quoteDraftStatus || "",
+      };
+      const valid = !selectedQuoteStale && selectedQuoteId === item.quote.id &&
+        sameSnapshot(selectedQuoteSnapshot, snapshotItem(item)) &&
+        sameSnapshot(selectedQuoteSnapshot, currentSnapshot) &&
+        sameSnapshot(selectedQuoteSnapshot, actionSnapshot);
+      if (!valid) markSelectedQuoteStale(actionRoot);
+      return valid;
     }
 
     function statusLabel(status) {
@@ -251,6 +346,8 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
       const button = document.createElement("button");
       button.type = "button";
       button.className = "quote-option";
+      button.dataset.quoteRequestId = item.quote.id;
+      button.dataset.quoteRequestUpdatedAt = item.quote.updatedAt || "";
       button.setAttribute("aria-current", item.quote.id === selectedQuoteId ? "true" : "false");
       button.setAttribute("aria-controls", "detail-panel");
       button.id = "quote-option-" + index;
@@ -266,10 +363,16 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
       const request = document.createElement("span");
       request.className = "option-request";
       request.textContent = display(item.quote.requestDescription);
+      const contact = document.createElement("span");
+      contact.className = "option-contact";
+      contact.textContent = item.contactLabel || (item.conversation && item.conversation.channel === "WHATSAPP" ? "WhatsApp" : "");
       button.append(top, request);
+      if (contact.textContent) button.append(contact);
       button.addEventListener("click", () => {
         selectedQuoteId = item.quote.id;
         selectedQuoteStatus = item.quote.status;
+        selectedQuoteSnapshot = snapshotItem(item);
+        selectedQuoteStale = false;
         renderQueue();
         renderDetail(item, true);
       });
@@ -290,6 +393,7 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
     }
 
     function showPlaceholder() {
+      refreshSelectedHistory = null;
       detailPanel.replaceChildren();
       const placeholder = document.createElement("p");
       placeholder.id = "detail-placeholder";
@@ -307,6 +411,8 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
       button.addEventListener("click", () => {
         selectedQuoteId = null;
         selectedQuoteStatus = null;
+        selectedQuoteSnapshot = null;
+        selectedQuoteStale = false;
         showPlaceholder();
         renderQueue();
         const firstOption = queueList.querySelector("button");
@@ -337,13 +443,15 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
       return item;
     }
 
-    async function loadHistory(item, historyList, historyArea, retryButton) {
+    async function loadHistory(item, historyList, historyArea, retryButton, showLoading = true) {
       const currentRequest = ++historyRequest;
-      historyArea.replaceChildren();
-      const loadingMessage = document.createElement("p");
-      loadingMessage.className = "history-loading";
-      loadingMessage.textContent = "Carregando atendimento...";
-      historyArea.append(loadingMessage);
+      if (showLoading) {
+        historyArea.replaceChildren();
+        const loadingMessage = document.createElement("p");
+        loadingMessage.className = "history-loading";
+        loadingMessage.textContent = "Carregando atendimento...";
+        historyArea.append(loadingMessage);
+      }
       try {
         const path = "/v1/businesses/" + encodeURIComponent(operator.businessId) +
           "/conversations/" + encodeURIComponent(item.quote.conversationId) + "/messages";
@@ -352,6 +460,7 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
         const data = await response.json();
         if (currentRequest !== historyRequest || selectedQuoteId !== item.quote.id) return;
         const messages = Array.isArray(data && data.messages) ? data.messages : [];
+        historyList.replaceChildren();
         historyArea.replaceChildren();
         if (messages.length === 0) {
           const empty = document.createElement("p");
@@ -364,6 +473,7 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
         }
       } catch {
         if (currentRequest !== historyRequest || selectedQuoteId !== item.quote.id) return;
+        if (!showLoading) return;
         historyArea.replaceChildren();
         const error = document.createElement("p");
         error.className = "history-error";
@@ -573,9 +683,14 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
       publish.hidden = true;
       buttons.append(build, authorize, publish);
       panel.append(title, fields, composition, buttons, message);
+      stampActionIdentity(panel, item);
       let draft = null;
       const showDraft = (value) => {
         draft = value;
+        item.draft = value;
+        selectedQuoteSnapshot = snapshotItem(item);
+        selectedQuoteStale = false;
+        stampActionIdentity(panel, item);
         onDraftState(true);
         fields.hidden = true;
         composition.replaceChildren(makeDraftComposition(value));
@@ -614,15 +729,19 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
         finally { build.disabled = false; }
       });
       authorize.addEventListener("click", async () => {
+        if (!validateActionIdentity(item, panel)) return;
         authorize.disabled = true;
         try {
           const response = await fetch("/v1/businesses/" + encodeURIComponent(operator.businessId) + "/quotes/" + encodeURIComponent(item.quote.id) + "/draft/authorize", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ draftId: draft.id, revision: draft.revision }) });
           if (!response.ok) throw new Error("authorize failed");
-          showDraft(await response.json());
-        } catch { setFeedback("Não foi possível confirmar a autorização. Confira o estado atualizado do atendimento.", "error"); await loadQueue(true).catch(() => undefined); }
+          const authorizedDraft = await response.json();
+          item.draft = authorizedDraft;
+          await loadQueue(true, true);
+        } catch { setFeedback("Não foi possível confirmar a autorização. Confira o estado atualizado do atendimento.", "error"); await loadQueue(true, true).catch(() => undefined); }
         finally { authorize.disabled = false; }
       });
       publish.addEventListener("click", async () => {
+        if (!validateActionIdentity(item, panel)) return;
         publish.disabled = true;
         try {
           const response = await fetch("/v1/businesses/" + encodeURIComponent(operator.businessId) + "/quotes/" + encodeURIComponent(item.quote.id) + "/publish", { method: "POST" });
@@ -676,8 +795,10 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
       actionMessage.className = "action-message";
       actionMessage.setAttribute("aria-live", "polite");
       action.append(actionTitle, label, control, submit, publish, back, actionMessage);
+      stampActionIdentity(action, item);
       action.addEventListener("submit", async (event) => {
         event.preventDefault();
+        if (!validateActionIdentity(item, action)) return;
         const amountCents = priceToCents(input.value);
         if (amountCents === null) {
           actionMessage.textContent = "Informe um valor válido.";
@@ -693,11 +814,7 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
             method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ amountCents, currency: "BRL" }),
           });
           if (!response.ok) throw new Error("authorization failed");
-          label.hidden = true;
-          control.hidden = true;
-          submit.hidden = true;
-          back.hidden = true;
-          publish.hidden = false;
+          await loadQueue(true, true);
           actionMessage.textContent = "Valor autorizado. O envio ao cliente é uma etapa separada.";
           actionMessage.dataset.kind = "success";
         } catch {
@@ -705,11 +822,12 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
           actionMessage.dataset.kind = "error";
           submit.disabled = false;
           setFeedback(actionMessage.textContent, "error");
-          await loadQueue(true);
+          await loadQueue(true, true);
         } finally { sending = false; }
       });
       publish.addEventListener("click", async () => {
         if (sending) return;
+        if (!validateActionIdentity(item, action)) return;
         sending = true;
         publish.disabled = true;
         try {
@@ -757,8 +875,8 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
         const response = await fetch("/v1/businesses/" + encodeURIComponent(operator.businessId) + "/quotes/" + encodeURIComponent(item.quote.id) + "/respond", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ amountCents, currency: "BRL" }) });
         if (!response.ok) throw new Error("authorize failed");
         message.textContent = "Valor autorizado. O envio ao cliente é uma etapa separada."; message.dataset.kind = "success";
-        await loadQueue(true);
-      } catch { setFeedback("Não foi possível confirmar a autorização. Confira o estado atualizado do atendimento.", "error"); await loadQueue(true).catch(() => undefined); }
+        await loadQueue(true, true);
+      } catch { setFeedback("Não foi possível confirmar a autorização. Confira o estado atualizado do atendimento.", "error"); await loadQueue(true, true).catch(() => undefined); }
       finally { sending = false; button.disabled = false; button.textContent = "Autorizar"; }
     }
 
@@ -774,10 +892,79 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
       finally { sending = false; button.disabled = false; button.textContent = "Enviar ao cliente"; }
     }
 
+    function makeAppointmentPanel(item) {
+      const appointment = item && item.appointment;
+      if (!appointment) return null;
+      const panel = document.createElement("section");
+      panel.className = "action-panel appointment-action-panel";
+      const title = document.createElement("h3");
+      title.textContent = appointment.status === "CONFIRMED" ? "AGENDAMENTO CONFIRMADO" : "SOLICITAÇÃO DE AGENDAMENTO";
+      panel.append(title);
+      stampActionIdentity(panel, item);
+      const status = document.createElement("p");
+      status.className = "action-message";
+      status.textContent = appointment.status === "CONFIRMED" ? "Status: Agendamento confirmado" : "Status: Aguardando confirmação da oficina";
+      panel.append(status);
+      addInfo(panel, "Serviço", appointment.requestDescription || item.quote.requestDescription);
+      addInfo(panel, "Orçamento aceito", item.quote.authorizedPrice ? formatMoneyCents(item.quote.authorizedPrice.amountCents) : "—");
+      if (appointment.status === "CONFIRMED") {
+        addInfo(panel, "Data", appointment.requestedDate ? appointment.requestedDate.split("-").reverse().join("/") : "—");
+        addInfo(panel, "Horário", appointment.requestedTime || "—");
+        return panel;
+      }
+      const form = document.createElement("form");
+      form.className = "appointment-confirm-form";
+      const dateLabel = document.createElement("label");
+      dateLabel.textContent = "Data";
+      const date = document.createElement("input");
+      date.type = "date";
+      date.required = true;
+      date.value = appointment.requestedDate || "";
+      dateLabel.append(date);
+      const timeLabel = document.createElement("label");
+      timeLabel.textContent = "Horário";
+      const time = document.createElement("input");
+      time.type = "time";
+      time.required = true;
+      time.value = appointment.requestedTime || "";
+      timeLabel.append(time);
+      const submit = document.createElement("button");
+      submit.type = "submit";
+      submit.className = "send-button";
+      submit.textContent = "Confirmar agendamento";
+      const message = document.createElement("p");
+      message.className = "action-message";
+      message.setAttribute("aria-live", "polite");
+      form.append(dateLabel, timeLabel, submit, message);
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        if (!validateActionIdentity(item, panel) || sending) return;
+        sending = true;
+        submit.disabled = true;
+        try {
+          const response = await fetch("/v1/businesses/" + encodeURIComponent(operator.businessId) + "/appointments/" + encodeURIComponent(appointment.id) + "/confirm", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ conversationId: item.quote.conversationId, quoteRequestId: item.quote.id, appointmentUpdatedAt: appointment.updatedAt, date: date.value, time: time.value }),
+          });
+          if (!response.ok) throw new Error("appointment confirmation failed");
+          await loadQueue(true, true);
+        } catch {
+          message.textContent = "Não foi possível confirmar o agendamento. Confira o estado atualizado do atendimento.";
+          message.dataset.kind = "error";
+          submit.disabled = false;
+          await loadQueue(true, true).catch(() => undefined);
+        } finally { sending = false; }
+      });
+      panel.append(form);
+      return panel;
+    }
+
     function renderDetail(item, moveFocus) {
       document.body.classList.add("detail-open");
       const content = document.createElement("div");
       content.className = "detail-content";
+      stampActionIdentity(content, item);
       const toolbar = document.createElement("div");
       toolbar.className = "detail-toolbar";
       toolbar.append(makeBackButton());
@@ -798,7 +985,7 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
       grid.append(
         makeInfoBlock("Cliente", [
           ["Nome", customer && customer.name],
-          ["Telefone", customer && customer.primaryPhone],
+          ["Contato", item.contactLabel || (item.conversation && item.conversation.channel === "WHATSAPP" ? "WhatsApp" : item.conversation && item.conversation.channel)],
           ["E-mail", customer && customer.email],
         ]),
         makeInfoBlock("Veículo", [
@@ -832,10 +1019,14 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
         button.addEventListener("click", () => void loadHistory(item, historyList, historyArea, retryButton));
         return button;
       };
+      refreshSelectedHistory = () => void loadHistory(item, historyList, historyArea, retryButton, false);
 
-      content.append(toolbar, grid, historyHeading, historyArea);
+      const appointmentPanel = makeAppointmentPanel(item);
+      content.append(toolbar, grid);
+      if (appointmentPanel) content.append(appointmentPanel);
+      content.append(historyHeading, historyArea);
       void loadInventory(item, inventory);
-      if (integratedCapabilities.canBuildIntegratedQuote && (item.quote.status === "WAITING_BUSINESS" || (item.quote.status === "RESPONDED" && item.draft))) {
+      if (item.quoteActionable === true && integratedCapabilities.canBuildIntegratedQuote && (item.quote.status === "WAITING_BUSINESS" || (item.quote.status === "RESPONDED" && item.draft))) {
         const manualToggle = document.createElement("button");
         manualToggle.type = "button";
         manualToggle.className = "secondary-action";
@@ -860,7 +1051,7 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
         if (moveFocus) title.focus({ preventScroll: true });
         return;
       }
-      if (item.quote.status === "WAITING_BUSINESS" || item.quote.status === "RESPONDED") {
+      if (item.quote.status === "WAITING_BUSINESS" || (item.quote.status === "RESPONDED" && item.quoteActionable === true)) {
         const action = document.createElement("form");
         action.className = "action-panel";
         const actionTitle = document.createElement("h3");
@@ -890,12 +1081,23 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
         actionMessage.className = "action-message";
         actionMessage.setAttribute("aria-live", "polite");
         action.append(actionTitle, label, control, submit, actionMessage);
+        stampActionIdentity(action, item);
         action.addEventListener("submit", (event) => {
           event.preventDefault();
+          if (!validateActionIdentity(item, action)) return;
           if (item.quote.status === "RESPONDED") void publishManual(item, submit, actionMessage);
           else void authorizeManual(item, input, submit, actionMessage);
         });
         content.append(action);
+      } else if (item.quote.status === "RESPONDED") {
+        const statusMessage = document.createElement("p");
+        statusMessage.className = "history-empty";
+        statusMessage.textContent = item.delivery?.status === "PENDING" || item.delivery?.status === "SENDING"
+          ? "Envio do orçamento em andamento."
+          : item.delivery?.status === "FAILED_FINAL"
+            ? "O envio do orçamento foi encerrado com erro."
+            : "Orçamento já enviado ao cliente.";
+        content.append(statusMessage);
       } else if (item.quote.status === "WAITING_INFORMATION" || item.quote.status === "REQUESTED") {
         const statusMessage = document.createElement("p");
         statusMessage.className = "history-empty";
@@ -907,7 +1109,7 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
       if (moveFocus) title.focus({ preventScroll: true });
     }
 
-    async function loadQueue(reconcile = false) {
+    async function loadQueue(reconcile = false, acceptSelectedChanges = false) {
       if (loading || (sending && !reconcile)) return;
       loading = true;
       refreshButton.disabled = true;
@@ -921,13 +1123,23 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
         renderQueue();
         const selected = items.find((item) => item.quote.id === selectedQuoteId);
         if (selected) {
-          if (reconcile || selected.quote.status !== selectedQuoteStatus) {
+          const currentSnapshot = snapshotItem(selected);
+          const selectionChanged = selectedQuoteSnapshot !== null && !sameSnapshot(selectedQuoteSnapshot, currentSnapshot);
+          if (selectedQuoteStale && !acceptSelectedChanges) {
+            markSelectedQuoteStale(detailPanel.querySelector(".action-panel"));
+          } else if (selectionChanged && !acceptSelectedChanges) {
+            markSelectedQuoteStale(detailPanel.querySelector(".action-panel"));
+          } else if (!selectedQuoteSnapshot || selectionChanged || reconcile) {
+            selectedQuoteSnapshot = currentSnapshot;
+            selectedQuoteStale = false;
             selectedQuoteStatus = selected.quote.status;
             renderDetail(selected, false);
-          }
+          } else if (refreshSelectedHistory) refreshSelectedHistory();
         } else if (selectedQuoteId !== null) {
           selectedQuoteId = null;
           selectedQuoteStatus = null;
+          selectedQuoteSnapshot = null;
+          selectedQuoteStale = false;
           showPlaceholder();
         }
         if (previousFeedbackKind === "load-error") setFeedback("", "info");
@@ -944,7 +1156,7 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
       }
     }
 
-    refreshButton.addEventListener("click", () => void loadQueue());
+    refreshButton.addEventListener("click", () => void loadQueue(true, true));
     renderQueue();
     void loadIntegratedCapabilities().then(() => loadQueue());
     window.setInterval(() => {

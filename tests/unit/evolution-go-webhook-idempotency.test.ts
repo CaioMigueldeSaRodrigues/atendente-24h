@@ -118,10 +118,25 @@ async function createHarness(options: HarnessOptions) {
       }),
     },
   );
+  const postReceipt = (providerMessageId: string, status = "Delivered", instanceToken = credential.instanceToken) => fetch(
+    `http://127.0.0.1:${address.port}/v1/channels/whatsapp/evolution-go/webhook`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        event: "Receipt",
+        instanceName: credential.instanceName,
+        instanceToken,
+        state: status,
+        data: { MessageIDs: [providerMessageId], Type: status === "Delivered" ? "" : "read", Timestamp: "2026-01-02T00:00:00.000Z", Chat: "masked@s.whatsapp.net" },
+      }),
+    },
+  );
   return {
     database,
     server,
     post,
+    postReceipt,
     sent,
     get calls() { return calls; },
     async messages() {
@@ -136,6 +151,18 @@ async function createHarness(options: HarnessOptions) {
     },
   };
 }
+
+test("Receipt webhook keeps authentication and replay idempotency", async () => {
+  const harness = await createHarness({ interpret: async () => interpretation });
+  try {
+    assert.equal((await harness.postReceipt("provider-receipt-1", "Delivered", "invalid-token")).status, 401);
+    assert.equal((await harness.postReceipt("provider-receipt-1")).status, 202);
+    assert.equal((await harness.postReceipt("provider-receipt-1")).status, 202);
+    assert.equal(harness.database.prepare("SELECT COUNT(*) AS count FROM evolution_go_delivery_receipts").get()?.count, 1);
+  } finally {
+    await harness.close();
+  }
+});
 
 test("rolls back effects when processMessage fails after a persistent effect", async () => {
   const harness = await createHarness({
@@ -171,6 +198,7 @@ test("rolls back effects when markProcessed fails and retries processMessage onc
       return base.markProcessed(input);
     },
     markSent: base.markSent.bind(base),
+    applyProviderReceipt: base.applyProviderReceipt.bind(base),
     complete: base.complete.bind(base),
     release: base.release.bind(base),
   };

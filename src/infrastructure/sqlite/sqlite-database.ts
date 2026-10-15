@@ -46,7 +46,27 @@ const INITIAL_SCHEMA = `
     sender_jid TEXT,
     reply TEXT,
     sent_at TEXT,
+    provider_message_id TEXT,
+    provider_status TEXT NOT NULL DEFAULT 'ACCEPTED_BY_PROVIDER',
+    provider_accepted_at TEXT,
+    delivered_at TEXT,
+    read_at TEXT,
     PRIMARY KEY (business_id, instance_name, external_message_id),
+    FOREIGN KEY (business_id) REFERENCES automotive_businesses(id)
+  );
+
+  CREATE UNIQUE INDEX IF NOT EXISTS evolution_go_webhook_receipts_provider_message_idx
+    ON evolution_go_webhook_receipts (business_id, instance_name, provider_message_id)
+    WHERE provider_message_id IS NOT NULL;
+
+  CREATE TABLE IF NOT EXISTS evolution_go_delivery_receipts (
+    business_id TEXT NOT NULL,
+    instance_name TEXT NOT NULL,
+    provider_message_id TEXT NOT NULL,
+    provider_status TEXT NOT NULL CHECK (provider_status IN ('DELIVERED', 'READ')),
+    occurred_at TEXT NOT NULL,
+    received_at TEXT NOT NULL,
+    PRIMARY KEY (business_id, instance_name, provider_message_id, provider_status),
     FOREIGN KEY (business_id) REFERENCES automotive_businesses(id)
   );
 
@@ -231,6 +251,32 @@ const INITIAL_SCHEMA = `
   CREATE INDEX IF NOT EXISTS quote_requests_business_status_idx
     ON quote_requests (business_id, status);
 
+  CREATE TABLE IF NOT EXISTS appointments (
+    id TEXT NOT NULL,
+    business_id TEXT NOT NULL,
+    opportunity_id TEXT,
+    conversation_id TEXT NOT NULL,
+    customer_id TEXT,
+    vehicle_id TEXT,
+    requested_date TEXT,
+    requested_time TEXT,
+    confirmed_start_at TEXT,
+    status TEXT NOT NULL,
+    request_description TEXT,
+    external_appointment_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (business_id, id),
+    FOREIGN KEY (business_id) REFERENCES automotive_businesses(id),
+    FOREIGN KEY (business_id, opportunity_id) REFERENCES opportunities(business_id, id),
+    FOREIGN KEY (business_id, conversation_id) REFERENCES conversations(business_id, id),
+    FOREIGN KEY (business_id, customer_id) REFERENCES customers(business_id, id),
+    FOREIGN KEY (business_id, vehicle_id) REFERENCES vehicles(business_id, id)
+  );
+
+  CREATE INDEX IF NOT EXISTS appointments_business_conversation_idx
+    ON appointments (business_id, conversation_id, created_at);
+
   CREATE TABLE IF NOT EXISTS commercial_events (
     id TEXT NOT NULL,
     business_id TEXT NOT NULL,
@@ -322,7 +368,8 @@ const INITIAL_SCHEMA = `
     id TEXT NOT NULL,
     business_id TEXT NOT NULL,
     message_id TEXT,
-    quote_request_id TEXT NOT NULL,
+    quote_request_id TEXT,
+    appointment_id TEXT,
     conversation_id TEXT NOT NULL,
     channel TEXT NOT NULL,
     recipient_ref TEXT,
@@ -341,14 +388,24 @@ const INITIAL_SCHEMA = `
     claim_token TEXT,
     PRIMARY KEY (business_id, id),
     UNIQUE (business_id, message_id, channel),
-    UNIQUE (business_id, quote_request_id, channel),
+    CHECK ((quote_request_id IS NOT NULL AND appointment_id IS NULL)
+      OR (quote_request_id IS NULL AND appointment_id IS NOT NULL)),
     FOREIGN KEY (business_id, message_id)
       REFERENCES messages(business_id, id),
     FOREIGN KEY (business_id, quote_request_id)
       REFERENCES quote_requests(business_id, id),
+    FOREIGN KEY (business_id, appointment_id)
+      REFERENCES appointments(business_id, id),
     FOREIGN KEY (business_id, conversation_id)
       REFERENCES conversations(business_id, id)
   );
+
+  CREATE UNIQUE INDEX IF NOT EXISTS outbound_deliveries_business_quote_channel_idx
+    ON outbound_deliveries (business_id, quote_request_id, channel)
+    WHERE quote_request_id IS NOT NULL;
+  CREATE UNIQUE INDEX IF NOT EXISTS outbound_deliveries_business_appointment_channel_idx
+    ON outbound_deliveries (business_id, appointment_id, channel)
+    WHERE appointment_id IS NOT NULL;
 
   CREATE INDEX IF NOT EXISTS outbound_deliveries_business_status_idx
     ON outbound_deliveries (business_id, status, next_attempt_at);
@@ -462,8 +519,14 @@ function migrateEvolutionGoWebhookReceipts(database: DatabaseSync): void {
     ["sender_jid", "TEXT"],
     ["reply", "TEXT"],
     ["sent_at", "TEXT"],
+    ["provider_message_id", "TEXT"],
+    ["provider_status", "TEXT NOT NULL DEFAULT 'ACCEPTED_BY_PROVIDER'"],
+    ["provider_accepted_at", "TEXT"],
+    ["delivered_at", "TEXT"],
+    ["read_at", "TEXT"],
   ] as const;
   for (const [name, definition] of additions) {
     if (!columns.has(name)) database.exec(`ALTER TABLE evolution_go_webhook_receipts ADD COLUMN ${name} ${definition}`);
   }
+  database.exec("CREATE UNIQUE INDEX IF NOT EXISTS evolution_go_webhook_receipts_provider_message_idx ON evolution_go_webhook_receipts (business_id, instance_name, provider_message_id) WHERE provider_message_id IS NOT NULL");
 }

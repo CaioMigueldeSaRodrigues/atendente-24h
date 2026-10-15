@@ -30,7 +30,14 @@ const createHarness = async ({
   filename = ":memory:",
   failReservation = false,
   failAttach = false,
-}: { channel?: Channel; withLink?: boolean; senderFails?: boolean; filename?: string; failReservation?: boolean; failAttach?: boolean } = {}) => {
+  failConversationLoad = false,
+  failRecipientResolution = false,
+  failDraftLoad = false,
+  failPublicationPersistence = false,
+  failPublicationTransaction = false,
+  authorizedAmountCents = 65000,
+  secondQuote,
+}: { channel?: Channel; withLink?: boolean; senderFails?: boolean; filename?: string; failReservation?: boolean; failAttach?: boolean; failConversationLoad?: boolean; failRecipientResolution?: boolean; failDraftLoad?: boolean; failPublicationPersistence?: boolean; failPublicationTransaction?: boolean; authorizedAmountCents?: number; secondQuote?: { id: string; opportunityId: string } } = {}) => {
   const database = createSqliteDatabase({ filename });
   const businessRepository = new SqliteAutomotiveBusinessRepository(database);
   const conversationRepository = new SqliteConversationRepository(database);
@@ -46,8 +53,17 @@ const createHarness = async ({
   if (failAttach) {
     outboundDeliveryRepository.attachMessage = async () => { throw new Error("synthetic outbox attach failure"); };
   }
+  if (failPublicationPersistence) {
+    messageRepository.save = async () => { throw new Error("synthetic publication persistence failure"); };
+  }
   const commercialEventRepository = new SqliteCommercialEventRepository(database);
   const linkRepository = new SqliteEvolutionGoConversationLinkRepository(database);
+  if (failConversationLoad) {
+    conversationRepository.findById = async () => null;
+  }
+  if (failRecipientResolution) {
+    linkRepository.findByConversation = async () => { throw new Error("synthetic recipient lookup failure"); };
+  }
   await businessRepository.save({
     id: "business-a",
     name: "Oficina A",
@@ -85,13 +101,26 @@ const createHarness = async ({
     status: QuoteRequestStatus.RESPONDED,
     requestedAt: timestamp,
     respondedAt: timestamp,
-    authorizedPrice: { amountCents: 65000, currency: "BRL" },
+    authorizedPrice: { amountCents: authorizedAmountCents, currency: "BRL" },
     createdAt: timestamp,
     updatedAt: timestamp,
   };
   await conversationRepository.save(conversation);
   await opportunityRepository.save(opportunity);
   await quoteRequestRepository.save(quoteRequest);
+  if (secondQuote) {
+    await opportunityRepository.save({
+      ...opportunity,
+      id: secondQuote.opportunityId,
+      status: OpportunityStatus.WAITING_BUSINESS,
+    });
+    await quoteRequestRepository.save({
+      ...quoteRequest,
+      id: secondQuote.id,
+      opportunityId: secondQuote.opportunityId,
+      authorizedPrice: { amountCents: authorizedAmountCents, currency: "BRL" },
+    });
+  }
   if (withLink) {
     await linkRepository.save({
       businessId: "business-a",
@@ -104,6 +133,8 @@ const createHarness = async ({
   }
 
   let fail = senderFails;
+  let generatedIdSequence = 0;
+  const operationalEvents: string[] = [];
   const senderCalls: Array<{ recipientJid: string; content: string }> = [];
   const server = createBasicPlanHttpServer({
     conversationRepository,
@@ -115,38 +146,58 @@ const createHarness = async ({
     outboundDeliveryRepository,
     commercialEventRepository,
     evolutionGoConversationLinkRepository: linkRepository,
+    ...(failDraftLoad ? {
+      quoteDraftRepository: {
+        findById: async () => null,
+        findLatestByQuoteRequest: async () => { throw new Error("synthetic draft lookup failure"); },
+        save: async () => undefined,
+        approve: async () => undefined,
+        markPublished: async () => undefined,
+      },
+    } : {}),
     channelTextSenders: {
       [Channel.WHATSAPP]: {
         async sendText(message) {
           senderCalls.push(message);
           if (fail) throw new Error("synthetic sender failure");
+          return { providerMessageId: "provider-message-publish" };
         },
       },
     },
     appointmentRepository: new InMemoryAppointmentRepository(),
     humanHandoffRepository: new InMemoryHumanHandoffRepository(),
-    evolutionGoWebhookTransaction: { run: <T>(operation: () => Promise<T>) => withSqliteTransaction(database, operation) },
+    evolutionGoWebhookTransaction: {
+      run: async <T>(operation: () => Promise<T>) => {
+        if (failPublicationTransaction) throw new Error("synthetic publication transaction failure");
+        return withSqliteTransaction(database, operation);
+      },
+    },
     operator: { businessId: "business-a", businessName: "Oficina A" },
     businessOperatorAuthorizer: { isAuthorized: async ({ businessId }) => businessId === "business-a" },
     interpreter: { interpret: async () => { throw new Error("interpreter should not be called"); } },
+    operationalLog: (event: string) => operationalEvents.push(event),
     now: () => timestamp,
-    generateId: (prefix: string) => `${prefix}-generated`,
+    generateId: (prefix: string) => {
+      generatedIdSequence += 1;
+      return generatedIdSequence <= 2 ? `${prefix}-generated` : `${prefix}-generated-${generatedIdSequence}`;
+    },
   });
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(0, "127.0.0.1", () => resolve());
   });
   const address = server.address() as AddressInfo;
-  const post = () => fetch(`http://127.0.0.1:${address.port}/v1/businesses/business-a/quotes/${quoteRequest.id}/publish`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: "{}",
-  });
   return {
-    post,
+    post: (quoteId = quoteRequest.id) => fetch(`http://127.0.0.1:${address.port}/v1/businesses/business-a/quotes/${quoteId}/publish`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    }),
     database,
     outboundDeliveryRepository,
     senderCalls,
+    operationalEvents,
+    secondQuoteId: secondQuote?.id,
     setSenderFailure(value: boolean) { fail = value; },
     messageRepository,
     commercialEventRepository,
@@ -156,6 +207,57 @@ const createHarness = async ({
     },
   };
 };
+
+test("publica o fluxo operacional sanitizado sem dados do atendimento", async () => {
+  const harness = await createHarness();
+  try {
+    const response = await harness.post();
+    assert.equal(response.status, 200);
+    assert.deepEqual(harness.operationalEvents, [
+      "QUOTE publish requested",
+      "QUOTE authorization loaded",
+      "QUOTE conversation loaded",
+      "QUOTE recipient resolved",
+      "QUOTE publication transaction started",
+      "Outbound delivery reserved",
+      "QUOTE publication persisted",
+      "QUOTE publication transaction committed",
+      "Evolution send accepted",
+    ]);
+    assert.equal(harness.operationalEvents.join(" ").includes("5511999990000"), false);
+    assert.equal(harness.operationalEvents.join(" ").includes("Troca"), false);
+    assert.equal(harness.operationalEvents.join(" ").includes("quote-publish"), false);
+  } finally {
+    await harness.close();
+  }
+});
+
+test("falhas de cada etapa de publicaÃ§Ã£o registram somente a categoria segura", async () => {
+  const cases = [
+    { options: {}, quoteId: "missing-quote", status: 404, category: "quote_request_load" },
+    { options: { failConversationLoad: true }, quoteId: undefined, status: 404, category: "conversation_load" },
+    { options: { failRecipientResolution: true }, quoteId: undefined, status: 500, category: "recipient_resolution" },
+    { options: { failDraftLoad: true }, quoteId: undefined, status: 500, category: "draft_validation" },
+    { options: { failPublicationTransaction: true }, quoteId: undefined, status: 500, category: "publication_transaction" },
+    { options: { failReservation: true }, quoteId: undefined, status: 500, category: "outbound_reservation" },
+    { options: { failPublicationPersistence: true }, quoteId: undefined, status: 500, category: "publication_persistence" },
+    { options: { failAttach: true }, quoteId: undefined, status: 500, category: "outbound_attach" },
+  ] as const;
+
+  for (const testCase of cases) {
+    const harness = await createHarness(testCase.options);
+    try {
+      const response = await harness.post(testCase.quoteId);
+      assert.equal(response.status, testCase.status, testCase.category);
+      assert.equal(harness.operationalEvents.at(-1), `QUOTE publish error ${testCase.category}`);
+      assert.equal(harness.operationalEvents.join(" ").includes("synthetic"), false);
+      assert.equal(harness.operationalEvents.join(" ").includes("5511999990000"), false);
+      assert.equal(harness.operationalEvents.join(" ").includes("quote-publish"), false);
+    } finally {
+      await harness.close();
+    }
+  }
+});
 
 test("sender falha sem afirmar entrega e retry reutiliza a Message publicada", async () => {
   const harness = await createHarness({ senderFails: true });
@@ -187,6 +289,7 @@ test("sender falha sem afirmar entrega e retry reutiliza a Message publicada", a
       "business-a", "message-generated", Channel.WHATSAPP,
     );
     assert.equal(delivered?.status, "DELIVERED");
+    assert.equal(delivered?.providerMessageId, "provider-message-publish");
     assert.equal(delivered?.attempts, 2);
     assert.equal((await harness.messageRepository.listByConversation("business-a", "conversation-publish")).length, 1);
     assert.equal((await harness.commercialEventRepository.listByBusiness("business-a")).length, 1);
@@ -212,6 +315,44 @@ test("duas instâncias sobre o mesmo SQLite criam uma única publicação lógic
     await first.close();
     await second.close();
     rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("publica dois quotes iguais na mesma conversa sem reutilizar a Message financeira", async () => {
+  const harness = await createHarness({
+    authorizedAmountCents: 18000,
+    secondQuote: { id: "quote-publish-b", opportunityId: "opportunity-publish-b" },
+  });
+  try {
+    const first = await harness.post();
+    const second = await harness.post(harness.secondQuoteId!);
+    assert.equal(first.status, 200);
+    assert.equal(second.status, 200);
+
+    const messages = (await harness.messageRepository.listByConversation("business-a", "conversation-publish"))
+      .filter((message) => message.senderType === "ASSISTANT");
+    assert.equal(messages.length, 2);
+    assert.equal(messages[0]?.content, messages[1]?.content);
+
+    const firstDelivery = await harness.outboundDeliveryRepository.findByQuoteRequestAndChannel("business-a", "quote-publish", Channel.WHATSAPP);
+    const secondDelivery = await harness.outboundDeliveryRepository.findByQuoteRequestAndChannel("business-a", "quote-publish-b", Channel.WHATSAPP);
+    assert.ok(firstDelivery);
+    assert.ok(secondDelivery);
+    assert.notEqual(firstDelivery.id, secondDelivery.id);
+    assert.notEqual(firstDelivery.messageId, secondDelivery.messageId);
+    assert.equal(firstDelivery.status, "DELIVERED");
+    assert.equal(secondDelivery.status, "DELIVERED");
+
+    const firstRetry = await harness.post();
+    const secondRetry = await harness.post(harness.secondQuoteId!);
+    assert.equal(firstRetry.status, 200);
+    assert.equal(secondRetry.status, 200);
+    assert.equal((await firstRetry.json() as { delivery: { status: string } }).delivery.status, "ALREADY_DELIVERED");
+    assert.equal((await secondRetry.json() as { delivery: { status: string } }).delivery.status, "ALREADY_DELIVERED");
+    assert.equal((await harness.messageRepository.listByConversation("business-a", "conversation-publish")).filter((message) => message.senderType === "ASSISTANT").length, 2);
+    assert.equal(harness.senderCalls.length, 2);
+  } finally {
+    await harness.close();
   }
 });
 

@@ -16,7 +16,7 @@ class FakeDatabase {
   async query<RowType extends QueryResultRow = QueryResultRow>(text: string, values: readonly unknown[] = []) {
     if (text.startsWith("INSERT INTO outbound_deliveries")) {
       const row = this.rowFromValues(values);
-      const key = `${row.business_id}:${row.quote_request_id}:${row.channel}`;
+      const key = `${row.business_id}:${row.quote_request_id ?? row.appointment_id}:${row.channel}`;
       const created = !this.rows.has(key);
       if (created) this.rows.set(key, row);
       return { rows: [], rowCount: created ? 1 : 0 } as { rows: RowType[]; rowCount: number };
@@ -74,9 +74,9 @@ class FakeDatabase {
   private rowFromValues(values: readonly unknown[]): Row {
     return {
       id: values[0], business_id: values[1], message_id: values[2], quote_request_id: values[3],
-      conversation_id: values[4], channel: values[5], recipient_ref: values[6], status: values[7],
-      attempts: values[8], last_error: values[9], provider_message_id: values[10], next_attempt_at: values[11],
-      created_at: values[12], updated_at: values[13], delivered_at: values[14], claimed_at: values[15], lease_until: values[16], claim_token: values[17],
+      appointment_id: values[4], conversation_id: values[5], channel: values[6], recipient_ref: values[7], status: values[8],
+      attempts: values[9], last_error: values[10], provider_message_id: values[11], next_attempt_at: values[12],
+      created_at: values[13], updated_at: values[14], delivered_at: values[15], claimed_at: values[16], lease_until: values[17], claim_token: values[18],
     };
   }
 }

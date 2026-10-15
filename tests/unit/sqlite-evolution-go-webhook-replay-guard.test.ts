@@ -151,6 +151,28 @@ test("processed receipts preserve the reply for a send retry", async () => {
   }
 });
 
+test("provider receipts are monotonic and idempotent after accepted_by_provider", async () => {
+  const database = createSqliteDatabase({ filename: ":memory:" });
+  try {
+    await addBusinesses(database);
+    const guard = new SqliteEvolutionGoWebhookReplayGuard(database);
+    const attempt = input();
+    assert.equal(guard.claim(attempt).status, "claimed");
+    const key = { businessId: attempt.businessId, instanceName: attempt.instanceName, externalMessageId: attempt.externalMessageId, claimToken: attempt.claimToken };
+    assert.equal(await guard.markProcessed({ ...key, conversationId: "conversation-1", senderJid: "sender@example.invalid", reply: "reply synthetic" }), true);
+    assert.equal(guard.markSent({ ...key, sentAt: "2026-01-02T03:05:00.000Z", providerMessageId: "provider-message-1" }), true);
+    const delivered = { businessId: attempt.businessId, instanceName: attempt.instanceName, providerMessageId: "provider-message-1", status: "DELIVERED" as const, occurredAt: "2026-01-02T03:06:00.000Z" };
+    assert.equal(guard.applyProviderReceipt(delivered), true);
+    assert.equal(guard.applyProviderReceipt(delivered), true);
+    assert.equal(guard.applyProviderReceipt({ ...delivered, status: "READ", occurredAt: "2026-01-02T03:07:00.000Z" }), true);
+    const row = database.prepare("SELECT provider_status,provider_message_id,delivered_at,read_at FROM evolution_go_webhook_receipts").get() as Record<string, unknown>;
+    assert.deepEqual({ ...row }, { provider_status: "READ", provider_message_id: "provider-message-1", delivered_at: "2026-01-02T03:06:00.000Z", read_at: "2026-01-02T03:07:00.000Z" });
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM evolution_go_delivery_receipts").get()?.count, 2);
+  } finally {
+    database.close();
+  }
+});
+
 test("release only removes the current claim and permits an immediate retry", async () => {
   const database = createSqliteDatabase({ filename: ":memory:" });
   try {
@@ -212,7 +234,8 @@ test("temporary and final records contain no credentials or message content", as
 
     const receipts = database.prepare("SELECT * FROM evolution_go_webhook_receipts").all();
     assert.deepEqual(Object.keys(receipts[0] ?? {}).sort(), [
-      "business_id", "conversation_id", "external_message_id", "instance_name", "received_at",
+      "business_id", "conversation_id", "delivered_at", "external_message_id", "instance_name",
+      "provider_accepted_at", "provider_message_id", "provider_status", "read_at", "received_at",
       "reply", "sender_jid", "sent_at", "status",
     ]);
     assert.equal(JSON.stringify(receipts).includes(attempt.claimToken), false);

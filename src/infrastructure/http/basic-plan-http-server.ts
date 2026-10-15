@@ -6,15 +6,18 @@ import type { Channel as ChannelType } from "../../core/domain/enums.js";
 import type { Conversation } from "../../core/domain/entities.js";
 import { processMessage } from "../../core/process-message.js";
 import { respondToQuote } from "../../core/respond-to-quote.js";
+import { confirmAppointment, ConfirmAppointmentError } from "../../core/confirm-appointment.js";
 import { publishAuthorizedQuote } from "../../core/publish-authorized-quote.js";
 import { outboundDeliveryLeaseUntil } from "../../core/outbound-delivery-policy.js";
 import { parseEvolutionGoInboundText } from "../../channels/whatsapp/evolution-go-message-parser.js";
+import { parseEvolutionGoReceipt } from "../../channels/whatsapp/evolution-go-receipt-parser.js";
 import {
   authenticateEvolutionGoWebhook,
   type EvolutionGoWebhookCredential,
 } from "../../channels/whatsapp/evolution-go-webhook-auth.js";
 import type { EvolutionGoWebhookReplayGuard } from "../../channels/whatsapp/evolution-go-webhook-replay-guard.js";
 import type { EvolutionGoConversationLinkRepository } from "../../channels/whatsapp/evolution-go-conversation-link.js";
+import { maskEvolutionGoContact } from "../../channels/whatsapp/masked-contact.js";
 import type { EvolutionGoTextMessage } from "../../channels/whatsapp/evolution-go-text-sender.js";
 import type { EvolutionGoWebhookTransaction } from "../../channels/whatsapp/evolution-go-webhook-transaction.js";
 import type { ChannelTextSender } from "../../channels/channel-text-sender.js";
@@ -34,6 +37,7 @@ import { buildQuoteDraft, QuoteDraftError, type LaborDraftInput, type ProductDra
 import type { QuotePersistenceTransaction } from "../../core/quote-persistence-transaction.js";
 import type { BusinessOperatorAuthorizer } from "../../core/business-operator-authorizer.js";
 import { QuoteDraftStatus } from "../../core/quote-draft.js";
+import { isQuoteOperatorActionable } from "../../core/quote-actionability.js";
 
 const MAX_BODY_BYTES = 1024 * 1024;
 
@@ -56,12 +60,16 @@ type PublishedQuoteDeliveryState = {
     result: AtomicPublishedQuote["result"];
     delivery: PublishedQuoteDelivery;
   }>>;
+  appointmentConfirming: Map<string, Promise<AppointmentConfirmation>>;
+};
+
+type AppointmentConfirmation = Awaited<ReturnType<typeof confirmAppointment>> & {
+  deliveryResult: PublishedQuoteDelivery;
 };
 
 type PublishedQuoteDeliveryInput = {
   businessId: string;
   messageId: string;
-  quoteRequestId: string;
   conversationId: string;
   channel: ChannelType;
   content: string;
@@ -91,7 +99,7 @@ export type BasicPlanHttpServerDependencies = {
   evolutionGoWebhookCredentials?: EvolutionGoWebhookCredential[];
   evolutionGoWebhookReplayGuard?: EvolutionGoWebhookReplayGuard;
   evolutionGoConversationLinkRepository?: EvolutionGoConversationLinkRepository;
-  evolutionGoTextSender?: { sendText(message: EvolutionGoTextMessage): Promise<void> };
+  evolutionGoTextSender?: { sendText(message: EvolutionGoTextMessage): Promise<void | { providerMessageId: string }> };
   channelTextSenders?: Partial<Record<ChannelType, ChannelTextSender>>;
   adminQueryService?: AdminQueryService;
   adminBusinessScopeAuthorizer?: AdminBusinessScopeAuthorizer;
@@ -100,9 +108,39 @@ export type BasicPlanHttpServerDependencies = {
   evolutionGoWebhookTransaction: EvolutionGoWebhookTransaction;
   operator: BasicPlanOperatorConfig;
   interpreter: MessageInterpreter;
+  operationalLog?: (event: BasicPlanOperationalEvent) => void;
   now: () => string;
   generateId: (prefix: string) => string;
 };
+
+export type BasicPlanOperationalEvent =
+  | "WEBHOOK Message accepted"
+  | "WEBHOOK stale message ignored"
+  | "LLM completed"
+  | "Evolution send accepted"
+  | "Receipt DELIVERED applied"
+  | "Receipt READ applied"
+  | "Webhook error receipt_apply"
+  | "QUOTE publish requested"
+  | "QUOTE authorization loaded"
+  | "QUOTE conversation loaded"
+  | "QUOTE recipient resolved"
+  | "QUOTE publication transaction started"
+  | "QUOTE publication persisted"
+  | "Outbound delivery reserved"
+  | "QUOTE publication transaction committed"
+  | `QUOTE publish error ${QuotePublishErrorCategory}`;
+
+export type QuotePublishErrorCategory =
+  | "quote_request_load"
+  | "conversation_load"
+  | "recipient_resolution"
+  | "publication_transaction"
+  | "draft_validation"
+  | "outbound_reservation"
+  | "publication_persistence"
+  | "outbound_attach"
+  | "draft_state";
 
 export type AdminHttpServerDependencies = Pick<
   BasicPlanHttpServerDependencies,
@@ -115,6 +153,7 @@ export function createBasicPlanHttpServer(
   const deliveryState: PublishedQuoteDeliveryState = {
     inFlight: new Map(),
     publishing: new Map(),
+    appointmentConfirming: new Map(),
   };
   return createServer((request, response) => {
     void handleRequest(request, response, dependencies, deliveryState).catch((cause: unknown) => {
@@ -194,20 +233,25 @@ async function deliverPublishedQuote(
       return { status: "NOT_CONFIGURED", retryable: false };
     }
 
-    if (currentDelivery.recipientRef === undefined) {
+    let recipientRef = currentDelivery.recipientRef;
+    if (recipientRef === undefined) {
       const recipient = await resolveDeliveryRecipient(input, dependencies);
-      const retryable = recipient.retryable;
-      await repository.markFailed(input.businessId, currentDelivery.id, {
-        status: retryable ? OutboundDeliveryStatus.FAILED_RETRYABLE : OutboundDeliveryStatus.FAILED_FINAL,
-        lastError: recipient.retryable ? RECIPIENT_REPOSITORY_NOT_CONFIGURED : RECIPIENT_NOT_FOUND,
-        ...(retryable ? { nextAttemptAt: dependencies.now() } : {}),
-        updatedAt: dependencies.now(),
-      }, claim.delivery.claimToken!);
-      return { status: "RECIPIENT_NOT_FOUND", retryable };
+      if (recipient.recipientRef === undefined) {
+        const retryable = recipient.retryable;
+        await repository.markFailed(input.businessId, currentDelivery.id, {
+          status: retryable ? OutboundDeliveryStatus.FAILED_RETRYABLE : OutboundDeliveryStatus.FAILED_FINAL,
+          lastError: recipient.retryable ? RECIPIENT_REPOSITORY_NOT_CONFIGURED : RECIPIENT_NOT_FOUND,
+          ...(retryable ? { nextAttemptAt: dependencies.now() } : {}),
+          updatedAt: dependencies.now(),
+        }, claim.delivery.claimToken!);
+        return { status: "RECIPIENT_NOT_FOUND", retryable };
+      }
+      recipientRef = recipient.recipientRef;
     }
 
+    let sendResult: void | { providerMessageId: string };
     try {
-      await sender.sendText({ recipientJid: currentDelivery.recipientRef, content: input.content });
+      sendResult = await sender.sendText({ recipientJid: recipientRef, content: input.content });
     } catch (cause) {
       await repository.markFailed(input.businessId, currentDelivery.id, {
         status: OutboundDeliveryStatus.FAILED_RETRYABLE,
@@ -218,12 +262,17 @@ async function deliverPublishedQuote(
       return { status: "FAILED", retryable: true };
     }
 
+    emitOperationalEvent(dependencies, "Evolution send accepted");
+    const providerMessageId = sendResult && "providerMessageId" in sendResult
+      ? sendResult.providerMessageId
+      : undefined;
     await repository.markDelivered(
       input.businessId,
       currentDelivery.id,
       dependencies.now(),
       dependencies.now(),
       claim.delivery.claimToken!,
+      providerMessageId,
     );
     return { status: "DELIVERED", retryable: false };
   })();
@@ -257,73 +306,142 @@ async function resolveDeliveryRecipient(
   return { recipientRef: link.senderJid, retryable: false };
 }
 
+async function resolveOperatorContactLabel(
+  businessId: string,
+  conversation: Conversation | null,
+  linkRepository: EvolutionGoConversationLinkRepository | undefined,
+): Promise<string | undefined> {
+  if (conversation?.channel !== Channel.WHATSAPP) return undefined;
+  if (!linkRepository) return "WhatsApp";
+  try {
+    const link = await linkRepository.findByConversation(businessId, conversation.id);
+    return link === null ? "WhatsApp" : maskEvolutionGoContact(link.senderJid);
+  } catch {
+    return "WhatsApp";
+  }
+}
+
 type AtomicPublishedQuote = {
   result: Awaited<ReturnType<typeof publishAuthorizedQuote>>;
   outboundDeliveryId: string;
 };
 
+type QuotePublicationLog = {
+  event: (event: BasicPlanOperationalEvent) => void;
+  error: (category: QuotePublishErrorCategory) => void;
+};
+
+function createQuotePublicationLog(dependencies: BasicPlanHttpServerDependencies): QuotePublicationLog {
+  let errorLogged = false;
+  return {
+    event: (event) => emitOperationalEvent(dependencies, event),
+    error: (category) => {
+      if (errorLogged) return;
+      errorLogged = true;
+      emitOperationalEvent(dependencies, `QUOTE publish error ${category}`);
+    },
+  };
+}
+
 async function publishPublishedQuoteAtomically(
   input: { businessId: string; quoteRequestId: string },
   dependencies: BasicPlanHttpServerDependencies,
+  publicationLog: QuotePublicationLog,
 ): Promise<AtomicPublishedQuote> {
-  const quote = await dependencies.quoteRequestRepository.findById(input.businessId, input.quoteRequestId);
-  if (quote === null) throw new Error("QuoteRequest not found");
-  const conversation = await dependencies.conversationRepository.findById(input.businessId, quote.conversationId);
-  if (conversation === null) throw new Error("Conversation not found");
-  const recipient = await resolveDeliveryRecipient({
-    businessId: input.businessId,
-    conversationId: conversation.id,
-    channel: conversation.channel,
-  }, dependencies);
-  const publish = async () => {
-    const currentQuote = await dependencies.quoteRequestRepository.findById(input.businessId, input.quoteRequestId);
-    if (!currentQuote) throw new Error("QuoteRequest not found");
-    const draft = await dependencies.quoteDraftRepository?.findLatestByQuoteRequest(input.businessId, input.quoteRequestId);
-    if (draft && (![QuoteDraftStatus.APPROVED, QuoteDraftStatus.PUBLISHED].includes(draft.status) || currentQuote.authorizedPrice?.amountCents !== draft.total.amountCents || currentQuote.authorizedPrice.currency !== draft.total.currency)) throw new QuoteDraftError("DRAFT_NOT_APPROVABLE");
-    return dependencies.evolutionGoWebhookTransaction.run(async () => {
-    const now = dependencies.now();
-    const existingDelivery = await dependencies.outboundDeliveryRepository.findByQuoteRequestAndChannel(input.businessId, quote.id, conversation.channel);
-    // A published snapshot can only reuse its persisted publication, never create another.
-    if (draft?.status === QuoteDraftStatus.PUBLISHED && existingDelivery === null) throw new QuoteDraftError("DRAFT_NOT_APPROVABLE");
-    const reservation = existingDelivery === null ? await dependencies.outboundDeliveryRepository.reserve({
-      id: dependencies.generateId("outbound-delivery"),
+  let stage: QuotePublishErrorCategory = "quote_request_load";
+  try {
+    const quote = await dependencies.quoteRequestRepository.findById(input.businessId, input.quoteRequestId);
+    if (quote === null) throw new Error("QuoteRequest not found");
+    publicationLog.event("QUOTE authorization loaded");
+
+    stage = "conversation_load";
+    const conversation = await dependencies.conversationRepository.findById(input.businessId, quote.conversationId);
+    if (conversation === null) throw new Error("Conversation not found");
+    publicationLog.event("QUOTE conversation loaded");
+
+    stage = "recipient_resolution";
+    const recipient = await resolveDeliveryRecipient({
       businessId: input.businessId,
-      quoteRequestId: quote.id,
       conversationId: conversation.id,
       channel: conversation.channel,
-      ...(recipient.recipientRef === undefined ? {} : { recipientRef: recipient.recipientRef }),
-      status: OutboundDeliveryStatus.PENDING,
-      attempts: 0,
-      createdAt: now,
-      updatedAt: now,
-    }) : { created: false, delivery: existingDelivery };
-    if (!reservation.created) {
-      if (reservation.delivery.messageId === undefined) throw new Error("OutboundDelivery has no published message");
-      const messages = await dependencies.messageRepository.listByConversation(input.businessId, conversation.id);
-      const message = messages.find((candidate) => candidate.id === reservation.delivery.messageId);
-      if (message === undefined) throw new Error("Published Message not found");
-      await markIntegratedDraftPublished(input.businessId, input.quoteRequestId, dependencies);
-      return {
-        result: {
-          messageId: message.id,
-          conversationId: conversation.id,
+    }, dependencies);
+    publicationLog.event("QUOTE recipient resolved");
+
+    const publish = async () => {
+      stage = "quote_request_load";
+      const currentQuote = await dependencies.quoteRequestRepository.findById(input.businessId, input.quoteRequestId);
+      if (!currentQuote) throw new Error("QuoteRequest not found");
+      stage = "draft_validation";
+      const draft = await dependencies.quoteDraftRepository?.findLatestByQuoteRequest(input.businessId, input.quoteRequestId);
+      if (draft && (![QuoteDraftStatus.APPROVED, QuoteDraftStatus.PUBLISHED].includes(draft.status) || currentQuote.authorizedPrice?.amountCents !== draft.total.amountCents || currentQuote.authorizedPrice.currency !== draft.total.currency)) throw new QuoteDraftError("DRAFT_NOT_APPROVABLE");
+      stage = "publication_transaction";
+      return dependencies.evolutionGoWebhookTransaction.run(async () => {
+        publicationLog.event("QUOTE publication transaction started");
+        const now = dependencies.now();
+        stage = "outbound_reservation";
+        const existingDelivery = await dependencies.outboundDeliveryRepository.findByQuoteRequestAndChannel(input.businessId, quote.id, conversation.channel);
+        // A published snapshot can only reuse its persisted publication, never create another.
+        if (draft?.status === QuoteDraftStatus.PUBLISHED && existingDelivery === null) throw new QuoteDraftError("DRAFT_NOT_APPROVABLE");
+        const reservation = existingDelivery === null ? await dependencies.outboundDeliveryRepository.reserve({
+          id: dependencies.generateId("outbound-delivery"),
+          businessId: input.businessId,
           quoteRequestId: quote.id,
-          channel: message.channel,
-          content: message.content,
-        },
-        outboundDeliveryId: reservation.delivery.id,
-      };
-    }
-    const result = await publishAuthorizedQuote(
-      { businessId: input.businessId, quoteRequestId: input.quoteRequestId },
-      { ...dependencies, strictCommercialEventPersistence: true },
-    );
-    await dependencies.outboundDeliveryRepository.attachMessage(input.businessId, reservation.delivery.id, result.messageId, dependencies.now());
-    await markIntegratedDraftPublished(input.businessId, input.quoteRequestId, dependencies);
-    return { result, outboundDeliveryId: reservation.delivery.id };
-    });
-  };
-  return dependencies.quoteTransaction ? dependencies.quoteTransaction.run(input.businessId, input.quoteRequestId, publish) : publish();
+          conversationId: conversation.id,
+          channel: conversation.channel,
+          ...(recipient.recipientRef === undefined ? {} : { recipientRef: recipient.recipientRef }),
+          status: OutboundDeliveryStatus.PENDING,
+          attempts: 0,
+          createdAt: now,
+          updatedAt: now,
+        }) : { created: false, delivery: existingDelivery };
+        if (reservation.created) publicationLog.event("Outbound delivery reserved");
+        if (!reservation.created) {
+          if (reservation.delivery.messageId === undefined) throw new Error("OutboundDelivery has no published message");
+          const messages = await dependencies.messageRepository.listByConversation(input.businessId, conversation.id);
+          const message = messages.find((candidate) => candidate.id === reservation.delivery.messageId);
+          if (message === undefined) throw new Error("Published Message not found");
+          stage = "draft_state";
+          await markIntegratedDraftPublished(input.businessId, input.quoteRequestId, dependencies);
+          stage = "publication_transaction";
+          return {
+            result: {
+              messageId: message.id,
+              conversationId: conversation.id,
+              quoteRequestId: quote.id,
+              channel: message.channel,
+              content: message.content,
+            },
+            outboundDeliveryId: reservation.delivery.id,
+          };
+        }
+        stage = "publication_persistence";
+        const result = await publishAuthorizedQuote(
+          { businessId: input.businessId, quoteRequestId: input.quoteRequestId },
+          { ...dependencies, strictCommercialEventPersistence: true },
+        );
+        publicationLog.event("QUOTE publication persisted");
+        stage = "outbound_attach";
+        await dependencies.outboundDeliveryRepository.attachMessage(input.businessId, reservation.delivery.id, result.messageId, dependencies.now());
+        stage = "draft_state";
+        await markIntegratedDraftPublished(input.businessId, input.quoteRequestId, dependencies);
+        stage = "publication_transaction";
+        return { result, outboundDeliveryId: reservation.delivery.id };
+      });
+    };
+    const publication = dependencies.quoteTransaction ? await dependencies.quoteTransaction.run(input.businessId, input.quoteRequestId, publish) : await publish();
+    publicationLog.event("QUOTE publication transaction committed");
+    return publication;
+  } catch (cause) {
+    publicationLog.error(classifyQuotePublishError(stage, cause));
+    throw cause;
+  }
+}
+
+function classifyQuotePublishError(stage: QuotePublishErrorCategory, cause: unknown): QuotePublishErrorCategory {
+  if (cause instanceof QuoteDraftError) return "draft_validation";
+  if (stage === "quote_request_load" && cause instanceof Error && cause.message === "QuoteRequest not found") return "quote_request_load";
+  if (stage === "conversation_load" && cause instanceof Error && cause.message === "Conversation not found") return "conversation_load";
+  return stage;
 }
 
 async function markIntegratedDraftPublished(businessId: string, quoteRequestId: string, dependencies: BasicPlanHttpServerDependencies): Promise<void> {
@@ -447,11 +565,41 @@ async function handleRequest(
       sendError(response, 401, "Unauthorized");
       return;
     }
+    const receipt = parseEvolutionGoReceipt(payload);
+    if (receipt !== null) {
+      const replayGuard = dependencies.evolutionGoWebhookReplayGuard;
+      if (!replayGuard) {
+        sendError(response, 503, "Service unavailable");
+        return;
+      }
+      try {
+        await replayGuard.applyProviderReceipt({
+          businessId: authenticatedWebhook.businessId,
+          instanceName: authenticatedWebhook.instanceName,
+          providerMessageId: receipt.providerMessageId,
+          status: receipt.status,
+          occurredAt: receipt.occurredAt,
+        });
+      } catch (cause) {
+        emitOperationalEvent(dependencies, "Webhook error receipt_apply");
+        throw cause;
+      }
+      emitOperationalEvent(dependencies, receipt.status === "DELIVERED" ? "Receipt DELIVERED applied" : "Receipt READ applied");
+      sendJson(response, 202, { accepted: true, reason: "provider_receipt" });
+      return;
+    }
     const message = parseEvolutionGoInboundText(payload);
     if (message === null) {
       sendJson(response, 202, { accepted: false, reason: "ignored_event" });
       return;
     }
+    const receivedAt = dependencies.now();
+    if (isStaleEvolutionGoInboundMessage(message.occurredAt, receivedAt)) {
+      emitOperationalEvent(dependencies, "WEBHOOK stale message ignored");
+      sendJson(response, 202, { accepted: false, reason: "stale_message" });
+      return;
+    }
+    emitOperationalEvent(dependencies, "WEBHOOK Message accepted");
     const replayGuard = dependencies.evolutionGoWebhookReplayGuard;
     const linkRepository = dependencies.evolutionGoConversationLinkRepository;
     const textSender = dependencies.evolutionGoTextSender;
@@ -459,7 +607,6 @@ async function handleRequest(
       sendError(response, 503, "Service unavailable");
       return;
     }
-    const receivedAt = dependencies.now();
     const claimToken = dependencies.generateId("webhook-claim");
     let claim: Awaited<ReturnType<EvolutionGoWebhookReplayGuard["claim"]>>;
     try {
@@ -519,6 +666,7 @@ async function handleRequest(
             conversationId: resolved.conversation.id,
             content: message.content,
           }, dependencies);
+          emitOperationalEvent(dependencies, "LLM completed");
           const persisted = await replayGuard.markProcessed({
             businessId: authenticatedWebhook.businessId,
             instanceName: authenticatedWebhook.instanceName,
@@ -546,8 +694,9 @@ async function handleRequest(
       }
     }
 
+    let sendResult: void | { providerMessageId: string };
     try {
-      await textSender.sendText({
+      sendResult = await textSender.sendText({
         recipientJid: processed.senderJid,
         content: processed.reply,
       });
@@ -555,11 +704,13 @@ async function handleRequest(
       sendError(response, 503, "Service unavailable");
       return;
     }
+    emitOperationalEvent(dependencies, "Evolution send accepted");
     const sent = await replayGuard.markSent({
       businessId: authenticatedWebhook.businessId,
       instanceName: authenticatedWebhook.instanceName,
       externalMessageId: message.externalMessageId,
       sentAt: dependencies.now(),
+      ...(sendResult && "providerMessageId" in sendResult ? { providerMessageId: sendResult.providerMessageId } : {}),
     });
     if (!sent) {
       sendError(response, 503, "Service unavailable");
@@ -679,11 +830,48 @@ async function handleRequest(
         dependencies.conversationRepository.findById(businessId, quote.conversationId),
       ]);
       const draft = await dependencies.quoteDraftRepository?.findLatestByQuoteRequest(businessId, quote.id);
-      const delivery = conversation === null ? null : await dependencies.outboundDeliveryRepository.findByQuoteRequestAndChannel(businessId, quote.id, conversation.channel);
-      const actionable = quote.status === QuoteRequestStatus.RESPONDED
-        ? (delivery === null || ![OutboundDeliveryStatus.DELIVERED, OutboundDeliveryStatus.FAILED_FINAL].includes(delivery.status))
-        : true;
-      return actionable ? { quote, customer, vehicle, conversation, draft: draft ?? null, delivery } : null;
+      const appointments = conversation === null
+        ? []
+        : await dependencies.appointmentRepository.listByConversation(businessId, conversation.id);
+      const appointment = appointments
+        .filter((candidate) =>
+          (candidate.status === "REQUESTED" || candidate.status === "CONFIRMED") &&
+          candidate.opportunityId === quote.opportunityId,
+        )
+        .at(-1) ?? null;
+      const [delivery, appointmentDelivery] = await Promise.all([
+        conversation === null
+          ? Promise.resolve(null)
+          : dependencies.outboundDeliveryRepository.findByQuoteRequestAndChannel(businessId, quote.id, conversation.channel),
+        appointment === null || conversation === null
+          ? Promise.resolve(null)
+          : dependencies.outboundDeliveryRepository.findByAppointmentAndChannel(businessId, appointment.id, conversation.channel),
+      ]);
+      const contactLabel = await resolveOperatorContactLabel(businessId, conversation, dependencies.evolutionGoConversationLinkRepository);
+      const operatorCustomer = customer === null ? null : {
+        id: customer.id,
+        businessId: customer.businessId,
+        ...(customer.name === undefined ? {} : { name: customer.name }),
+        ...(customer.email === undefined ? {} : { email: customer.email }),
+      };
+      const operatorDelivery = delivery === null ? null : { status: delivery.status };
+      const quoteActionable = isQuoteOperatorActionable(quote.status, delivery?.status);
+      return quoteActionable || appointment !== null
+        ? {
+            quote,
+            customer: operatorCustomer,
+            vehicle,
+            conversation,
+            ...(contactLabel === undefined ? {} : { contactLabel }),
+            draft: draft ?? null,
+            delivery: operatorDelivery,
+            quoteActionable,
+            appointment,
+            appointmentDelivery: appointmentDelivery === null
+              ? null
+              : { status: appointmentDelivery.status, ...(appointmentDelivery.providerMessageId === undefined ? {} : { providerMessageId: appointmentDelivery.providerMessageId }) },
+          }
+        : null;
     }))).filter((item): item is NonNullable<typeof item> => item !== null);
     sendJson(response, 200, { items });
     return;
@@ -749,6 +937,56 @@ async function handleRequest(
     return;
   }
 
+  const appointmentConfirmMatch = pathname.match(/^\/v1\/businesses\/([^/]+)\/appointments\/([^/]+)\/confirm$/);
+  if (request.method === "POST" && appointmentConfirmMatch) {
+    const businessId = decodePathPart(appointmentConfirmMatch[1]);
+    const appointmentId = decodePathPart(appointmentConfirmMatch[2]);
+    if (businessId === null || appointmentId === null) { sendError(response, 400, "Invalid path"); return; }
+    if (!(await isOperatorAuthorized(request, businessId, dependencies))) { sendError(response, 404, "Not found"); return; }
+    const body = await readJsonBody(request, response);
+    if (body === undefined) return;
+    const parsed = parseAppointmentConfirmationBody(body);
+    if (parsed === null) { sendError(response, 400, "Invalid appointment confirmation"); return; }
+    const key = `${businessId}:${appointmentId}`;
+    let confirmation = deliveryState.appointmentConfirming.get(key);
+    if (confirmation === undefined) {
+      confirmation = (async () => {
+        const saved = await dependencies.evolutionGoWebhookTransaction.run(() => confirmAppointment({
+          businessId,
+          appointmentId,
+          ...parsed,
+        }, {
+          appointmentRepository: dependencies.appointmentRepository,
+          conversationRepository: dependencies.conversationRepository,
+          quoteRequestRepository: dependencies.quoteRequestRepository,
+          messageRepository: dependencies.messageRepository,
+          outboundDeliveryRepository: dependencies.outboundDeliveryRepository,
+          ...(dependencies.commercialEventRepository ? { commercialEventRepository: dependencies.commercialEventRepository } : {}),
+          now: dependencies.now,
+          generateId: dependencies.generateId,
+        }));
+        const deliveryResult = await deliverPublishedQuote({
+          businessId,
+          messageId: saved.messageId!,
+          conversationId: saved.appointment!.conversationId,
+          channel: saved.delivery.channel,
+          content: saved.content,
+          outboundDeliveryId: saved.delivery.id,
+        }, dependencies, deliveryState);
+        return { ...saved, deliveryResult };
+      })();
+      deliveryState.appointmentConfirming.set(key, confirmation);
+    }
+    try {
+      const result = await confirmation;
+      const deliveryFailed = result.deliveryResult.status === "FAILED" || result.deliveryResult.status === "SENDING" || result.deliveryResult.status === "RECIPIENT_NOT_FOUND" || (result.deliveryResult.status === "NOT_CONFIGURED" && result.deliveryResult.retryable);
+      sendJson(response, deliveryFailed ? 503 : 200, { ...result, delivery: result.deliveryResult });
+    } finally {
+      if (deliveryState.appointmentConfirming.get(key) === confirmation) deliveryState.appointmentConfirming.delete(key);
+    }
+    return;
+  }
+
   const quoteActionMatch = pathname.match(/^\/v1\/businesses\/([^/]+)\/quotes\/([^/]+)\/(respond|publish)$/);
   if (request.method === "POST" && quoteActionMatch) {
     const businessId = decodePathPart(quoteActionMatch[1]);
@@ -775,16 +1013,17 @@ async function handleRequest(
       sendJson(response, 200, result);
       return;
     }
+    emitOperationalEvent(dependencies, "QUOTE publish requested");
     const publicationKey = `${businessId}:${quoteRequestId}`;
     let publication = deliveryState.publishing.get(publicationKey);
     if (publication === undefined) {
       publication = (async () => {
-        const publication = await publishPublishedQuoteAtomically({ businessId, quoteRequestId }, dependencies);
+        const publicationLog = createQuotePublicationLog(dependencies);
+        const publication = await publishPublishedQuoteAtomically({ businessId, quoteRequestId }, dependencies, publicationLog);
         const result = publication.result;
         const delivery = await deliverPublishedQuote({
           businessId,
           messageId: result.messageId,
-          quoteRequestId,
           conversationId: result.conversationId,
           channel: result.channel,
           content: result.content,
@@ -1015,6 +1254,10 @@ function mapError(cause: unknown): { status: number; body: string } {
     const status = cause.code === "QUOTE_NOT_FOUND" ? 404 : cause.code === "CAPABILITY_REQUIRED" ? 403 : cause.code === "PRICE_UNAVAILABLE" ? 503 : ["DRAFT_IMMUTABLE", "DRAFT_NOT_APPROVABLE", "QUOTE_DRAFT_CONFLICT", "QUOTE_DRAFT_STALE", "MANUAL_QUOTE_CONFLICT"].includes(cause.code) ? 409 : 400;
     return { status, body: cause.code };
   }
+  if (cause instanceof ConfirmAppointmentError) {
+    const status = cause.code === "APPOINTMENT_NOT_FOUND" ? 404 : cause.code === "INVALID_APPOINTMENT_DATETIME" ? 400 : 409;
+    return { status, body: cause.code };
+  }
   const message = cause instanceof Error ? cause.message : "";
   if (message === "Conversation not found" || message === "QuoteRequest not found" || message === "Opportunity not found") {
     return { status: 404, body: message };
@@ -1046,6 +1289,22 @@ function setSecurityHeaders(response: ServerResponse): void {
 function parseExpectedDraft(value: unknown): { draftId: string; revision: number } | null {
   if (!isRecord(value) || typeof value.draftId !== "string" || value.draftId.trim() === "" || typeof value.revision !== "number" || !Number.isSafeInteger(value.revision) || value.revision <= 0) return null;
   return { draftId: value.draftId, revision: value.revision };
+}
+
+function parseAppointmentConfirmationBody(value: unknown): { conversationId: string; quoteRequestId: string; expectedAppointmentUpdatedAt: string; date: string; time: string } | null {
+  if (!isRecord(value)) return null;
+  if (typeof value.conversationId !== "string" || value.conversationId.trim() === "") return null;
+  if (typeof value.quoteRequestId !== "string" || value.quoteRequestId.trim() === "") return null;
+  if (typeof value.appointmentUpdatedAt !== "string" || value.appointmentUpdatedAt.trim() === "") return null;
+  if (typeof value.date !== "string" || value.date.trim() === "") return null;
+  if (typeof value.time !== "string" || value.time.trim() === "") return null;
+  return {
+    conversationId: value.conversationId,
+    quoteRequestId: value.quoteRequestId,
+    expectedAppointmentUpdatedAt: value.appointmentUpdatedAt,
+    date: value.date,
+    time: value.time,
+  };
 }
 
 async function getBusinessCapabilities(businessId: string, dependencies: BasicPlanHttpServerDependencies): Promise<BusinessCapabilities> {
@@ -1086,6 +1345,27 @@ function parseDraftBody(value: unknown): { products: ProductDraftInput[]; labor:
   return { products, labor };
 }
 
+const EVOLUTION_GO_INBOUND_MAX_AGE_MS = 15 * 60 * 1000;
+
+function isStaleEvolutionGoInboundMessage(occurredAt: string, receivedAt: string): boolean {
+  const occurredAtMs = parseEvolutionGoTimestamp(occurredAt);
+  const receivedAtMs = Date.parse(receivedAt);
+  if (occurredAtMs === null || !Number.isFinite(receivedAtMs)) return true;
+  return receivedAtMs - occurredAtMs > EVOLUTION_GO_INBOUND_MAX_AGE_MS;
+}
+
+function parseEvolutionGoTimestamp(value: string): number | null {
+  const dateValue = Date.parse(value);
+  if (Number.isFinite(dateValue)) return dateValue;
+
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) return null;
+  const milliseconds = Math.abs(numericValue) < 100_000_000_000
+    ? numericValue * 1000
+    : numericValue;
+  return Number.isFinite(milliseconds) ? milliseconds : null;
+}
+
 function sendJson(response: ServerResponse, statusCode: number, value: unknown): void {
   if (response.headersSent || response.destroyed) return;
   response.writeHead(statusCode, { "Content-Type": "application/json; charset=utf-8" });
@@ -1094,6 +1374,17 @@ function sendJson(response: ServerResponse, statusCode: number, value: unknown):
 
 function sendError(response: ServerResponse, statusCode: number, error: string): void {
   sendJson(response, statusCode, { error });
+}
+
+function emitOperationalEvent(
+  dependencies: BasicPlanHttpServerDependencies,
+  event: BasicPlanOperationalEvent,
+): void {
+  try {
+    dependencies.operationalLog?.(event);
+  } catch {
+    // Operational logging must never change request behavior.
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

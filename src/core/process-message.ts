@@ -355,23 +355,46 @@ export async function processMessage(
   }
 
   if (appointmentRequested) {
-    const now = dependencies.now();
-    const appointment: Appointment = {
-      id: dependencies.generateId("appointment"),
-      businessId: conversation.businessId,
-      conversationId: conversation.id,
-      ...(conversation.customerId !== undefined
-        ? { customerId: conversation.customerId }
-        : {}),
-      ...(vehicleId !== undefined
-        ? { vehicleId }
-        : {}),
-      status: AppointmentStatus.REQUESTED,
-      requestDescription: interpretation.requestedItem ?? input.content,
-      createdAt: now,
-      updatedAt: now,
-    };
-    await dependencies.appointmentRepository.save(appointment);
+    const acceptedQuote = (await dependencies.quoteRequestRepository.listByConversation(
+      conversation.businessId,
+      conversation.id,
+    )).filter((quote) => quote.status === QuoteRequestStatus.RESPONDED && quote.authorizedPrice !== undefined).at(-1);
+    const activeAppointment = (await dependencies.appointmentRepository.listByConversation(
+      conversation.businessId,
+      conversation.id,
+    )).filter((appointment) => appointment.status === AppointmentStatus.REQUESTED || appointment.status === AppointmentStatus.CONFIRMED).at(-1);
+    if (activeAppointment === undefined) {
+      const now = dependencies.now();
+      const appointment: Appointment = {
+        id: dependencies.generateId("appointment"),
+        businessId: conversation.businessId,
+        ...(acceptedQuote === undefined ? {} : { opportunityId: acceptedQuote.opportunityId }),
+        conversationId: conversation.id,
+        ...(customerId !== undefined ? { customerId } : {}),
+        ...(vehicleId !== undefined ? { vehicleId } : {}),
+        status: AppointmentStatus.REQUESTED,
+        requestDescription: acceptedQuote?.requestDescription ?? interpretation.requestedItem ?? input.content,
+        createdAt: now,
+        updatedAt: now,
+      };
+      await dependencies.appointmentRepository.save(appointment);
+      if (dependencies.commercialEventRepository !== undefined) {
+        await appendCommercialEventSafely(dependencies.commercialEventRepository, () => ({
+          id: dependencies.generateId("commercial-event"),
+          businessId: conversation.businessId,
+          eventType: CommercialEventType.APPOINTMENT_REQUESTED,
+          conversationId: conversation.id,
+          ...(customerId !== undefined ? { customerId } : {}),
+          ...(vehicleId !== undefined ? { vehicleId } : {}),
+          ...(acceptedQuote === undefined ? {} : { opportunityId: acceptedQuote.opportunityId, quoteRequestId: acceptedQuote.id }),
+          channel: conversation.channel,
+          intent: interpretation.intent,
+          commercialOutcome: CommercialOutcome.APPOINTMENT_REQUESTED,
+          ...(appointment.requestDescription === undefined ? {} : { requestedItem: appointment.requestDescription }),
+          occurredAt: now,
+        }));
+      }
+    }
   }
 
   if (requiresHuman) {

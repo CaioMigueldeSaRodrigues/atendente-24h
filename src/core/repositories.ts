@@ -128,6 +128,11 @@ export interface OutboundDeliveryRepository {
     quoteRequestId: string,
     channel: OutboundDelivery["channel"],
   ): Promise<OutboundDelivery | null>;
+  findByAppointmentAndChannel(
+    businessId: string,
+    appointmentId: string,
+    channel: OutboundDelivery["channel"],
+  ): Promise<OutboundDelivery | null>;
   create(entity: OutboundDelivery): Promise<OutboundDelivery>;
   reserve(entity: OutboundDelivery): Promise<OutboundDeliveryReservation>;
   attachMessage(businessId: string, id: string, messageId: string, updatedAt: string): Promise<OutboundDelivery>;
@@ -156,6 +161,7 @@ export interface OutboundDeliveryRepository {
 
 export interface AppointmentRepository {
   findById(businessId: string, id: string): Promise<Appointment | null>;
+  listByConversation(businessId: string, conversationId: string): Promise<Appointment[]>;
   save(entity: Appointment): Promise<void>;
 }
 

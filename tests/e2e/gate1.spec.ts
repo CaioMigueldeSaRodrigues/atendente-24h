@@ -5,16 +5,38 @@ import { AdminPlan } from "../../src/core/admin-plan-entitlement.js";
 async function selectQuote(page: Page, gate: Harness) {
   await page.goto(gate.url + "/operator");
   await page.getByRole("button", { name: /João Açúcar/ }).click();
+  const selectedQuote = page.locator('.quote-option[aria-current="true"]');
+  const quoteId = await selectedQuote.getAttribute("data-quote-request-id");
+  if (!quoteId) throw new Error("Selected quote has no id");
+  const link = (await gate.db.query<{ sender_jid: string }>(
+    "SELECT l.sender_jid FROM quote_requests q JOIN evolution_go_conversation_links l ON l.business_id=q.business_id AND l.conversation_id=q.conversation_id WHERE q.business_id=$1 AND q.id=$2",
+    [businessId, quoteId],
+  )).rows;
+  expect(link).toHaveLength(1);
+  const senderJid = link[0]!.sender_jid;
+  const phone = /^([0-9]{4,})@s\.whatsapp\.net$/.exec(senderJid.trim())?.[1];
+  if (!phone) throw new Error("Selected quote link has no synthetic WhatsApp sender");
+  const contactLabel = `WhatsApp •••• ${phone.slice(-4)}`;
+  await expect(selectedQuote).toContainText(contactLabel);
   await expect(page.locator("#conversation-history")).toContainText(customerText);
   await expect(page.locator(".detail-grid")).toContainText("Toyota");
+  await expect(page.locator(".detail-grid")).toContainText(contactLabel);
   await expect(page.locator(".detail-grid")).toContainText("Corolla");
   await expect(page.locator(".detail-grid")).toContainText("Troca de óleo");
+  const documentHtml = await page.evaluate(() => document.documentElement.outerHTML);
+  expect(documentHtml).not.toContain(senderJid);
+  expect(documentHtml).not.toContain(phone);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 }
 async function clickResponse(page: Page, label: string, suffix: string) {
   const response = page.waitForResponse((r) => r.request().method() === "POST" && r.url().endsWith(suffix));
   await page.getByRole("button", { name: label, exact: true }).click();
   return response;
+}
+async function refreshQueue(page: Page, isMobile: boolean) {
+  const refreshButton = page.locator("#refresh-button");
+  if (isMobile) await refreshButton.evaluate((button) => (button as HTMLButtonElement).click());
+  else await refreshButton.click();
 }
 async function authorizeManual(page: Page, gate: Harness) {
   await selectQuote(page, gate);
@@ -46,7 +68,7 @@ async function assertPublication(gate: Harness, quoteId: string, cents = 28200) 
   const delivery = (await gate.db.query("SELECT * FROM outbound_deliveries WHERE quote_request_id=$1", [quoteId])).rows;
   expect(delivery).toHaveLength(1);
   expect(delivery[0]!.status).toBe("DELIVERED");
-  const sent = gate.senderCalls.filter((call) => call.delivered && call.content === messages[0]!.content);
+  const sent = gate.senderCalls.filter((call) => call.delivered && call.recipientJid === delivery[0]!.recipient_ref && call.content === messages[0]!.content);
   expect(sent).toHaveLength(1);
   expect(sent[0]!.recipientJid).toBe(delivery[0]!.recipient_ref);
 }
@@ -154,6 +176,72 @@ test("E01 real queue, history, UTF-8, refresh and full browser reload", async ({
   await page.getByRole("button", { name: /João Açúcar/ }).click();
   await expect(page.locator(".detail-grid")).toContainText("XEi");
   await expect(page.getByRole("button", { name: "Autorizar e enviar", exact: true })).toHaveCount(0);
+});
+
+test("E02 selected conversation refreshes an assistant message persisted after opening", async ({ gate, page, isMobile }) => {
+  const quote = await gate.intake();
+  await page.goto(gate.url + "/operator");
+  const selectedQuote = page.locator(".quote-option").first();
+  await expect(selectedQuote).toBeVisible();
+  await selectedQuote.click();
+  await expect(selectedQuote).toHaveAttribute("aria-current", "true");
+  await expect(page.locator("#conversation-history .conversation-history")).toBeVisible();
+  const content = "Resposta persistida depois da abertura";
+  await gate.db.query("INSERT INTO messages(id,business_id,conversation_id,sender_type,channel,content,created_at) VALUES($1,$2,$3,'ASSISTANT','WHATSAPP',$4,$5)", ["assistant-after-open", businessId, quote.conversation_id, content, "2026-01-02T00:00:01.000Z"]);
+  const refreshButton = page.locator("#refresh-button");
+  if (isMobile) await refreshButton.evaluate((button) => (button as HTMLButtonElement).click());
+  else await refreshButton.click();
+  await expect(page.locator("#conversation-history")).toContainText(content);
+  await expect(page.locator('.quote-option[aria-current="true"]')).toHaveCount(1);
+});
+
+test("E03 selection identity survives polling and publishes only the selected quote", async ({ gate, page, isMobile }) => {
+  const quoteA = await gate.intake();
+  await page.goto(gate.url + "/operator");
+  const optionA = page.locator(`.quote-option[data-quote-request-id="${quoteA.id}"]`);
+  await optionA.click();
+  await expect(optionA).toHaveAttribute("aria-current", "true");
+  await expect(page.locator(".detail-content")).toHaveAttribute("data-quote-request-id", quoteA.id);
+
+  expect((await gate.sendWebhook(gate.webhook(customerText, "00000000-0000-4000-8000-000000000002", "second-synthetic@s.whatsapp.net"))).status).toBe(202);
+  const quoteB = ((await gate.db.query("SELECT id,conversation_id FROM quote_requests ORDER BY requested_at DESC,id DESC LIMIT 1")).rows[0]!) as { id: string; conversation_id: string };
+  await refreshQueue(page, isMobile);
+  await expect(page.locator(`.quote-option[data-quote-request-id="${quoteB.id}"]`)).toHaveCount(1);
+  await expect(page.locator(`.quote-option[data-quote-request-id="${quoteA.id}"]`)).toHaveAttribute("aria-current", "true");
+  await expect(page.locator(".detail-content")).toHaveAttribute("data-quote-request-id", quoteA.id);
+
+  await page.getByLabel("Valor autorizado em reais").fill("282,00");
+  expect((await clickResponse(page, "Autorizar", "/respond")).status()).toBe(200);
+  expect((await clickResponse(page, "Enviar ao cliente", "/publish")).status()).toBe(200);
+  await assertPublication(gate, quoteA.id);
+  expect((await gate.db.query("SELECT count(*)::int AS n FROM commercial_events WHERE quote_request_id=$1 AND event_type='QUOTE_PUBLISHED'", [quoteB.id])).rows[0]!.n).toBe(0);
+
+  await page.locator(`.quote-option[data-quote-request-id="${quoteB.id}"]`).click();
+  await expect(page.locator(".detail-content")).toHaveAttribute("data-quote-request-id", quoteB.id);
+  await page.getByLabel("Valor autorizado em reais").fill("282,00");
+  expect((await clickResponse(page, "Autorizar", "/respond")).status()).toBe(200);
+  expect((await clickResponse(page, "Enviar ao cliente", "/publish")).status()).toBe(200);
+  await assertPublication(gate, quoteB.id);
+});
+
+test("E04 stale selected quote blocks authorization until the queue is refreshed", async ({ gate, page, isMobile }) => {
+  const quote = await gate.intake();
+  await page.goto(gate.url + "/operator");
+  await page.locator(`.quote-option[data-quote-request-id="${quote.id}"]`).click();
+  let staleActionRequests = 0;
+  page.on("request", (request) => {
+    if (request.method() === "POST" && (/\/respond$/.test(request.url()) || /\/publish$/.test(request.url()))) staleActionRequests++;
+  });
+  await gate.db.query("UPDATE quote_requests SET status='RESPONDED', authorized_price_amount_cents=$1, authorized_price_currency='BRL', responded_at=$2, updated_at=$2 WHERE id=$3 AND business_id=$4", [28200, "2026-01-02T00:00:01.000Z", quote.id, businessId]);
+  await page.locator(".action-panel").evaluate((panel) => panel.setAttribute("data-quote-request-updated-at", "stale-revision"));
+  await page.getByLabel("Valor autorizado em reais").fill("282,00");
+  await page.getByRole("button", { name: "Autorizar", exact: true }).click();
+  await expect(page.locator("#feedback")).toContainText("Atualize a fila");
+  await expect(page.locator(".action-panel button[type=submit]")).toBeDisabled();
+  expect(staleActionRequests).toBe(0);
+  expect((await gate.db.query("SELECT count(*)::int AS n FROM commercial_events WHERE quote_request_id=$1 AND event_type='QUOTE_PUBLISHED'", [quote.id])).rows[0]!.n).toBe(0);
+  await refreshQueue(page, isMobile);
+  await expect(page.locator(".action-panel button[type=submit]")).toBeEnabled();
 });
 
 test("F01 BASIC manual browser authorization, reload and exact financial delivery", async ({ gate, page }) => {

@@ -3,7 +3,7 @@ import type { Server } from "node:http";
 import type { MessageInterpreter } from "../core/message-interpreter.js";
 import type { EvolutionGoWebhookCredential } from "../channels/whatsapp/evolution-go-webhook-auth.js";
 import { EvolutionGoTextSender, type EvolutionGoTextMessage } from "../channels/whatsapp/evolution-go-text-sender.js";
-import { createBasicPlanHttpServer } from "../infrastructure/http/basic-plan-http-server.js";
+import { createBasicPlanHttpServer, type BasicPlanOperationalEvent } from "../infrastructure/http/basic-plan-http-server.js";
 import { PostgresDatabase, type PostgresEnvironment } from "../infrastructure/postgres/postgres-database.js";
 import {
   PostgresAutomotiveBusinessRepository, PostgresCommercialEventRepository,
@@ -31,7 +31,8 @@ export type BasicPlanPostgresRuntimeOptions = {
   interpreter: MessageInterpreter;
   evolutionGoWebhookCredential?: EvolutionGoWebhookCredential;
   evolutionGoBaseUrl?: string;
-  evolutionGoTextSender?: { sendText(message: EvolutionGoTextMessage): Promise<void> };
+  evolutionGoTextSender?: { sendText(message: EvolutionGoTextMessage): Promise<void | { providerMessageId: string }> };
+  operationalLog?: (event: BasicPlanOperationalEvent) => void;
   now?: () => string;
   allowInsecureLocalForTests?: boolean;
 };
@@ -104,6 +105,7 @@ export async function createBasicPlanPostgresRuntime(options: BasicPlanPostgresR
       humanHandoffRepository: new PostgresHumanHandoffRepository(database),
       operator: { businessId: options.business.businessId, businessName: options.business.businessName, integratedQuotes: true },
       interpreter: options.interpreter,
+      ...(options.operationalLog ? { operationalLog: options.operationalLog } : {}),
       now,
       generateId: (prefix) => `${prefix}-${randomUUID()}`,
     });

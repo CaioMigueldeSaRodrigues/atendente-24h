@@ -146,7 +146,8 @@ export type OutboundDelivery = {
   id: string;
   businessId: string;
   messageId?: string;
-  quoteRequestId: string;
+  quoteRequestId?: string;
+  appointmentId?: string;
   conversationId: string;
   channel: Channel;
   recipientRef?: string;

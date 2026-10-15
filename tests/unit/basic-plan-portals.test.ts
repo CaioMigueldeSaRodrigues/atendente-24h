@@ -330,7 +330,7 @@ test("preview keeps the existing portals and serves admin data through the real 
     assert.match(operatorHtml, /publish\.hidden = true/);
     assert.match(operatorHtml, /manualToggle\.hidden = true/);
     assert.match(operatorHtml, /makeIntegratedQuotePanelPreview\(item, \(hasDraft\) => \{\s*manualToggle\.hidden = hasDraft/);
-    assert.match(operatorHtml, /const showDraft = \(value\) => \{\s*draft = value;\s*onDraftState\(true\)/);
+    assert.match(operatorHtml, /const showDraft = \(value\) => \{\s*draft = value;\s*item\.draft = value;[\s\S]*?onDraftState\(true\)/);
     assert.match(operatorHtml, /response\.status === 404\) \{\s*build\.disabled = false;\s*onDraftState\(false\)/);
     assert.match(operatorHtml, /content\.append\(integratedPanel, manualToggle\)/);
     assert.match(operatorHtml, /manualToggle\.addEventListener\("click", \(\) => \{[\s\S]*?makeManualQuotePanel\(item,[\s\S]*?content\.append\(manualPanel\)/);
@@ -340,7 +340,7 @@ test("preview keeps the existing portals and serves admin data through the real 
     assert.doesNotMatch(manualPanelScript, /Autorizar e enviar|authorizeAndPublish/);
     assert.match(manualPanelScript, /submit\.textContent = "Autorizar"/);
     assert.match(manualPanelScript, /publish\.hidden = true/);
-    assert.match(manualPanelScript, /publish\.hidden = false/);
+    assert.match(manualPanelScript, /await loadQueue\(true, true\)/);
     assert.match(manualPanelScript, /"\/respond"/);
     assert.match(manualPanelScript, /"\/publish"/);
     assert.ok(manualPanelScript.indexOf('"/respond"') < manualPanelScript.indexOf('"/publish"'));

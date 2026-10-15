@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { AddressInfo } from "node:net";
 import { Script } from "node:vm";
-import type { AutomotiveBusiness } from "../../src/core/domain/entities.js";
-import { BusinessType, Channel, CommercialEventType, Intent, SenderType, QuoteRequestStatus } from "../../src/core/domain/enums.js";
+import type { AutomotiveBusiness, Conversation, Opportunity, QuoteRequest } from "../../src/core/domain/entities.js";
+import { BusinessType, Channel, CommercialEventType, CommercialOutcome, ConversationStatus, Intent, OpportunityStatus, SenderType, QuoteRequestStatus } from "../../src/core/domain/enums.js";
 import type { AIInterpretation } from "../../src/core/domain/types.js";
 import { InMemoryAppointmentRepository, InMemoryHumanHandoffRepository } from "../../src/core/in-memory-repositories.js";
 import { createSqliteDatabase } from "../../src/infrastructure/sqlite/sqlite-database.js";
@@ -19,6 +19,7 @@ import { SqliteOutboundDeliveryRepository } from "../../src/infrastructure/sqlit
 import { SqliteEvolutionGoWebhookReplayGuard } from "../../src/infrastructure/sqlite/sqlite-evolution-go-webhook-replay-guard.js";
 import { SqliteEvolutionGoConversationLinkRepository } from "../../src/infrastructure/sqlite/sqlite-evolution-go-conversation-link-repository.js";
 import { createBasicPlanHttpServer } from "../../src/infrastructure/http/basic-plan-http-server.js";
+import type { EvolutionGoWebhookReplayGuard } from "../../src/channels/whatsapp/evolution-go-webhook-replay-guard.js";
 import { withSqliteTransaction } from "../../src/infrastructure/sqlite/sqlite-connection-lock.js";
 
 const timestamp = "2026-09-24T12:00:00.000Z";
@@ -65,6 +66,8 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
   let sequence = 0;
   let clockTick = 0;
   let interpreterCalls = 0;
+  let webhookClaimCalls = 0;
+  const operationalEvents: string[] = [];
   const sentWebhookMessages: Array<{ recipientJid: string; content: string }> = [];
   let failNextSend = false;
   const webhookCredential = {
@@ -72,13 +75,25 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
     instanceToken: "token-compartilhado-de-teste-ficticio",
     businessId: "business-a",
   };
+  const observedReplayGuard: EvolutionGoWebhookReplayGuard = {
+    claim: (input) => {
+      webhookClaimCalls += 1;
+      return evolutionGoWebhookReplayGuard.claim(input);
+    },
+    lockForProcessing: (input) => evolutionGoWebhookReplayGuard.lockForProcessing(input),
+    markProcessed: (input) => evolutionGoWebhookReplayGuard.markProcessed(input),
+    markSent: (input) => evolutionGoWebhookReplayGuard.markSent(input),
+    applyProviderReceipt: (input) => evolutionGoWebhookReplayGuard.applyProviderReceipt(input),
+    complete: (input) => evolutionGoWebhookReplayGuard.complete(input),
+    release: (input) => evolutionGoWebhookReplayGuard.release(input),
+  };
   const serverDependencies = {
     conversationRepository, messageRepository, customerRepository, vehicleRepository,
     opportunityRepository, quoteRequestRepository,
     outboundDeliveryRepository,
     commercialEventRepository,
     evolutionGoWebhookCredentials: [webhookCredential],
-    evolutionGoWebhookReplayGuard,
+    evolutionGoWebhookReplayGuard: observedReplayGuard,
     evolutionGoConversationLinkRepository,
     evolutionGoWebhookTransaction: { run: <T>(operation: () => Promise<T>) => withSqliteTransaction(database, operation) },
     evolutionGoTextSender: {
@@ -100,6 +115,7 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
     } },
     now: () => new Date(Date.parse(timestamp) + clockTick++).toISOString(),
     generateId: (prefix: string) => `${prefix}-${++sequence}`,
+    operationalLog: (event: string) => operationalEvents.push(event),
   };
   const server = createBasicPlanHttpServer(serverDependencies);
 
@@ -198,7 +214,55 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
       recipientJid: "5511999990000@s.whatsapp.net",
       content: "Resposta sintética do webhook",
     }]);
+    assert.deepEqual(operationalEvents.slice(0, 3), [
+      "WEBHOOK Message accepted",
+      "LLM completed",
+      "Evolution send accepted",
+    ]);
+    assert.equal(JSON.stringify(operationalEvents).includes(webhookCredential.instanceToken), false);
+    assert.equal(JSON.stringify(operationalEvents).includes("mensagem-ficticia-123"), false);
+    assert.equal(JSON.stringify(operationalEvents).includes("5511999990000"), false);
     assert.equal(interpreterCalls, 1);
+    const staleEventStart = operationalEvents.length;
+    const staleClaimCalls = webhookClaimCalls;
+    const staleWebhook = await post(webhookPath, {
+      ...webhookPayload,
+      data: {
+        ...webhookPayload.data,
+        Info: {
+          ...webhookPayload.data.Info,
+          ID: "mensagem-antiga-ficticia",
+          Timestamp: "2026-09-24T11:30:00.000Z",
+        },
+      },
+    });
+    assert.equal(staleWebhook.status, 202);
+    await assertWebhookTokenOmitted(staleWebhook);
+    assert.deepEqual(await staleWebhook.json(), { accepted: false, reason: "stale_message" });
+    assert.equal(interpreterCalls, 1);
+    assert.equal(sentWebhookMessages.length, 1);
+    assert.equal(webhookClaimCalls, staleClaimCalls);
+    assert.deepEqual(operationalEvents.slice(staleEventStart), ["WEBHOOK stale message ignored"]);
+    assert.equal(operationalEvents.slice(staleEventStart).join(" ").includes("mensagem-antiga-ficticia"), false);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM evolution_go_webhook_claims").get()?.count, 0);
+
+    const invalidTimestampWebhook = await post(webhookPath, {
+      ...webhookPayload,
+      data: {
+        ...webhookPayload.data,
+        Info: {
+          ...webhookPayload.data.Info,
+          ID: "mensagem-timestamp-invalido-ficticia",
+          Timestamp: "not-a-timestamp",
+        },
+      },
+    });
+    assert.equal(invalidTimestampWebhook.status, 202);
+    assert.deepEqual(await invalidTimestampWebhook.json(), { accepted: false, reason: "stale_message" });
+    assert.equal(interpreterCalls, 1);
+    assert.equal(sentWebhookMessages.length, 1);
+    assert.equal(webhookClaimCalls, staleClaimCalls);
+
     const persistedWebhookLink = await evolutionGoConversationLinkRepository.findBySender(
       "business-a",
       webhookCredential.instanceName,
@@ -229,6 +293,40 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
     });
     assert.equal(interpreterCalls, 1);
     assert.equal(sentWebhookMessages.length, 1);
+    const receiptEventStart = operationalEvents.length;
+    const deliveredReceipt = await post(webhookPath, {
+      event: "Receipt",
+      instanceName: webhookCredential.instanceName,
+      instanceToken: webhookCredential.instanceToken,
+      state: "Delivered",
+      data: {
+        MessageIDs: ["provider-message-receipt-synthetic"],
+        Type: "",
+        Timestamp: "2026-09-24T11:00:01.000Z",
+        Chat: "masked@s.whatsapp.net",
+      },
+    });
+    assert.equal(deliveredReceipt.status, 202);
+    assert.deepEqual(await deliveredReceipt.json(), { accepted: true, reason: "provider_receipt" });
+    const readReceipt = await post(webhookPath, {
+      event: "Receipt",
+      instanceName: webhookCredential.instanceName,
+      instanceToken: webhookCredential.instanceToken,
+      state: "Read",
+      data: {
+        MessageIDs: ["provider-message-receipt-synthetic"],
+        Type: "read",
+        Timestamp: "2026-09-24T11:00:02.000Z",
+        Chat: "masked@s.whatsapp.net",
+      },
+    });
+    assert.equal(readReceipt.status, 202);
+    assert.deepEqual(await readReceipt.json(), { accepted: true, reason: "provider_receipt" });
+    assert.deepEqual(operationalEvents.slice(receiptEventStart, receiptEventStart + 2), [
+      "Receipt DELIVERED applied",
+      "Receipt READ applied",
+    ]);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM evolution_go_delivery_receipts").get()?.count, 2);
     assert.equal(database.prepare("SELECT COUNT(*) AS count FROM evolution_go_webhook_claims").get()?.count, 0);
     failNextSend = true;
     const senderFailurePayload = {
@@ -343,6 +441,7 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
         lockForProcessing: () => { throw new Error("lockForProcessing should not be called for an in-progress claim"); },
         markProcessed: () => { throw new Error("markProcessed should not be called for an in-progress claim"); },
         markSent: () => { throw new Error("markSent should not be called for an in-progress claim"); },
+        applyProviderReceipt: () => { throw new Error("applyProviderReceipt should not be called for an in-progress claim"); },
         complete: () => { throw new Error("complete should not be called for an in-progress claim"); },
         release: () => false,
       },
@@ -474,26 +573,87 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
     const queueQuote = await quoteRequestRepository.findById("business-a", quoteId);
     assert.ok(queueQuote);
 
+    const maskedConversation: Conversation = {
+      id: "conversation-masked-contact",
+      businessId: "business-a",
+      channel: Channel.WHATSAPP,
+      status: ConversationStatus.ACTIVE,
+      commercialOutcome: CommercialOutcome.QUOTE_REQUESTED,
+      startedAt: timestamp,
+      lastMessageAt: timestamp,
+    };
+    const maskedOpportunity: Opportunity = {
+      id: "opportunity-masked-contact",
+      businessId: "business-a",
+      conversationId: maskedConversation.id,
+      requestDescription: "Troca de filtro de ar",
+      status: OpportunityStatus.WAITING_BUSINESS,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    const maskedQuote: QuoteRequest = {
+      id: "quote-masked-contact",
+      businessId: "business-a",
+      opportunityId: maskedOpportunity.id,
+      conversationId: maskedConversation.id,
+      requestDescription: "Troca de filtro de ar",
+      status: QuoteRequestStatus.WAITING_BUSINESS,
+      requestedAt: timestamp,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    await conversationRepository.save(maskedConversation);
+    await opportunityRepository.save(maskedOpportunity);
+    await quoteRequestRepository.save(maskedQuote);
+    await evolutionGoConversationLinkRepository.save({
+      businessId: "business-a",
+      instanceName: "instancia-mascarada",
+      senderJid: "5511888881234@s.whatsapp.net",
+      conversationId: maskedConversation.id,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+
     const pendingResponse = await request("/v1/businesses/business-a/quotes/pending");
     assert.equal(pendingResponse.status, 200);
+    const pendingRaw = await pendingResponse.clone().text();
     const pendingItems = (await pendingResponse.json() as {
       items: Array<{
         quote: { id: string; status: string };
         customer: { name?: string } | null;
         vehicle: { brand?: string; model?: string; year?: number; version?: string } | null;
         conversation: { businessId: string } | null;
+        contactLabel?: string;
       }>;
     }).items;
-    assert.equal(pendingItems.length, 1);
-    assert.equal(pendingItems[0]?.quote.status, QuoteRequestStatus.WAITING_BUSINESS);
-    assert.equal(pendingItems[0]?.customer?.name, "Carlos");
-    assert.deepEqual(pendingItems[0]?.vehicle && {
-      brand: pendingItems[0].vehicle.brand,
-      model: pendingItems[0].vehicle.model,
-      year: pendingItems[0].vehicle.year,
-      version: pendingItems[0].vehicle.version,
+    assert.equal(pendingItems.length, 2);
+    const webPendingItem = pendingItems.find((item) => item.quote.id === quoteId);
+    const maskedPendingItem = pendingItems.find((item) => item.quote.id === maskedQuote.id);
+    assert.equal(webPendingItem?.quote.status, QuoteRequestStatus.WAITING_BUSINESS);
+    assert.equal(webPendingItem?.customer?.name, "Carlos");
+    assert.equal(webPendingItem?.contactLabel, undefined);
+    assert.equal(maskedPendingItem?.contactLabel, "WhatsApp \u2022\u2022\u2022\u2022 1234");
+    const sensitivePaths: string[] = [];
+    const inspectPending = (value: unknown, path: string): void => {
+      if (typeof value === "string" && (value.includes("5511999990000") || value.includes("5511888881234") || value.includes("@s.whatsapp.net"))) sensitivePaths.push(path);
+      else if (Array.isArray(value)) value.forEach((entry, index) => inspectPending(entry, `${path}[${index}]`));
+      else if (value !== null && typeof value === "object") Object.entries(value).forEach(([key, entry]) => inspectPending(entry, `${path}.${key}`));
+    };
+    inspectPending(JSON.parse(pendingRaw), "root");
+    assert.deepEqual(sensitivePaths, []);
+    assert.equal(pendingRaw.includes("5511999990000@s.whatsapp.net"), false);
+    assert.equal(pendingRaw.includes("5511999990000"), false);
+    assert.equal(pendingRaw.includes("5511888881234@s.whatsapp.net"), false);
+    const maskedNumberIndex = pendingRaw.indexOf("5511888881234");
+    assert.equal(maskedNumberIndex, -1, pendingRaw.slice(Math.max(0, maskedNumberIndex - 20), maskedNumberIndex + 30).replace(/\\d/g, "#"));
+    assert.equal(pendingRaw.includes("primaryPhone"), false);
+    assert.deepEqual(webPendingItem?.vehicle && {
+      brand: webPendingItem.vehicle.brand,
+      model: webPendingItem.vehicle.model,
+      year: webPendingItem.vehicle.year,
+      version: webPendingItem.vehicle.version,
     }, { brand: "Toyota", model: "Corolla", year: 2020, version: "XEi" });
-    assert.equal(pendingItems[0]?.conversation?.businessId, "business-a");
+    assert.equal(webPendingItem?.conversation?.businessId, "business-a");
 
     const publishedTooEarly = await post(`/v1/businesses/business-a/quotes/${quoteId}/publish`, {});
     assert.equal(publishedTooEarly.status, 409);
@@ -526,9 +686,8 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
     assert.deepEqual((await responded.json() as { authorizedPrice: unknown }).authorizedPrice, { amountCents: 65000, currency: "BRL" });
     const queueAfterRespond = await request("/v1/businesses/business-a/quotes/pending");
     const authorizedQueue = await queueAfterRespond.json() as { items: Array<{ quote: { id: string; status: string } }> };
-    assert.equal(authorizedQueue.items.length, 1);
-    assert.equal(authorizedQueue.items[0]?.quote.id, quoteId);
-    assert.equal(authorizedQueue.items[0]?.quote.status, QuoteRequestStatus.RESPONDED);
+    assert.equal(authorizedQueue.items.length, 2);
+    assert.equal(authorizedQueue.items.find((item) => item.quote.id === quoteId)?.quote.status, QuoteRequestStatus.RESPONDED);
     const secondResponse = await post(`/v1/businesses/business-a/quotes/${quoteId}/respond`, { amountCents: 65000, currency: "BRL" });
     assert.equal(secondResponse.status, 409);
 
@@ -569,6 +728,7 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
     assert.deepEqual(statusesInQueue, [
       QuoteRequestStatus.REQUESTED,
       QuoteRequestStatus.RESPONDED,
+      QuoteRequestStatus.WAITING_BUSINESS,
       QuoteRequestStatus.WAITING_BUSINESS,
       QuoteRequestStatus.WAITING_INFORMATION,
     ]);

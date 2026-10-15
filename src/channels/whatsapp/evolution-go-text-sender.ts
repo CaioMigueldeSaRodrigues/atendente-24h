@@ -1,4 +1,4 @@
-import type { ChannelTextMessage, ChannelTextSender } from "../channel-text-sender.js";
+import type { ChannelTextMessage, ChannelTextSender, ChannelTextSendResult } from "../channel-text-sender.js";
 
 export interface EvolutionGoTextSenderOptions {
   baseUrl: string;
@@ -25,7 +25,7 @@ export class EvolutionGoTextSender implements ChannelTextSender {
     this.fetchImplementation = options.fetch ?? fetch;
   }
 
-  async sendText(message: EvolutionGoTextMessage): Promise<void> {
+  async sendText(message: EvolutionGoTextMessage): Promise<ChannelTextSendResult> {
     if (!nonEmpty(message.recipientJid) || !nonEmpty(message.content)) {
       throw new Error("Evolution Go text message input is invalid");
     }
@@ -44,11 +44,24 @@ export class EvolutionGoTextSender implements ChannelTextSender {
         }),
       });
       if (!response.ok) throw new Error(SAFE_SEND_ERROR);
-      await response.json();
+      const body = await response.json() as unknown;
+      const providerMessageId = readProviderMessageId(body);
+      if (!providerMessageId) throw new Error(SAFE_SEND_ERROR);
+      return { providerMessageId };
     } catch {
       throw new Error(SAFE_SEND_ERROR);
     }
   }
+}
+
+function readProviderMessageId(body: unknown): string | undefined {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) return undefined;
+  const data = (body as Record<string, unknown>).data;
+  if (typeof data !== "object" || data === null || Array.isArray(data)) return undefined;
+  const info = (data as Record<string, unknown>).Info;
+  if (typeof info !== "object" || info === null || Array.isArray(info)) return undefined;
+  const id = (info as Record<string, unknown>).ID;
+  return typeof id === "string" && id.trim().length > 0 ? id : undefined;
 }
 
 function nonEmpty(value: string): boolean {

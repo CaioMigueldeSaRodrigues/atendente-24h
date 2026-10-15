@@ -1,19 +1,22 @@
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { BusinessType } from "../core/domain/enums.js";
-import { createMessageInterpreter } from "../integrations/llm/create-message-interpreter.js";
-import { readLlmEnvironment, type LlmEnvironment } from "../integrations/llm/llm-environment.js";
+import { createRuntimeMessageInterpreter, isGate3FakeInterpreterEnabled } from "./runtime-message-interpreter.js";
 import { createBasicPlanRuntime } from "./basic-plan-runtime.js";
 import { createBasicPlanPostgresRuntime } from "./basic-plan-postgres-runtime.js";
 import { postgresConfigFromEnvironment } from "../infrastructure/postgres/postgres-database.js";
 import { readEvolutionGoWebhookCredential } from "./evolution-go-webhook-environment.js";
 import { BasicBusinessOperatorAuthorizer } from "../infrastructure/http/basic-business-operator-authorizer.js";
+import type { BasicPlanOperationalEvent } from "../infrastructure/http/basic-plan-http-server.js";
 
 async function main(): Promise<void> {
   const config = readEnvironment(process.env);
+  const interpreter = createRuntimeMessageInterpreter(process.env);
+  if (isGate3FakeInterpreterEnabled(process.env)) {
+    console.log("Gate 3 manual mode enabled: deterministic interpreter; external LLM disabled");
+  }
   if (config.databaseBackend === "sqlite") mkdirSync(dirname(resolve(config.databasePath)), { recursive: true });
 
-  const interpreter = createMessageInterpreter(config.llm);
   const common = {
     interpreter,
     businessOperatorAuthorizer: new BasicBusinessOperatorAuthorizer(
@@ -29,6 +32,7 @@ async function main(): Promise<void> {
     },
     ...(config.evolutionGoWebhookCredential ? { evolutionGoWebhookCredential: config.evolutionGoWebhookCredential } : {}),
     ...(config.evolutionGoBaseUrl ? { evolutionGoBaseUrl: config.evolutionGoBaseUrl } : {}),
+    operationalLog: (event: BasicPlanOperationalEvent): void => console.log(event),
   };
   const runtime = config.databaseBackend === "sqlite"
     ? await createBasicPlanRuntime({ ...common, databasePath: config.databasePath })
@@ -80,7 +84,6 @@ type RuntimeEnvironment = {
   timezone: string;
   host: string;
   port: number;
-  llm: LlmEnvironment;
   operatorUsername: string;
   operatorPassword: string;
   evolutionGoWebhookCredential?: ReturnType<typeof readEvolutionGoWebhookCredential>;
@@ -122,7 +125,6 @@ function readEnvironment(environment: NodeJS.ProcessEnv): RuntimeEnvironment {
     timezone: environment.BASIC_PLAN_TIMEZONE?.trim() || "America/Sao_Paulo",
     host: environment.HOST?.trim() || "127.0.0.1",
     port,
-    llm: readLlmEnvironment(environment),
     operatorUsername: required(environment.BASIC_PLAN_OPERATOR_USERNAME, "BASIC_PLAN_OPERATOR_USERNAME"),
     operatorPassword: required(environment.BASIC_PLAN_OPERATOR_PASSWORD, "BASIC_PLAN_OPERATOR_PASSWORD"),
     ...(evolutionGoWebhookCredential ? { evolutionGoWebhookCredential } : {}),
