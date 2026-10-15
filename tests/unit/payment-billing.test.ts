@@ -39,6 +39,7 @@ test("subscription service ignores a tampered amount and persists setup and subs
     paymentTransactionRepository: {
       save: async (transaction) => { transactions.push(transaction); },
       findByBusinessAndIdempotencyKey: async () => null,
+      findByProviderPaymentId: async () => null,
       listBySubscription: async (_businessId, subscriptionId) => transactions.filter((transaction) => transaction.subscriptionId === subscriptionId),
     },
     paymentProvider: provider,
@@ -73,6 +74,7 @@ test("same idempotency key is tenant-scoped and does not mix two businesses", as
     paymentTransactionRepository: {
       save: async (transaction) => { const index = transactions.findIndex((current) => current.id === transaction.id); if (index < 0) transactions.push(transaction); else transactions[index] = transaction; },
       findByBusinessAndIdempotencyKey: async () => null,
+      findByProviderPaymentId: async () => null,
       listBySubscription: async (_businessId, subscriptionId) => transactions.filter((transaction) => transaction.subscriptionId === subscriptionId),
     },
     paymentProvider: provider,
@@ -110,5 +112,11 @@ class MemorySubscriptions implements SubscriptionRepository {
   }
   async findByBusinessAndIdempotencyKey(businessId: string, idempotencyKey: string): Promise<Subscription | null> {
     return this.items.find((subscription) => subscription.businessId === businessId && subscription.idempotencyKey === idempotencyKey) ?? null;
+  }
+  async findByProviderSubscriptionId(provider: string, providerSubscriptionId: string): Promise<Subscription | null> {
+    return this.items.find((subscription) => subscription.provider === provider && subscription.providerSubscriptionId === providerSubscriptionId) ?? null;
+  }
+  async findByExternalReference(provider: string, externalReference: string): Promise<Subscription | null> {
+    return this.items.find((subscription) => subscription.provider === provider && subscription.externalReference === externalReference) ?? null;
   }
 }

@@ -33,6 +33,10 @@ import { MockPaymentProvider } from "../integrations/payment/mock-payment-provid
 import type { PaymentProvider } from "../core/payment-provider.js";
 import { SubscriptionService } from "../core/subscription-service.js";
 import { BusinessBillingProfileService } from "../core/business-billing-profile.js";
+import { PostgresPaymentWebhookEventRepository } from "../infrastructure/postgres/postgres-payment-webhook-event-repository.js";
+import { MercadoPagoWebhookService } from "../core/mercado-pago-webhook-service.js";
+import { paymentProviderReadApi } from "../core/payment-provider.js";
+import { MercadoPagoWebhookVerifier } from "../integrations/payment/mercado-pago-webhook-verifier.js";
 
 export type BasicPlanPostgresRuntimeOptions = {
   postgres: PostgresEnvironment;
@@ -42,6 +46,7 @@ export type BasicPlanPostgresRuntimeOptions = {
   interpreterFactory?: (usageRecorder: AiUsageRecorder) => MessageInterpreter;
   aiUsageBilling?: AiUsageBillingConfig;
   paymentProvider?: PaymentProvider;
+  paymentWebhookSecret?: string;
   paymentPayerEmailResolver?: (businessId: string) => Promise<string | null>;
   evolutionGoWebhookCredential?: EvolutionGoWebhookCredential;
   evolutionGoBaseUrl?: string;
@@ -81,6 +86,19 @@ export async function createBasicPlanPostgresRuntime(options: BasicPlanPostgresR
       generateIdempotencyKey: () => `payment-${randomUUID()}`,
       now,
     });
+    const readApi = paymentProviderReadApi(paymentProvider);
+    const mercadoPagoWebhookService = options.paymentWebhookSecret && readApi
+      ? new MercadoPagoWebhookService({
+          webhookEvents: new PostgresPaymentWebhookEventRepository(database),
+          subscriptions: new PostgresSubscriptionRepository(database),
+          transactions: new PostgresPaymentTransactionRepository(database),
+          assignments: new PostgresBusinessPlanAssignmentRepository(database),
+          provider: readApi,
+          transaction: { run: (operation) => database.transaction(async () => operation()) },
+          now,
+          generateId: (prefix) => `${prefix}-${randomUUID()}`,
+        })
+      : undefined;
     const interpreter = options.interpreterFactory?.(aiUsageMeasurement) ?? options.interpreter;
     if (interpreter === undefined) throw new Error("An interpreter or interpreterFactory is required");
     const businessRepository = new PostgresAutomotiveBusinessRepository(database);
@@ -140,6 +158,10 @@ export async function createBasicPlanPostgresRuntime(options: BasicPlanPostgresR
       aiUsageQueryService: aiUsageRepository,
       subscriptionService,
       paymentPayerEmailResolver: options.paymentPayerEmailResolver ?? ((businessId) => billingProfileService.resolvePayerEmail(businessId)),
+      ...(mercadoPagoWebhookService && options.paymentWebhookSecret ? {
+        mercadoPagoWebhookVerifier: new MercadoPagoWebhookVerifier(options.paymentWebhookSecret),
+        mercadoPagoWebhookService,
+      } : {}),
       interpreter,
       ...(options.operationalLog ? { operationalLog: options.operationalLog } : {}),
       now,

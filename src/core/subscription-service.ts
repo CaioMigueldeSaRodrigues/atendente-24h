@@ -150,16 +150,19 @@ function withSubscriptionProviderResult(subscription: Subscription, result: Prov
   return {
     ...subscription,
     ...(result.providerSubscriptionId === undefined ? {} : { providerSubscriptionId: result.providerSubscriptionId }),
+    ...(result.providerStatus === undefined ? {} : { providerStatus: result.providerStatus }),
     ...(result.checkoutUrl === undefined ? {} : { checkoutUrl: result.checkoutUrl }),
     updatedAt,
   };
 }
 
 function withProviderResult(transaction: PaymentTransaction, result: ProviderIntentResult, updatedAt: string, preferredProviderId?: string): PaymentTransaction {
-  const providerPaymentId = result.providerPaymentId ?? preferredProviderId;
+  const providerPaymentId = result.providerPaymentId;
   return {
     ...transaction, status: result.status,
     ...(providerPaymentId === undefined ? {} : { providerPaymentId }),
+    ...(result.providerSubscriptionId !== undefined ? { providerSubscriptionId: result.providerSubscriptionId } : preferredProviderId !== undefined ? { providerSubscriptionId: preferredProviderId } : {}),
+    ...(result.providerStatus === undefined ? {} : { providerStatus: result.providerStatus }),
     ...(result.checkoutUrl === undefined ? {} : { checkoutUrl: result.checkoutUrl }), updatedAt,
   };
 }

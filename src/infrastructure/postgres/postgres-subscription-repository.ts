@@ -13,19 +13,20 @@ export class PostgresSubscriptionRepository implements SubscriptionRepository {
     await this.database.query(`
       INSERT INTO saas_subscriptions(
         id,business_id,plan,billing_cycle,catalog_version,status,provider,
-        provider_subscription_id,external_reference,subscription_amount_cents,
+        provider_subscription_id,provider_status,external_reference,subscription_amount_cents,
         setup_fee_cents,currency,idempotency_key,checkout_url,created_at,updated_at
-      ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+      ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
       ON CONFLICT (id) DO UPDATE SET
         status=excluded.status,
         provider=excluded.provider,
         provider_subscription_id=excluded.provider_subscription_id,
+        provider_status=excluded.provider_status,
         checkout_url=excluded.checkout_url,
         updated_at=excluded.updated_at
     `, [
       subscription.id, subscription.businessId, subscription.plan, subscription.billingCycle,
       subscription.catalogVersion, subscription.status, subscription.provider,
-      subscription.providerSubscriptionId ?? null, subscription.externalReference,
+      subscription.providerSubscriptionId ?? null, subscription.providerStatus ?? null, subscription.externalReference,
       subscription.subscriptionAmountCents, subscription.setupFeeCents, subscription.currency,
       subscription.idempotencyKey, subscription.checkoutUrl ?? null, subscription.createdAt, subscription.updatedAt,
     ]);
@@ -38,6 +39,16 @@ export class PostgresSubscriptionRepository implements SubscriptionRepository {
 
   async findByBusinessAndIdempotencyKey(businessId: string, idempotencyKey: string): Promise<Subscription | null> {
     const result = await this.database.query<Row>("SELECT * FROM saas_subscriptions WHERE business_id=$1 AND idempotency_key=$2", [businessId, idempotencyKey]);
+    return result.rows[0] === undefined ? null : map(result.rows[0]);
+  }
+
+  async findByProviderSubscriptionId(provider: string, providerSubscriptionId: string): Promise<Subscription | null> {
+    const result = await this.database.query<Row>("SELECT * FROM saas_subscriptions WHERE provider=$1 AND provider_subscription_id=$2", [provider, providerSubscriptionId]);
+    return result.rows[0] === undefined ? null : map(result.rows[0]);
+  }
+
+  async findByExternalReference(provider: string, externalReference: string): Promise<Subscription | null> {
+    const result = await this.database.query<Row>("SELECT * FROM saas_subscriptions WHERE provider=$1 AND external_reference=$2", [provider, externalReference]);
     return result.rows[0] === undefined ? null : map(result.rows[0]);
   }
 }
@@ -58,6 +69,7 @@ function map(row: Row): Subscription {
     status: status as SubscriptionStatusType,
     provider: String(row.provider),
     ...(row.provider_subscription_id == null ? {} : { providerSubscriptionId: String(row.provider_subscription_id) }),
+    ...(row.provider_status == null ? {} : { providerStatus: String(row.provider_status) }),
     ...(row.checkout_url == null ? {} : { checkoutUrl: String(row.checkout_url) }),
     externalReference: String(row.external_reference),
     subscriptionAmountCents: integer(row.subscription_amount_cents),

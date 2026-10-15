@@ -1,8 +1,20 @@
-import type { PaymentProvider, ProviderIntentResult, ProviderSetupFeeIntent, ProviderSubscriptionIntent } from "../../core/payment-provider.js";
+import type { PaymentProvider, ProviderAuthorizedPaymentResource, ProviderIntentResult, ProviderPaymentResource, ProviderSetupFeeIntent, ProviderSubscriptionIntent, ProviderSubscriptionResource } from "../../core/payment-provider.js";
 import { PaymentTransactionStatus } from "../../core/payment-transaction.js";
 
 export class MockPaymentProvider implements PaymentProvider {
   readonly name = "mock" as const;
+
+  async getSubscription(providerSubscriptionId: string): Promise<ProviderSubscriptionResource> {
+    return { id: providerSubscriptionId, status: "pending" };
+  }
+
+  async getPayment(providerPaymentId: string): Promise<ProviderPaymentResource> {
+    return { id: providerPaymentId, status: "pending", transactionAmountCents: 0, currencyId: "BRL" };
+  }
+
+  async getAuthorizedPayment(providerAuthorizedPaymentId: string): Promise<ProviderAuthorizedPaymentResource> {
+    return { id: providerAuthorizedPaymentId };
+  }
 
   async createSubscriptionIntent(input: ProviderSubscriptionIntent): Promise<ProviderIntentResult> {
     return {

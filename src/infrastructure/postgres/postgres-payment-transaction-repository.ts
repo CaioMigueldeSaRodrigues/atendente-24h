@@ -9,18 +9,21 @@ export class PostgresPaymentTransactionRepository implements PaymentTransactionR
   async save(transaction: PaymentTransaction): Promise<void> {
     await this.database.query(`
       INSERT INTO payment_transactions(
-        id,business_id,subscription_id,provider,provider_payment_id,type,
+        id,business_id,subscription_id,provider,provider_payment_id,provider_subscription_id,provider_status,type,
         amount_cents,currency,status,idempotency_key,checkout_url,created_at,updated_at
-      ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+      ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
       ON CONFLICT (id) DO UPDATE SET
         provider=excluded.provider,
         provider_payment_id=excluded.provider_payment_id,
+        provider_subscription_id=excluded.provider_subscription_id,
+        provider_status=excluded.provider_status,
         checkout_url=excluded.checkout_url,
         status=excluded.status,
         updated_at=excluded.updated_at
     `, [
       transaction.id, transaction.businessId, transaction.subscriptionId, transaction.provider,
-      transaction.providerPaymentId ?? null, transaction.type, transaction.amountCents,
+      transaction.providerPaymentId ?? null, transaction.providerSubscriptionId ?? null,
+      transaction.providerStatus ?? null, transaction.type, transaction.amountCents,
       transaction.currency, transaction.status, transaction.idempotencyKey,
       transaction.checkoutUrl ?? null, transaction.createdAt, transaction.updatedAt,
     ]);
@@ -28,6 +31,11 @@ export class PostgresPaymentTransactionRepository implements PaymentTransactionR
 
   async findByBusinessAndIdempotencyKey(businessId: string, idempotencyKey: string): Promise<PaymentTransaction | null> {
     const result = await this.database.query<Row>("SELECT * FROM payment_transactions WHERE business_id=$1 AND idempotency_key=$2", [businessId, idempotencyKey]);
+    return result.rows[0] === undefined ? null : map(result.rows[0]);
+  }
+
+  async findByProviderPaymentId(provider: string, providerPaymentId: string): Promise<PaymentTransaction | null> {
+    const result = await this.database.query<Row>("SELECT * FROM payment_transactions WHERE provider=$1 AND provider_payment_id=$2", [provider, providerPaymentId]);
     return result.rows[0] === undefined ? null : map(result.rows[0]);
   }
 
@@ -48,6 +56,8 @@ function map(row: Row): PaymentTransaction {
     subscriptionId: String(row.subscription_id),
     provider: String(row.provider),
     ...(row.provider_payment_id == null ? {} : { providerPaymentId: String(row.provider_payment_id) }),
+    ...(row.provider_subscription_id == null ? {} : { providerSubscriptionId: String(row.provider_subscription_id) }),
+    ...(row.provider_status == null ? {} : { providerStatus: String(row.provider_status) }),
     ...(row.checkout_url == null ? {} : { checkoutUrl: String(row.checkout_url) }),
     type: type as PaymentTransaction["type"],
     amountCents: Number(row.amount_cents),

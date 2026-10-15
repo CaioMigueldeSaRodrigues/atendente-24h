@@ -33,7 +33,7 @@ test("PostgreSQL billing foundation isolates tenants, persists intents, and keep
   const database = new PostgresDatabase(config, { allowInsecureLocal: true, searchPath: schema });
   try {
     const applied = await applyPostgresMigrations(database);
-    assert.deepEqual(applied.slice(-5), ["013_saas_subscriptions.sql", "014_payment_transactions.sql", "015_payment_webhook_events.sql", "016_payment_checkout_urls.sql", "017_business_billing_profiles.sql"]);
+    assert.deepEqual(applied.slice(-7), ["013_saas_subscriptions.sql", "014_payment_transactions.sql", "015_payment_webhook_events.sql", "016_payment_checkout_urls.sql", "017_business_billing_profiles.sql", "018_mercadopago_webhook_activation.sql", "019_payment_transaction_subscription_index.sql"]);
     for (const businessId of ["billing-business-a", "billing-business-b"]) {
       await database.query("INSERT INTO automotive_businesses(id,name,business_type,timezone,active,created_at,updated_at) VALUES($1,$1,'OTHER','UTC',true,$2,$2)", [businessId, "2026-10-15T00:00:00Z"]);
     }

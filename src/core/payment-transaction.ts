@@ -20,6 +20,8 @@ export type PaymentTransaction = {
   subscriptionId: string;
   provider: string;
   providerPaymentId?: string;
+  providerSubscriptionId?: string;
+  providerStatus?: string;
   checkoutUrl?: string;
   type: PaymentTransactionType;
   amountCents: number;
@@ -33,5 +35,6 @@ export type PaymentTransaction = {
 export type PaymentTransactionRepository = {
   save(transaction: PaymentTransaction): Promise<void>;
   findByBusinessAndIdempotencyKey(businessId: string, idempotencyKey: string): Promise<PaymentTransaction | null>;
+  findByProviderPaymentId(provider: string, providerPaymentId: string): Promise<PaymentTransaction | null>;
   listBySubscription(businessId: string, subscriptionId: string): Promise<PaymentTransaction[]>;
 };

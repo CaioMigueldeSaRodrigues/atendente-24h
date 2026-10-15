@@ -41,6 +41,9 @@ import { isQuoteOperatorActionable } from "../../core/quote-actionability.js";
 import type { AiUsageQueryService } from "../../core/ai-usage.js";
 import type { SubscriptionService } from "../../core/subscription-service.js";
 import { MercadoPagoProviderError } from "../../integrations/payment/mercado-pago-payment-provider.js";
+import { createHash } from "node:crypto";
+import { MercadoPagoWebhookVerifier } from "../../integrations/payment/mercado-pago-webhook-verifier.js";
+import { MercadoPagoWebhookEventType, MercadoPagoWebhookService, MercadoPagoWebhookTransientError } from "../../core/mercado-pago-webhook-service.js";
 
 const MAX_BODY_BYTES = 1024 * 1024;
 
@@ -108,6 +111,8 @@ export type BasicPlanHttpServerDependencies = {
   aiUsageQueryService?: AiUsageQueryService;
   subscriptionService?: SubscriptionService;
   paymentPayerEmailResolver?: (businessId: string) => Promise<string | null>;
+  mercadoPagoWebhookVerifier?: MercadoPagoWebhookVerifier;
+  mercadoPagoWebhookService?: MercadoPagoWebhookService;
   adminBusinessScopeAuthorizer?: AdminBusinessScopeAuthorizer;
   platformQueryService?: PlatformQueryService;
   superAdminAuthorizer?: SuperAdminAuthorizer;
@@ -481,6 +486,11 @@ async function handleRequest(
   const pathname = url.pathname;
 
   setSecurityHeaders(response);
+
+  if (request.method === "POST" && pathname === "/v1/payments/mercadopago/webhook") {
+    await handleMercadoPagoWebhook(url, request, response, dependencies);
+    return;
+  }
 
   if (request.method === "GET" && pathname === "/operator") {
     if (!(await isOperatorAuthorized(request, dependencies.operator.businessId, dependencies))) {
@@ -1313,7 +1323,71 @@ async function readJsonBody(request: IncomingMessage, response: ServerResponse):
   }
 }
 
+async function handleMercadoPagoWebhook(
+  url: URL,
+  request: IncomingMessage,
+  response: ServerResponse,
+  dependencies: BasicPlanHttpServerDependencies,
+): Promise<void> {
+  const verifier = dependencies.mercadoPagoWebhookVerifier;
+  const service = dependencies.mercadoPagoWebhookService;
+  if (!verifier || !service) { sendError(response, 404, "Not found"); return; }
+  const signature = headerValue(request.headers["x-signature"]);
+  const requestId = headerValue(request.headers["x-request-id"]);
+  const dataId = url.searchParams.get("data.id") ?? undefined;
+  const raw = await readRawBody(request, response);
+  if (raw === undefined) return;
+  if (!verifier.verify({ signature, requestId, dataId })) { sendError(response, 401, "Unauthorized"); return; }
+  let payload: unknown;
+  try { payload = JSON.parse(raw.toString("utf8")) as unknown; } catch { sendError(response, 400, "Invalid JSON"); return; }
+  if (!isRecord(payload) || typeof payload.type !== "string") { sendError(response, 400, "Invalid webhook payload"); return; }
+  const resourceId = dataId ?? "";
+  if (Object.values(MercadoPagoWebhookEventType).includes(payload.type as MercadoPagoWebhookEventType) && !resourceId) { sendError(response, 400, "Invalid webhook resource"); return; }
+  const payloadHash = createHash("sha256").update(raw).digest("hex");
+  const providerEventId = typeof payload.id === "string" && payload.id.trim()
+    ? payload.id.trim()
+    : requestId?.trim() || `${payload.type}:${resourceId || "unknown"}:${payloadHash}`;
+  try {
+    const result = await service.process({
+      event: {
+        id: `mercadopago-webhook-${payloadHash}`,
+        provider: "mercadopago",
+        providerEventId,
+        ...(requestId === undefined ? {} : { providerRequestId: requestId }),
+        resourceId: resourceId || "unknown",
+        eventType: payload.type,
+        payloadHash,
+        processingStatus: "PROCESSING",
+        receivedAt: new Date().toISOString(),
+      },
+      eventType: payload.type,
+      resourceId,
+    });
+    sendJson(response, 200, { accepted: true, status: result.status });
+  } catch (error) {
+    if (error instanceof MercadoPagoWebhookTransientError) { sendError(response, 503, "Payment provider unavailable"); return; }
+    throw error;
+  }
+}
+
+async function readRawBody(request: IncomingMessage, response: ServerResponse): Promise<Buffer | undefined> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of request) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += buffer.length;
+    if (size > MAX_BODY_BYTES) { sendError(response, 413, "Payload too large"); return undefined; }
+    chunks.push(buffer);
+  }
+  return Buffer.concat(chunks);
+}
+
+function headerValue(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
 function mapError(cause: unknown): { status: number; body: string } {
+  if (cause instanceof MercadoPagoWebhookTransientError) return { status: 503, body: "Payment provider unavailable" };
   if (cause instanceof MercadoPagoProviderError) return { status: 502, body: "Payment provider unavailable" };
   if (cause instanceof QuoteDraftError) {
     const status = cause.code === "QUOTE_NOT_FOUND" ? 404 : cause.code === "CAPABILITY_REQUIRED" ? 403 : cause.code === "PRICE_UNAVAILABLE" ? 503 : ["DRAFT_IMMUTABLE", "DRAFT_NOT_APPROVABLE", "QUOTE_DRAFT_CONFLICT", "QUOTE_DRAFT_STALE", "MANUAL_QUOTE_CONFLICT"].includes(cause.code) ? 409 : 400;

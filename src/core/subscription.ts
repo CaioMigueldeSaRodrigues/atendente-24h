@@ -5,6 +5,7 @@ export const SubscriptionStatus = {
   PENDING: "PENDING",
   ACTIVE: "ACTIVE",
   PAST_DUE: "PAST_DUE",
+  PAUSED: "PAUSED",
   CANCELED: "CANCELED",
   FAILED: "FAILED",
 } as const;
@@ -20,6 +21,7 @@ export type Subscription = {
   status: SubscriptionStatus;
   provider: string;
   providerSubscriptionId?: string;
+  providerStatus?: string;
   checkoutUrl?: string;
   externalReference: string;
   subscriptionAmountCents: number;
@@ -34,4 +36,6 @@ export type SubscriptionRepository = {
   save(subscription: Subscription): Promise<void>;
   findById(businessId: string, subscriptionId: string): Promise<Subscription | null>;
   findByBusinessAndIdempotencyKey(businessId: string, idempotencyKey: string): Promise<Subscription | null>;
+  findByProviderSubscriptionId(provider: string, providerSubscriptionId: string): Promise<Subscription | null>;
+  findByExternalReference(provider: string, externalReference: string): Promise<Subscription | null>;
 };

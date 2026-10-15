@@ -27,4 +27,10 @@ export type PaymentWebhookEventRepository = {
   save(event: PaymentWebhookEvent): Promise<void>;
   findByProviderEventId(provider: string, providerEventId: string): Promise<PaymentWebhookEvent | null>;
   update(event: PaymentWebhookEvent): Promise<void>;
+  claim(event: PaymentWebhookEvent): Promise<PaymentWebhookClaimResult>;
 };
+
+export type PaymentWebhookClaimResult =
+  | { status: "claimed"; event: PaymentWebhookEvent }
+  | { status: "duplicate"; event: PaymentWebhookEvent }
+  | { status: "in_progress"; event: PaymentWebhookEvent };

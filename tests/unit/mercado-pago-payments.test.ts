@@ -39,7 +39,7 @@ test("Mercado Pago builds monthly preapproval from the server catalog", async ()
   assert.equal(requests[0]?.url, "https://api.mercadopago.com/preapproval");
   assert.equal(requests[0]?.headers.Authorization, "Bearer token-not-logged");
   assert.equal(requests[0]?.headers["X-Idempotency-Key"], "local-1:subscription");
-  assert.deepEqual(JSON.parse(requests[0]!.body), {
+  assert.deepEqual(JSON.parse(requests[0]!.body!), {
     payer_email: "payer@business-a.test",
     reason: "Atendente 24h - BASIC MONTHLY",
     external_reference: "subscription:local-1",
@@ -67,8 +67,8 @@ test("Mercado Pago builds annual preapproval at twelve-month frequency and keeps
   const setup = await provider.createSetupFeeIntent({
     businessId: "business-a", catalog, payerEmail: "payer@business-a.test", externalReference: "setup:local-1", idempotencyKey: "local-1:setup",
   });
-  const annualBody = JSON.parse(requests[0]!.body) as Record<string, unknown>;
-  const setupBody = JSON.parse(requests[1]!.body) as Record<string, unknown>;
+  const annualBody = JSON.parse(requests[0]!.body!) as Record<string, unknown>;
+  const setupBody = JSON.parse(requests[1]!.body!) as Record<string, unknown>;
   assert.deepEqual(annualBody.auto_recurring, { frequency: 12, frequency_type: "months", transaction_amount: 11970, currency_id: "BRL" });
   assert.equal(setupBody.external_reference, "setup:local-1");
   assert.equal((setupBody.items as Array<Record<string, unknown>>)[0]?.unit_price, 1490);
@@ -92,6 +92,7 @@ test("Mercado Pago errors are sanitized and retryable calls reuse the same key",
     }),
     (error: unknown) => error instanceof MercadoPagoProviderError
       && error.message === "Mercado Pago request failed with HTTP 400"
+      && error.transient === false
       && !error.message.includes("secret-token"),
   );
 
@@ -118,6 +119,31 @@ test("Mercado Pago errors are sanitized and retryable calls reuse the same key",
     { type: "setup", key: `${retry.subscription.id}:setup` },
   ]);
   assert.equal(retry.subscription.subscriptionAmountCents, 39700);
+});
+
+test("Mercado Pago read API uses authenticated GET resources and maps provider data", async () => {
+  const requests: MercadoPagoHttpRequest[] = [];
+  const provider = new MercadoPagoPaymentProvider({
+    accessToken: "token-not-logged", backUrl: "https://app.example.test/payment-return",
+    httpClient: async (request) => {
+      requests.push(request);
+      if (request.url.endsWith("/preapproval/pre-1")) return { status: 200, json: async () => ({ id: "pre-1", status: "authorized", external_reference: "subscription:local-1", auto_recurring: { transaction_amount: 397, currency_id: "BRL", frequency: 1, frequency_type: "months" } }) };
+      if (request.url.endsWith("/authorized_payments/auth-1")) return { status: 200, json: async () => ({ id: "auth-1", preapproval_id: "pre-1", payment: { id: "payment-1" } }) };
+      return { status: 200, json: async () => ({ id: "payment-1", status: "approved", status_detail: "accredited", external_reference: "subscription:local-1", transaction_amount: 397, currency_id: "BRL" }) };
+    },
+  });
+  const subscription = await provider.getSubscription("pre-1");
+  const authorized = await provider.getAuthorizedPayment("auth-1");
+  const payment = await provider.getPayment("payment-1");
+  assert.deepEqual(subscription.autoRecurring, { transactionAmountCents: 39700, currencyId: "BRL", frequency: 1, frequencyType: "months" });
+  assert.equal(authorized.preapprovalId, "pre-1");
+  assert.equal(authorized.paymentId, "payment-1");
+  assert.equal(payment.transactionAmountCents, 39700);
+  assert.deepEqual(requests.map((request) => [request.method, request.url, request.headers.Authorization]), [
+    ["GET", "https://api.mercadopago.com/preapproval/pre-1", "Bearer token-not-logged"],
+    ["GET", "https://api.mercadopago.com/authorized_payments/auth-1", "Bearer token-not-logged"],
+    ["GET", "https://api.mercadopago.com/v1/payments/payment-1", "Bearer token-not-logged"],
+  ]);
 });
 
 test("subscription checkout endpoint rejects monetary fields and isolates the authorized tenant", async () => {
@@ -201,12 +227,15 @@ class MemorySubscriptions implements SubscriptionRepository {
   async save(value: Subscription): Promise<void> { const index = this.items.findIndex((item) => item.id === value.id); if (index < 0) this.items.push(value); else this.items[index] = value; }
   async findById(businessId: string, subscriptionId: string): Promise<Subscription | null> { return this.items.find((item) => item.businessId === businessId && item.id === subscriptionId) ?? null; }
   async findByBusinessAndIdempotencyKey(businessId: string, key: string): Promise<Subscription | null> { return this.items.find((item) => item.businessId === businessId && item.idempotencyKey === key) ?? null; }
+  async findByProviderSubscriptionId(provider: string, providerSubscriptionId: string): Promise<Subscription | null> { return this.items.find((item) => item.provider === provider && item.providerSubscriptionId === providerSubscriptionId) ?? null; }
+  async findByExternalReference(provider: string, externalReference: string): Promise<Subscription | null> { return this.items.find((item) => item.provider === provider && item.externalReference === externalReference) ?? null; }
 }
 
 class MemoryTransactions implements PaymentTransactionRepository {
   readonly items: PaymentTransaction[] = [];
   async save(value: PaymentTransaction): Promise<void> { const index = this.items.findIndex((item) => item.id === value.id); if (index < 0) this.items.push(value); else this.items[index] = value; }
   async findByBusinessAndIdempotencyKey(businessId: string, key: string): Promise<PaymentTransaction | null> { return this.items.find((item) => item.businessId === businessId && item.idempotencyKey === key) ?? null; }
+  async findByProviderPaymentId(provider: string, providerPaymentId: string): Promise<PaymentTransaction | null> { return this.items.find((item) => item.provider === provider && item.providerPaymentId === providerPaymentId) ?? null; }
   async listBySubscription(businessId: string, subscriptionId: string): Promise<PaymentTransaction[]> { return this.items.filter((item) => item.businessId === businessId && item.subscriptionId === subscriptionId); }
 }
 
