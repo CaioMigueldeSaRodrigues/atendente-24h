@@ -57,7 +57,7 @@ test("fake mode requires the explicit true flag", () => {
   assert.equal(isGate3FakeInterpreterEnabled({ GATE3_FAKE_INTERPRETER: "1" }), false);
   assert.equal(isGate3FakeInterpreterEnabled({ GATE3_FAKE_INTERPRETER: " true " }), true);
   assert.throws(() => createRuntimeMessageInterpreter({ GATE3_FAKE_INTERPRETER: "false" }), {
-    message: "LLM_PROVIDER must be explicitly set to openai or openrouter",
+    message: "LLM_PROVIDER must be explicitly set to openai, openrouter or groq",
   });
 });
 

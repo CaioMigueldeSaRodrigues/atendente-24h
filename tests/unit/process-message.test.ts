@@ -283,6 +283,31 @@ test("S04: stores the symptom, preserves diagnostic handoff and never confirms a
   assert.equal((await harness.humanHandoffRepository.findById("business-a", "handoff-1"))?.reason, HandoffReason.DIAGNOSIS_REQUIRED);
 });
 
+test("deterministically hands off an explicit technical diagnosis request", async () => {
+  const { harness, result } = await runQuoteRequest({
+    intent: Intent.SYMPTOM_REPORT,
+    requestedItem: "",
+    symptomDescription: "Barulho ao frear",
+    proposedResponse: "Pode ser o disco.",
+  }, "Meu carro faz um barulho quando eu freio. O que pode ser?");
+
+  assert.equal(result.requiresHuman, true);
+  assert.match(result.reply, /encaminhar/i);
+  assert.equal((await harness.humanHandoffRepository.findById("business-a", "handoff-1"))?.reason, HandoffReason.DIAGNOSIS_REQUIRED);
+});
+
+test("does not hand off a symptom report that is still collecting information", async () => {
+  const { harness, result } = await runQuoteRequest({
+    intent: Intent.SYMPTOM_REPORT,
+    requestedItem: "",
+    symptomDescription: "Barulho ao frear",
+    proposedResponse: "Entendi o sintoma.",
+  }, "Meu carro faz um barulho quando eu freio.");
+
+  assert.equal(result.requiresHuman, false);
+  assert.equal(await harness.humanHandoffRepository.findById("business-a", "handoff-1"), null);
+});
+
 test("S05: voluntarily declared contact/plate are stored without making them required in another conversation", async () => {
   const harness = createHarness([
     makeInterpretation({ intent: Intent.GENERAL_INFORMATION, extractedCustomerData: { primaryPhone: "11999999999" }, extractedVehicleData: { licensePlate: "ABC1D23" } }),

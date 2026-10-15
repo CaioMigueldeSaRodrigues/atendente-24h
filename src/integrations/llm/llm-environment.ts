@@ -1,5 +1,5 @@
 export type LlmEnvironment = {
-  provider: "openai" | "openrouter";
+  provider: "openai" | "openrouter" | "groq";
   apiKey: string;
   model: string;
   baseURL: string;
@@ -8,15 +8,15 @@ export type LlmEnvironment = {
 
 export function readLlmEnvironment(environment: NodeJS.ProcessEnv): LlmEnvironment {
   const provider = environment.LLM_PROVIDER?.trim();
-  if (provider !== "openai" && provider !== "openrouter") {
-    throw new Error("LLM_PROVIDER must be explicitly set to openai or openrouter");
+  if (provider !== "openai" && provider !== "openrouter" && provider !== "groq") {
+    throw new Error("LLM_PROVIDER must be explicitly set to openai, openrouter or groq");
   }
   const required = (name: string): string => {
     const value = environment[name]?.trim();
     if (!value) throw new Error(`${name} is required`);
     return value;
   };
-  const prefix = provider === "openai" ? "OPENAI" : "OPENROUTER";
+  const prefix = provider === "openai" ? "OPENAI" : provider === "openrouter" ? "OPENROUTER" : "GROQ";
   const defaultHeaders: Record<string, string> = {};
   if (provider === "openrouter") {
     const referer = environment.OPENROUTER_HTTP_REFERER?.trim();
@@ -24,11 +24,16 @@ export function readLlmEnvironment(environment: NodeJS.ProcessEnv): LlmEnvironme
     if (referer) defaultHeaders["HTTP-Referer"] = referer;
     if (appName) defaultHeaders["X-Title"] = appName;
   }
+  if (provider === "groq") defaultHeaders["Groq-Beta"] = "inference-metrics";
   return {
     provider,
     apiKey: required(`${prefix}_API_KEY`),
     model: required(`${prefix}_MODEL`),
-    baseURL: provider === "openrouter" ? "https://openrouter.ai/api/v1" : "https://api.openai.com/v1",
+    baseURL: provider === "openrouter"
+      ? "https://openrouter.ai/api/v1"
+      : provider === "groq"
+        ? "https://api.groq.com/openai/v1"
+        : "https://api.openai.com/v1",
     defaultHeaders,
   };
 }

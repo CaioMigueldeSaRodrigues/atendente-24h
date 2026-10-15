@@ -23,12 +23,17 @@ import { AssignmentBusinessCapabilityPolicy } from "../core/business-capability-
 import { UnavailableProductPriceReadAdapter } from "../infrastructure/pricing/local-product-price-read-adapter.js";
 import { UnavailableLaborPriceReadAdapter } from "../infrastructure/pricing/local-labor-price-read-adapter.js";
 import type { BusinessOperatorAuthorizer } from "../core/business-operator-authorizer.js";
+import type { AiUsageBillingConfig, AiUsageRecorder } from "../core/ai-usage.js";
+import { AiUsageMeasurementService } from "../core/ai-usage.js";
+import { PostgresAiUsageRepository } from "../infrastructure/postgres/postgres-ai-usage-repository.js";
 
 export type BasicPlanPostgresRuntimeOptions = {
   postgres: PostgresEnvironment;
   business: { businessId: string; businessName: string; businessType: BusinessType; timezone: string };
   businessOperatorAuthorizer: BusinessOperatorAuthorizer;
-  interpreter: MessageInterpreter;
+  interpreter?: MessageInterpreter;
+  interpreterFactory?: (usageRecorder: AiUsageRecorder) => MessageInterpreter;
+  aiUsageBilling?: AiUsageBillingConfig;
   evolutionGoWebhookCredential?: EvolutionGoWebhookCredential;
   evolutionGoBaseUrl?: string;
   evolutionGoTextSender?: { sendText(message: EvolutionGoTextMessage): Promise<void | { providerMessageId: string }> };
@@ -50,6 +55,15 @@ export async function createBasicPlanPostgresRuntime(options: BasicPlanPostgresR
   try {
     await applyPostgresMigrations(database);
     const now = options.now ?? (() => new Date().toISOString());
+    const aiUsageRepository = new PostgresAiUsageRepository(database);
+    const aiUsageMeasurement = new AiUsageMeasurementService(
+      aiUsageRepository,
+      options.aiUsageBilling ?? { markupMultiplier: 1 },
+      () => `ai-usage-${randomUUID()}`,
+      now,
+    );
+    const interpreter = options.interpreterFactory?.(aiUsageMeasurement) ?? options.interpreter;
+    if (interpreter === undefined) throw new Error("An interpreter or interpreterFactory is required");
     const businessRepository = new PostgresAutomotiveBusinessRepository(database);
     const storedBusiness = await businessRepository.findById(options.business.businessId);
     if (!storedBusiness) {
@@ -104,7 +118,8 @@ export async function createBasicPlanPostgresRuntime(options: BasicPlanPostgresR
       appointmentRepository: new PostgresAppointmentRepository(database),
       humanHandoffRepository: new PostgresHumanHandoffRepository(database),
       operator: { businessId: options.business.businessId, businessName: options.business.businessName, integratedQuotes: true },
-      interpreter: options.interpreter,
+      aiUsageQueryService: aiUsageRepository,
+      interpreter,
       ...(options.operationalLog ? { operationalLog: options.operationalLog } : {}),
       now,
       generateId: (prefix) => `${prefix}-${randomUUID()}`,

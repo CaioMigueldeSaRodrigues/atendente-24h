@@ -1,4 +1,4 @@
-import { requiresExplicitHumanHandoff } from "./business-rules.js";
+import { requiresExplicitHumanHandoff, requiresTechnicalDiagnosisHandoff } from "./business-rules.js";
 import { resolveSafeReply } from "./response-policy.js";
 import { getQuoteIntakeMissingData } from "./quote-intake-policy.js";
 import type {
@@ -96,8 +96,12 @@ export async function processMessage(
       history,
     });
 
+  const technicalDiagnosisHandoff = requiresTechnicalDiagnosisHandoff(
+    input.content,
+  );
   const requiresHuman =
     requiresExplicitHumanHandoff(interpretation.intent) ||
+    technicalDiagnosisHandoff ||
     interpretation.requiresHuman;
 
   const customerUpdates = Object.fromEntries(
@@ -402,6 +406,8 @@ export async function processMessage(
     const handoffReason =
       interpretation.intent === Intent.HUMAN_REQUEST
         ? HandoffReason.CUSTOMER_REQUEST
+        : technicalDiagnosisHandoff
+          ? HandoffReason.DIAGNOSIS_REQUIRED
         : (interpretation.handoffReason ?? HandoffReason.OTHER);
     const handoff: HumanHandoff = {
       id: dependencies.generateId("handoff"),

@@ -13,6 +13,9 @@ const MIGRATIONS = [
   "007_quote_drafts.sql",
   "008_evolution_go_delivery_truth.sql",
   "009_outbound_delivery_appointment.sql",
+  "010_ai_usage.sql",
+  "011_groq_gpt_oss_20b_price.sql",
+  "012_ai_usage_financial_precision.sql",
 ] as const;
 
 export async function applyPostgresMigrations(database: PostgresDatabase): Promise<string[]> {

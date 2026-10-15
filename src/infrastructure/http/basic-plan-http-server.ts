@@ -38,6 +38,7 @@ import type { QuotePersistenceTransaction } from "../../core/quote-persistence-t
 import type { BusinessOperatorAuthorizer } from "../../core/business-operator-authorizer.js";
 import { QuoteDraftStatus } from "../../core/quote-draft.js";
 import { isQuoteOperatorActionable } from "../../core/quote-actionability.js";
+import type { AiUsageQueryService } from "../../core/ai-usage.js";
 
 const MAX_BODY_BYTES = 1024 * 1024;
 
@@ -102,6 +103,7 @@ export type BasicPlanHttpServerDependencies = {
   evolutionGoTextSender?: { sendText(message: EvolutionGoTextMessage): Promise<void | { providerMessageId: string }> };
   channelTextSenders?: Partial<Record<ChannelType, ChannelTextSender>>;
   adminQueryService?: AdminQueryService;
+  aiUsageQueryService?: AiUsageQueryService;
   adminBusinessScopeAuthorizer?: AdminBusinessScopeAuthorizer;
   platformQueryService?: PlatformQueryService;
   superAdminAuthorizer?: SuperAdminAuthorizer;
@@ -721,6 +723,31 @@ async function handleRequest(
   }
 
   const createConversationMatch = pathname.match(/^\/v1\/businesses\/([^/]+)\/conversations$/);
+  const aiUsageMatch = pathname.match(/^\/v1\/businesses\/([^/]+)\/ai-usage$/);
+  if (request.method === "GET" && aiUsageMatch) {
+    const businessId = decodePathPart(aiUsageMatch[1]);
+    if (businessId === null || dependencies.aiUsageQueryService === undefined) {
+      sendError(response, 404, "Not found");
+      return;
+    }
+    if (!(await isOperatorAuthorized(request, businessId, dependencies))) {
+      sendError(response, 404, "Not found");
+      return;
+    }
+    let period;
+    try {
+      period = parseAdminPeriod(url.searchParams.get("from") ?? undefined, url.searchParams.get("to") ?? undefined);
+    } catch (error) {
+      sendError(response, 400, error instanceof Error ? error.message : "Invalid period");
+      return;
+    }
+    const [summary, months] = await Promise.all([
+      dependencies.aiUsageQueryService.getSummary({ businessId, period }),
+      dependencies.aiUsageQueryService.getMonthly({ businessId, period }),
+    ]);
+    sendJson(response, 200, { summary, months });
+    return;
+  }
   if (request.method === "POST" && createConversationMatch) {
     const businessId = decodePathPart(createConversationMatch[1]);
     if (businessId === null) {

@@ -8,17 +8,16 @@ import { postgresConfigFromEnvironment } from "../infrastructure/postgres/postgr
 import { readEvolutionGoWebhookCredential } from "./evolution-go-webhook-environment.js";
 import { BasicBusinessOperatorAuthorizer } from "../infrastructure/http/basic-business-operator-authorizer.js";
 import type { BasicPlanOperationalEvent } from "../infrastructure/http/basic-plan-http-server.js";
+import { readAiUsageBillingConfig } from "../config/ai-billing-environment.js";
 
 async function main(): Promise<void> {
   const config = readEnvironment(process.env);
-  const interpreter = createRuntimeMessageInterpreter(process.env);
   if (isGate3FakeInterpreterEnabled(process.env)) {
     console.log("Gate 3 manual mode enabled: deterministic interpreter; external LLM disabled");
   }
   if (config.databaseBackend === "sqlite") mkdirSync(dirname(resolve(config.databasePath)), { recursive: true });
 
   const common = {
-    interpreter,
     businessOperatorAuthorizer: new BasicBusinessOperatorAuthorizer(
       config.businessId,
       config.operatorUsername,
@@ -35,8 +34,21 @@ async function main(): Promise<void> {
     operationalLog: (event: BasicPlanOperationalEvent): void => console.log(event),
   };
   const runtime = config.databaseBackend === "sqlite"
-    ? await createBasicPlanRuntime({ ...common, databasePath: config.databasePath })
-    : await createBasicPlanPostgresRuntime({ ...common, postgres: postgresConfigFromEnvironment(process.env) });
+    ? await createBasicPlanRuntime({
+        ...common,
+        databasePath: config.databasePath,
+        interpreter: createRuntimeMessageInterpreter(process.env),
+      })
+    : await createBasicPlanPostgresRuntime({
+        ...common,
+        postgres: postgresConfigFromEnvironment(process.env),
+        aiUsageBilling: readAiUsageBillingConfig(process.env),
+        interpreterFactory: (usageRecorder) => createRuntimeMessageInterpreter(
+          process.env,
+          usageRecorder,
+          (error) => console.error("AI usage record failed", error instanceof Error ? error.message : "unknown error"),
+        ),
+      });
 
   let shutdownPromise: Promise<void> | undefined;
   const shutdown = (): Promise<void> => {

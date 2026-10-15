@@ -10,6 +10,7 @@ import {
   canPresentAuthorizedPrice,
   isAppointmentConfirmed,
   requiresExplicitHumanHandoff,
+  requiresTechnicalDiagnosisHandoff,
 } from "../../src/core/business-rules.js";
 
 const quoteRequest = (overrides: Partial<QuoteRequest>): QuoteRequest => ({
@@ -94,4 +95,36 @@ test("does not require explicit handoff for QUOTE_REQUEST", () => {
 
 test("does not require explicit handoff for APPOINTMENT_REQUEST", () => {
   assert.equal(requiresExplicitHumanHandoff(Intent.APPOINTMENT_REQUEST), false);
+});
+
+test("allows symptom collection when the customer only reports a symptom", () => {
+  assert.equal(
+    requiresTechnicalDiagnosisHandoff("Meu carro faz um barulho ao frear."),
+    false,
+  );
+});
+
+for (const content of [
+  "Meu carro faz um barulho ao frear. O que é?",
+  "Qual é o problema quando freio?",
+  "O que pode ser esse ruído?",
+  "Você consegue me dizer qual seria o diagnóstico do barulho ao frear?",
+]) {
+  test(`requires human review for explicit technical diagnosis: ${content}`, () => {
+    assert.equal(requiresTechnicalDiagnosisHandoff(content), true);
+  });
+}
+
+test("does not convert unrelated intents into diagnostic handoff", () => {
+  assert.equal(
+    requiresTechnicalDiagnosisHandoff("Qual é o problema com meu agendamento?"),
+    false,
+  );
+});
+
+test("does not rely on the model intent for an explicit automotive diagnosis request", () => {
+  assert.equal(
+    requiresTechnicalDiagnosisHandoff("Meu carro faz um barulho ao frear. O que é?"),
+    true,
+  );
 });

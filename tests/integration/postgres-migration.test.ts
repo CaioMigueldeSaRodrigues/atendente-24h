@@ -23,13 +23,19 @@ import {
 import { createBasicPlanPostgresRuntime } from "../../src/app/basic-plan-postgres-runtime.js";
 
 const config: PostgresEnvironment = {
-  host: process.env.POSTGRES_TEST_HOST ?? "127.0.0.1",
-  port: Number(process.env.POSTGRES_TEST_PORT ?? 55432),
-  database: process.env.POSTGRES_TEST_DATABASE ?? "postgres",
-  user: process.env.POSTGRES_TEST_USER ?? "postgres",
+  host: process.env.POSTGRES_TEST_HOST ?? "",
+  port: Number(process.env.POSTGRES_TEST_PORT ?? 5432),
+  database: process.env.POSTGRES_TEST_DATABASE ?? "",
+  user: process.env.POSTGRES_TEST_USER ?? "",
   password: process.env.POSTGRES_TEST_PASSWORD ?? "",
 };
-const enabled = Boolean(process.env.POSTGRES_TEST_PASSWORD);
+const enabled = Boolean(
+  process.env.POSTGRES_TEST_HOST
+  && process.env.POSTGRES_TEST_DATABASE
+  && /(?:test|ci|dev)/i.test(process.env.POSTGRES_TEST_DATABASE)
+  && process.env.POSTGRES_TEST_USER
+  && process.env.POSTGRES_TEST_PASSWORD,
+);
 const runtimeInterpretation: AIInterpretation = {
   intent: Intent.GENERAL_INFORMATION,
   extractedCustomerData: {},
@@ -74,6 +80,9 @@ test("PostgreSQL migrations and repositories persist tenant data and serialize c
       "007_quote_drafts.sql",
       "008_evolution_go_delivery_truth.sql",
       "009_outbound_delivery_appointment.sql",
+      "010_ai_usage.sql",
+      "011_groq_gpt_oss_20b_price.sql",
+      "012_ai_usage_financial_precision.sql",
     ]);
     assert.deepEqual(await applyPostgresMigrations(db),[]);
     const transferBusinessId=`transfer-test-${businessId}`;

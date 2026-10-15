@@ -120,6 +120,46 @@ test("uses Responses API with the configured model and disables response storage
   assert.equal(capturedRequest(requests).store, false);
 });
 
+test("records provider usage with the business and conversation from the interpreter input", async () => {
+  const requests: unknown[] = [];
+  const usageEvents: Array<{ businessId: string; conversationId?: string; usage: Record<string, unknown> }> = [];
+  const client = {
+    responses: {
+      async parse(request: unknown) {
+        requests.push(request);
+        return {
+          id: "response-1",
+          usage: {
+            input_tokens: 100,
+            input_tokens_details: { cached_tokens: 25 },
+            output_tokens: 40,
+            total_tokens: 140,
+          },
+          output_parsed: validModelOutput(),
+        };
+      },
+    },
+  } as unknown as OpenAI;
+  const interpreter = new OpenAIMessageInterpreter(client, "configured-test-model", {
+    provider: "groq",
+    usageRecorder: {
+      async record(input) { usageEvents.push(input as typeof usageEvents[number]); },
+    },
+  });
+
+  await interpreter.interpret(makeInput());
+
+  assert.equal(requests.length, 1);
+  assert.equal(usageEvents[0]?.businessId, "business-1");
+  assert.equal(usageEvents[0]?.conversationId, "conversation-1");
+  assert.equal((usageEvents[0]?.usage as { provider?: string }).provider, "groq");
+  assert.equal((usageEvents[0]?.usage as { model?: string }).model, "configured-test-model");
+  assert.equal((usageEvents[0]?.usage as { providerRequestId?: string }).providerRequestId, "response-1");
+  assert.equal((usageEvents[0]?.usage as { inputTokens?: number }).inputTokens, 100);
+  assert.equal((usageEvents[0]?.usage as { cachedInputTokens?: number }).cachedInputTokens, 25);
+  assert.equal((usageEvents[0]?.usage as { outputTokens?: number }).outputTokens, 40);
+});
+
 test("sends current content and only reduced conversation history", async () => {
   const { interpreter, requests } = makeInterpreter(validModelOutput());
   const input = makeInput();
