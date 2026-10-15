@@ -19,6 +19,8 @@ const MIGRATIONS = [
   "013_saas_subscriptions.sql",
   "014_payment_transactions.sql",
   "015_payment_webhook_events.sql",
+  "016_payment_checkout_urls.sql",
+  "017_business_billing_profiles.sql",
 ] as const;
 
 export async function applyPostgresMigrations(database: PostgresDatabase): Promise<string[]> {

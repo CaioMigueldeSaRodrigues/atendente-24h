@@ -14,19 +14,20 @@ export class PostgresSubscriptionRepository implements SubscriptionRepository {
       INSERT INTO saas_subscriptions(
         id,business_id,plan,billing_cycle,catalog_version,status,provider,
         provider_subscription_id,external_reference,subscription_amount_cents,
-        setup_fee_cents,currency,idempotency_key,created_at,updated_at
-      ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+        setup_fee_cents,currency,idempotency_key,checkout_url,created_at,updated_at
+      ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
       ON CONFLICT (id) DO UPDATE SET
         status=excluded.status,
         provider=excluded.provider,
         provider_subscription_id=excluded.provider_subscription_id,
+        checkout_url=excluded.checkout_url,
         updated_at=excluded.updated_at
     `, [
       subscription.id, subscription.businessId, subscription.plan, subscription.billingCycle,
       subscription.catalogVersion, subscription.status, subscription.provider,
       subscription.providerSubscriptionId ?? null, subscription.externalReference,
       subscription.subscriptionAmountCents, subscription.setupFeeCents, subscription.currency,
-      subscription.idempotencyKey, subscription.createdAt, subscription.updatedAt,
+      subscription.idempotencyKey, subscription.checkoutUrl ?? null, subscription.createdAt, subscription.updatedAt,
     ]);
   }
 
@@ -57,6 +58,7 @@ function map(row: Row): Subscription {
     status: status as SubscriptionStatusType,
     provider: String(row.provider),
     ...(row.provider_subscription_id == null ? {} : { providerSubscriptionId: String(row.provider_subscription_id) }),
+    ...(row.checkout_url == null ? {} : { checkoutUrl: String(row.checkout_url) }),
     externalReference: String(row.external_reference),
     subscriptionAmountCents: integer(row.subscription_amount_cents),
     setupFeeCents: integer(row.setup_fee_cents),

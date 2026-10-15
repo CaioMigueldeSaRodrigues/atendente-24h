@@ -9,6 +9,7 @@ export type ProviderSubscriptionIntent = {
   plan: AdminPlan;
   billingCycle: BillingCycle;
   catalog: PaymentCatalogEntry;
+  payerEmail: string;
   externalReference: string;
   idempotencyKey: string;
 };
@@ -16,6 +17,7 @@ export type ProviderSubscriptionIntent = {
 export type ProviderSetupFeeIntent = {
   businessId: string;
   catalog: PaymentCatalogEntry;
+  payerEmail: string;
   externalReference: string;
   idempotencyKey: string;
 };
@@ -24,6 +26,9 @@ export type ProviderIntentResult = {
   status: PaymentTransactionStatus;
   providerPaymentId?: string;
   providerSubscriptionId?: string;
+  checkoutUrl?: string;
+  externalReference?: string;
+  providerStatus?: string;
 };
 
 export type PaymentProvider = {

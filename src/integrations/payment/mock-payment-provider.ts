@@ -8,6 +8,8 @@ export class MockPaymentProvider implements PaymentProvider {
     return {
       status: PaymentTransactionStatus.PENDING,
       providerSubscriptionId: `mock-subscription-${safeId(input.idempotencyKey)}`,
+      checkoutUrl: `https://mock.local/subscriptions/${safeId(input.idempotencyKey)}`,
+      providerStatus: "pending",
     };
   }
 
@@ -15,6 +17,8 @@ export class MockPaymentProvider implements PaymentProvider {
     return {
       status: PaymentTransactionStatus.PENDING,
       providerPaymentId: `mock-payment-${safeId(input.idempotencyKey)}`,
+      checkoutUrl: `https://mock.local/setup/${safeId(input.idempotencyKey)}`,
+      providerStatus: "pending",
     };
   }
 }

@@ -20,6 +20,7 @@ export type Subscription = {
   status: SubscriptionStatus;
   provider: string;
   providerSubscriptionId?: string;
+  checkoutUrl?: string;
   externalReference: string;
   subscriptionAmountCents: number;
   setupFeeCents: number;

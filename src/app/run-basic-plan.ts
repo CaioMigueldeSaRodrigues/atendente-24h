@@ -9,9 +9,12 @@ import { readEvolutionGoWebhookCredential } from "./evolution-go-webhook-environ
 import { BasicBusinessOperatorAuthorizer } from "../infrastructure/http/basic-business-operator-authorizer.js";
 import type { BasicPlanOperationalEvent } from "../infrastructure/http/basic-plan-http-server.js";
 import { readAiUsageBillingConfig } from "../config/ai-billing-environment.js";
+import { readPaymentEnvironment } from "../config/payment-environment.js";
+import { createPaymentProvider } from "../integrations/payment/create-payment-provider.js";
 
 async function main(): Promise<void> {
   const config = readEnvironment(process.env);
+  const paymentEnvironment = readPaymentEnvironment(process.env);
   if (isGate3FakeInterpreterEnabled(process.env)) {
     console.log("Gate 3 manual mode enabled: deterministic interpreter; external LLM disabled");
   }
@@ -43,6 +46,7 @@ async function main(): Promise<void> {
         ...common,
         postgres: postgresConfigFromEnvironment(process.env),
         aiUsageBilling: readAiUsageBillingConfig(process.env),
+        paymentProvider: createPaymentProvider(paymentEnvironment),
         interpreterFactory: (usageRecorder) => createRuntimeMessageInterpreter(
           process.env,
           usageRecorder,

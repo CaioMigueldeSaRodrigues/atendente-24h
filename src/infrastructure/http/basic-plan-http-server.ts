@@ -39,6 +39,8 @@ import type { BusinessOperatorAuthorizer } from "../../core/business-operator-au
 import { QuoteDraftStatus } from "../../core/quote-draft.js";
 import { isQuoteOperatorActionable } from "../../core/quote-actionability.js";
 import type { AiUsageQueryService } from "../../core/ai-usage.js";
+import type { SubscriptionService } from "../../core/subscription-service.js";
+import { MercadoPagoProviderError } from "../../integrations/payment/mercado-pago-payment-provider.js";
 
 const MAX_BODY_BYTES = 1024 * 1024;
 
@@ -104,6 +106,8 @@ export type BasicPlanHttpServerDependencies = {
   channelTextSenders?: Partial<Record<ChannelType, ChannelTextSender>>;
   adminQueryService?: AdminQueryService;
   aiUsageQueryService?: AiUsageQueryService;
+  subscriptionService?: SubscriptionService;
+  paymentPayerEmailResolver?: (businessId: string) => Promise<string | null>;
   adminBusinessScopeAuthorizer?: AdminBusinessScopeAuthorizer;
   platformQueryService?: PlatformQueryService;
   superAdminAuthorizer?: SuperAdminAuthorizer;
@@ -748,6 +752,39 @@ async function handleRequest(
     sendJson(response, 200, { summary, months });
     return;
   }
+  const subscriptionCheckoutMatch = pathname.match(/^\/v1\/businesses\/([^/]+)\/subscriptions\/checkout$/);
+  if (request.method === "POST" && subscriptionCheckoutMatch) {
+    const businessId = decodePathPart(subscriptionCheckoutMatch[1]);
+    if (businessId === null) { sendError(response, 400, "Invalid businessId"); return; }
+    if (!(await isOperatorAuthorized(request, businessId, dependencies))) { sendError(response, 404, "Not found"); return; }
+    if (!dependencies.subscriptionService || !dependencies.paymentPayerEmailResolver) {
+      sendError(response, 503, "Payment checkout is not configured");
+      return;
+    }
+    const body = await readJsonBody(request, response);
+    if (body === undefined) return;
+    const parsed = parseSubscriptionCheckoutBody(body);
+    if (parsed === null) { sendError(response, 400, "Only plan and billingCycle are accepted"); return; }
+    const payerEmail = await dependencies.paymentPayerEmailResolver(businessId);
+    if (payerEmail === null) { sendError(response, 503, "Payment payer identity is not configured"); return; }
+    const header = request.headers["idempotency-key"];
+    const idempotencyKey = Array.isArray(header) ? undefined : header?.trim() || undefined;
+    const result = await dependencies.subscriptionService.start({
+      businessId,
+      plan: parsed.plan,
+      billingCycle: parsed.billingCycle,
+      payerEmail,
+      ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
+    });
+    sendJson(response, 201, {
+      subscriptionId: result.subscription.id,
+      status: result.subscription.status,
+      reused: result.reused,
+      checkoutUrls: result.checkoutUrls,
+      transactions: result.transactions.map((transaction) => ({ type: transaction.type, status: transaction.status })),
+    });
+    return;
+  }
   if (request.method === "POST" && createConversationMatch) {
     const businessId = decodePathPart(createConversationMatch[1]);
     if (businessId === null) {
@@ -1277,6 +1314,7 @@ async function readJsonBody(request: IncomingMessage, response: ServerResponse):
 }
 
 function mapError(cause: unknown): { status: number; body: string } {
+  if (cause instanceof MercadoPagoProviderError) return { status: 502, body: "Payment provider unavailable" };
   if (cause instanceof QuoteDraftError) {
     const status = cause.code === "QUOTE_NOT_FOUND" ? 404 : cause.code === "CAPABILITY_REQUIRED" ? 403 : cause.code === "PRICE_UNAVAILABLE" ? 503 : ["DRAFT_IMMUTABLE", "DRAFT_NOT_APPROVABLE", "QUOTE_DRAFT_CONFLICT", "QUOTE_DRAFT_STALE", "MANUAL_QUOTE_CONFLICT"].includes(cause.code) ? 409 : 400;
     return { status, body: cause.code };
@@ -1293,6 +1331,9 @@ function mapError(cause: unknown): { status: number; body: string } {
     return { status: 409, body: message };
   }
   if (message === "authorizedPrice is invalid") {
+    return { status: 400, body: message };
+  }
+  if (message === "payerEmail is invalid" || message === "Invalid payment plan or billing cycle") {
     return { status: 400, body: message };
   }
   return { status: 500, body: "Internal server error" };
@@ -1316,6 +1357,14 @@ function setSecurityHeaders(response: ServerResponse): void {
 function parseExpectedDraft(value: unknown): { draftId: string; revision: number } | null {
   if (!isRecord(value) || typeof value.draftId !== "string" || value.draftId.trim() === "" || typeof value.revision !== "number" || !Number.isSafeInteger(value.revision) || value.revision <= 0) return null;
   return { draftId: value.draftId, revision: value.revision };
+}
+
+function parseSubscriptionCheckoutBody(value: unknown): { plan: string; billingCycle: string } | null {
+  if (!isRecord(value)) return null;
+  const keys = Object.keys(value).sort();
+  if (keys.length !== 2 || keys[0] !== "billingCycle" || keys[1] !== "plan") return null;
+  if (typeof value.plan !== "string" || typeof value.billingCycle !== "string") return null;
+  return { plan: value.plan, billingCycle: value.billingCycle };
 }
 
 function parseAppointmentConfirmationBody(value: unknown): { conversationId: string; quoteRequestId: string; expectedAppointmentUpdatedAt: string; date: string; time: string } | null {

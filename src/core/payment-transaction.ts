@@ -20,6 +20,7 @@ export type PaymentTransaction = {
   subscriptionId: string;
   provider: string;
   providerPaymentId?: string;
+  checkoutUrl?: string;
   type: PaymentTransactionType;
   amountCents: number;
   currency: "BRL";

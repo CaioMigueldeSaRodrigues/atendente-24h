@@ -10,18 +10,19 @@ export class PostgresPaymentTransactionRepository implements PaymentTransactionR
     await this.database.query(`
       INSERT INTO payment_transactions(
         id,business_id,subscription_id,provider,provider_payment_id,type,
-        amount_cents,currency,status,idempotency_key,created_at,updated_at
-      ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+        amount_cents,currency,status,idempotency_key,checkout_url,created_at,updated_at
+      ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
       ON CONFLICT (id) DO UPDATE SET
         provider=excluded.provider,
         provider_payment_id=excluded.provider_payment_id,
+        checkout_url=excluded.checkout_url,
         status=excluded.status,
         updated_at=excluded.updated_at
     `, [
       transaction.id, transaction.businessId, transaction.subscriptionId, transaction.provider,
       transaction.providerPaymentId ?? null, transaction.type, transaction.amountCents,
       transaction.currency, transaction.status, transaction.idempotencyKey,
-      transaction.createdAt, transaction.updatedAt,
+      transaction.checkoutUrl ?? null, transaction.createdAt, transaction.updatedAt,
     ]);
   }
 
@@ -47,6 +48,7 @@ function map(row: Row): PaymentTransaction {
     subscriptionId: String(row.subscription_id),
     provider: String(row.provider),
     ...(row.provider_payment_id == null ? {} : { providerPaymentId: String(row.provider_payment_id) }),
+    ...(row.checkout_url == null ? {} : { checkoutUrl: String(row.checkout_url) }),
     type: type as PaymentTransaction["type"],
     amountCents: Number(row.amount_cents),
     currency: String(row.currency) as "BRL",

@@ -33,6 +33,7 @@ test("subscription service ignores a tampered amount and persists setup and subs
   const subscriptions = new MemorySubscriptions();
   const transactions: PaymentTransaction[] = [];
   const provider = new MockPaymentProvider();
+  let sequence = 0;
   const service = new SubscriptionService({
     subscriptionRepository: subscriptions,
     paymentTransactionRepository: {
@@ -41,12 +42,12 @@ test("subscription service ignores a tampered amount and persists setup and subs
       listBySubscription: async (_businessId, subscriptionId) => transactions.filter((transaction) => transaction.subscriptionId === subscriptionId),
     },
     paymentProvider: provider,
-    generateId: (prefix) => `${prefix}-${subscriptions.items.length + transactions.length + 1}`,
+    generateId: (prefix) => `${prefix}-${++sequence}`,
     generateIdempotencyKey: () => "generated-key",
     now: () => "2026-10-15T12:00:00.000Z",
   });
 
-  const result = await service.start({ businessId: "business-a", plan: AdminPlan.INTERMEDIATE, billingCycle: BillingCycle.ANNUAL, idempotencyKey: "request-a", ...({ amountCents: 1 } as Record<string, unknown>) } as never);
+  const result = await service.start({ businessId: "business-a", plan: AdminPlan.INTERMEDIATE, billingCycle: BillingCycle.ANNUAL, payerEmail: "billing@business-a.test", idempotencyKey: "request-a", ...({ amountCents: 1 } as Record<string, unknown>) } as never);
   assert.equal(result.subscription.subscriptionAmountCents, 697_000);
   assert.equal(result.subscription.setupFeeCents, 89_000);
   assert.equal(result.transactions.length, 2);
@@ -61,6 +62,7 @@ test("same idempotency key is tenant-scoped and does not mix two businesses", as
   const subscriptions = new MemorySubscriptions();
   const transactions: PaymentTransaction[] = [];
   let providerCalls = 0;
+  let sequence = 0;
   const provider: PaymentProvider = {
     name: "mock",
     createSubscriptionIntent: async () => { providerCalls += 1; return { status: "PENDING", providerSubscriptionId: `provider-sub-${providerCalls}` }; },
@@ -74,13 +76,13 @@ test("same idempotency key is tenant-scoped and does not mix two businesses", as
       listBySubscription: async (_businessId, subscriptionId) => transactions.filter((transaction) => transaction.subscriptionId === subscriptionId),
     },
     paymentProvider: provider,
-    generateId: (prefix) => `${prefix}-${subscriptions.items.length + transactions.length + 1}`,
+    generateId: (prefix) => `${prefix}-${++sequence}`,
     generateIdempotencyKey: () => "unused",
     now: () => "2026-10-15T12:00:00.000Z",
   });
-  const first = await service.start({ businessId: "business-a", plan: AdminPlan.BASIC, billingCycle: BillingCycle.MONTHLY, idempotencyKey: "same-key" });
-  const retry = await service.start({ businessId: "business-a", plan: AdminPlan.ADVANCED, billingCycle: BillingCycle.ANNUAL, idempotencyKey: "same-key" });
-  const otherTenant = await service.start({ businessId: "business-b", plan: AdminPlan.BASIC, billingCycle: BillingCycle.MONTHLY, idempotencyKey: "same-key" });
+  const first = await service.start({ businessId: "business-a", plan: AdminPlan.BASIC, billingCycle: BillingCycle.MONTHLY, payerEmail: "billing@business-a.test", idempotencyKey: "same-key" });
+  const retry = await service.start({ businessId: "business-a", plan: AdminPlan.ADVANCED, billingCycle: BillingCycle.ANNUAL, payerEmail: "billing@business-a.test", idempotencyKey: "same-key" });
+  const otherTenant = await service.start({ businessId: "business-b", plan: AdminPlan.BASIC, billingCycle: BillingCycle.MONTHLY, payerEmail: "billing@business-b.test", idempotencyKey: "same-key" });
   assert.equal(retry.reused, true);
   assert.equal(retry.subscription.id, first.subscription.id);
   assert.equal(otherTenant.reused, false);
@@ -92,8 +94,8 @@ test("payment mode defaults to mock and never accepts incomplete Mercado Pago co
   assert.deepEqual(readPaymentEnvironment({}), { mode: "mock" });
   assert.throws(() => readPaymentEnvironment({ PAYMENT_MODE: "invalid" }), /PAYMENT_MODE must be mock or mercadopago/);
   assert.throws(() => readPaymentEnvironment({ PAYMENT_MODE: "mercadopago" }), /MERCADO_PAGO_ACCESS_TOKEN/);
-  assert.deepEqual(readPaymentEnvironment({ PAYMENT_MODE: "mercadopago", MERCADO_PAGO_ACCESS_TOKEN: "token", MERCADO_PAGO_WEBHOOK_SECRET: "secret" }), {
-    mode: "mercadopago", mercadoPagoAccessToken: "token", mercadoPagoWebhookSecret: "secret",
+  assert.deepEqual(readPaymentEnvironment({ PAYMENT_MODE: "mercadopago", MERCADO_PAGO_ACCESS_TOKEN: "token", MERCADO_PAGO_WEBHOOK_SECRET: "secret", MERCADO_PAGO_BACK_URL: "https://example.test/checkout" }), {
+    mode: "mercadopago", mercadoPagoAccessToken: "token", mercadoPagoWebhookSecret: "secret", mercadoPagoBackUrl: "https://example.test/checkout",
   });
 });
 

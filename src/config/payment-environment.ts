@@ -9,6 +9,7 @@ export type PaymentEnvironment = {
   mode: PaymentMode;
   mercadoPagoAccessToken?: string;
   mercadoPagoWebhookSecret?: string;
+  mercadoPagoBackUrl?: string;
 };
 
 export function readPaymentEnvironment(environment: NodeJS.ProcessEnv): PaymentEnvironment {
@@ -19,7 +20,8 @@ export function readPaymentEnvironment(environment: NodeJS.ProcessEnv): PaymentE
   if (mode === PaymentMode.MOCK) return { mode: PaymentMode.MOCK };
   const accessToken = required(environment.MERCADO_PAGO_ACCESS_TOKEN, "MERCADO_PAGO_ACCESS_TOKEN");
   const webhookSecret = required(environment.MERCADO_PAGO_WEBHOOK_SECRET, "MERCADO_PAGO_WEBHOOK_SECRET");
-  return { mode, mercadoPagoAccessToken: accessToken, mercadoPagoWebhookSecret: webhookSecret };
+  const backUrl = required(environment.MERCADO_PAGO_BACK_URL, "MERCADO_PAGO_BACK_URL");
+  return { mode, mercadoPagoAccessToken: accessToken, mercadoPagoWebhookSecret: webhookSecret, mercadoPagoBackUrl: backUrl };
 }
 
 function required(value: string | undefined, name: string): string {

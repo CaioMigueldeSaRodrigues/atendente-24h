@@ -8,6 +8,8 @@ import { PostgresSubscriptionRepository } from "../../src/infrastructure/postgre
 import { SubscriptionService } from "../../src/core/subscription-service.js";
 import { MockPaymentProvider } from "../../src/integrations/payment/mock-payment-provider.js";
 import { PaymentWebhookProcessingStatus } from "../../src/core/payment-webhook-event.js";
+import { BusinessBillingProfileService } from "../../src/core/business-billing-profile.js";
+import { PostgresBusinessBillingProfileRepository } from "../../src/infrastructure/postgres/postgres-business-billing-profile-repository.js";
 
 const config: PostgresEnvironment = {
   host: process.env.POSTGRES_TEST_HOST ?? "",
@@ -31,10 +33,16 @@ test("PostgreSQL billing foundation isolates tenants, persists intents, and keep
   const database = new PostgresDatabase(config, { allowInsecureLocal: true, searchPath: schema });
   try {
     const applied = await applyPostgresMigrations(database);
-    assert.deepEqual(applied.slice(-3), ["013_saas_subscriptions.sql", "014_payment_transactions.sql", "015_payment_webhook_events.sql"]);
+    assert.deepEqual(applied.slice(-5), ["013_saas_subscriptions.sql", "014_payment_transactions.sql", "015_payment_webhook_events.sql", "016_payment_checkout_urls.sql", "017_business_billing_profiles.sql"]);
     for (const businessId of ["billing-business-a", "billing-business-b"]) {
       await database.query("INSERT INTO automotive_businesses(id,name,business_type,timezone,active,created_at,updated_at) VALUES($1,$1,'OTHER','UTC',true,$2,$2)", [businessId, "2026-10-15T00:00:00Z"]);
     }
+    const billingProfiles = new BusinessBillingProfileService(new PostgresBusinessBillingProfileRepository(database));
+    await billingProfiles.save({ businessId: "billing-business-a", payerEmail: " Billing-A@Example.Test ", now: "2026-10-15T12:00:00.000Z" });
+    await billingProfiles.save({ businessId: "billing-business-b", payerEmail: "billing-b@example.test", now: "2026-10-15T12:00:00.000Z" });
+    assert.equal(await billingProfiles.resolvePayerEmail("billing-business-a"), "billing-a@example.test");
+    assert.equal(await billingProfiles.resolvePayerEmail("billing-business-b"), "billing-b@example.test");
+    assert.equal(await billingProfiles.resolvePayerEmail("billing-business-missing"), null);
     let sequence = 0;
     const subscriptions = new PostgresSubscriptionRepository(database);
     const transactions = new PostgresPaymentTransactionRepository(database);
@@ -46,9 +54,9 @@ test("PostgreSQL billing foundation isolates tenants, persists intents, and keep
       generateIdempotencyKey: () => `generated-${++sequence}`,
       now: () => "2026-10-15T12:00:00.000Z",
     });
-    const a = await service.start({ businessId: "billing-business-a", plan: "INTERMEDIATE", billingCycle: "MONTHLY", idempotencyKey: "tenant-a-key" });
-    const b = await service.start({ businessId: "billing-business-b", plan: "ADVANCED", billingCycle: "ANNUAL", idempotencyKey: "tenant-b-key" });
-    const retry = await service.start({ businessId: "billing-business-a", plan: "BASIC", billingCycle: "ANNUAL", idempotencyKey: "tenant-a-key" });
+    const a = await service.start({ businessId: "billing-business-a", plan: "INTERMEDIATE", billingCycle: "MONTHLY", payerEmail: "a@billing.test", idempotencyKey: "tenant-a-key" });
+    const b = await service.start({ businessId: "billing-business-b", plan: "ADVANCED", billingCycle: "ANNUAL", payerEmail: "b@billing.test", idempotencyKey: "tenant-b-key" });
+    const retry = await service.start({ businessId: "billing-business-a", plan: "BASIC", billingCycle: "ANNUAL", payerEmail: "a@billing.test", idempotencyKey: "tenant-a-key" });
     assert.equal(retry.reused, true);
     assert.equal(retry.subscription.id, a.subscription.id);
     assert.equal(a.subscription.subscriptionAmountCents, 69_700);

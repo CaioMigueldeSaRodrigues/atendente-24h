@@ -26,6 +26,13 @@ import type { BusinessOperatorAuthorizer } from "../core/business-operator-autho
 import type { AiUsageBillingConfig, AiUsageRecorder } from "../core/ai-usage.js";
 import { AiUsageMeasurementService } from "../core/ai-usage.js";
 import { PostgresAiUsageRepository } from "../infrastructure/postgres/postgres-ai-usage-repository.js";
+import { PostgresSubscriptionRepository } from "../infrastructure/postgres/postgres-subscription-repository.js";
+import { PostgresPaymentTransactionRepository } from "../infrastructure/postgres/postgres-payment-transaction-repository.js";
+import { PostgresBusinessBillingProfileRepository } from "../infrastructure/postgres/postgres-business-billing-profile-repository.js";
+import { MockPaymentProvider } from "../integrations/payment/mock-payment-provider.js";
+import type { PaymentProvider } from "../core/payment-provider.js";
+import { SubscriptionService } from "../core/subscription-service.js";
+import { BusinessBillingProfileService } from "../core/business-billing-profile.js";
 
 export type BasicPlanPostgresRuntimeOptions = {
   postgres: PostgresEnvironment;
@@ -34,6 +41,8 @@ export type BasicPlanPostgresRuntimeOptions = {
   interpreter?: MessageInterpreter;
   interpreterFactory?: (usageRecorder: AiUsageRecorder) => MessageInterpreter;
   aiUsageBilling?: AiUsageBillingConfig;
+  paymentProvider?: PaymentProvider;
+  paymentPayerEmailResolver?: (businessId: string) => Promise<string | null>;
   evolutionGoWebhookCredential?: EvolutionGoWebhookCredential;
   evolutionGoBaseUrl?: string;
   evolutionGoTextSender?: { sendText(message: EvolutionGoTextMessage): Promise<void | { providerMessageId: string }> };
@@ -62,6 +71,16 @@ export async function createBasicPlanPostgresRuntime(options: BasicPlanPostgresR
       () => `ai-usage-${randomUUID()}`,
       now,
     );
+    const paymentProvider = options.paymentProvider ?? new MockPaymentProvider();
+    const billingProfileService = new BusinessBillingProfileService(new PostgresBusinessBillingProfileRepository(database));
+    const subscriptionService = new SubscriptionService({
+      subscriptionRepository: new PostgresSubscriptionRepository(database),
+      paymentTransactionRepository: new PostgresPaymentTransactionRepository(database),
+      paymentProvider,
+      generateId: (prefix) => `${prefix}-${randomUUID()}`,
+      generateIdempotencyKey: () => `payment-${randomUUID()}`,
+      now,
+    });
     const interpreter = options.interpreterFactory?.(aiUsageMeasurement) ?? options.interpreter;
     if (interpreter === undefined) throw new Error("An interpreter or interpreterFactory is required");
     const businessRepository = new PostgresAutomotiveBusinessRepository(database);
@@ -119,6 +138,8 @@ export async function createBasicPlanPostgresRuntime(options: BasicPlanPostgresR
       humanHandoffRepository: new PostgresHumanHandoffRepository(database),
       operator: { businessId: options.business.businessId, businessName: options.business.businessName, integratedQuotes: true },
       aiUsageQueryService: aiUsageRepository,
+      subscriptionService,
+      paymentPayerEmailResolver: options.paymentPayerEmailResolver ?? ((businessId) => billingProfileService.resolvePayerEmail(businessId)),
       interpreter,
       ...(options.operationalLog ? { operationalLog: options.operationalLog } : {}),
       now,
