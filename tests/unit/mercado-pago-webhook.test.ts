@@ -80,6 +80,34 @@ test("invalid amount, currency, reference and canceled/paused preapproval are ig
   assert.equal(h.assignments.items.length, 0);
 });
 
+test("test environment accepts only live_mode=false", async () => {
+  const allowed = createHarness(undefined, "test");
+  assert.equal((await processStep(allowed.service, "setup", allowed.ids, "test-false", "payment", false)).status, "processed");
+  assert.equal(allowed.provider.paymentReads, 1);
+
+  const rejected = createHarness(undefined, "test");
+  assert.equal((await processStep(rejected.service, "setup", rejected.ids, "test-true", "payment", true)).status, "ignored");
+  assert.equal(rejected.provider.paymentReads, 0);
+  assert.equal(rejected.subscriptions.items[0]?.status, SubscriptionStatus.PENDING);
+  assert.equal(rejected.assignments.items.length, 0);
+  assert.equal(rejected.events.items[0]?.processingStatus, PaymentWebhookProcessingStatus.IGNORED);
+  assert.equal(rejected.events.items[0]?.errorMessage, "live_mode does not match Mercado Pago environment");
+});
+
+test("production environment accepts only live_mode=true", async () => {
+  const allowed = createHarness(undefined, "production");
+  assert.equal((await processStep(allowed.service, "setup", allowed.ids, "production-true", "payment", true)).status, "processed");
+  assert.equal(allowed.provider.paymentReads, 1);
+
+  const rejected = createHarness(undefined, "production");
+  assert.equal((await processStep(rejected.service, "setup", rejected.ids, "production-false", "payment", false)).status, "ignored");
+  assert.equal(rejected.provider.paymentReads, 0);
+  assert.equal(rejected.subscriptions.items[0]?.status, SubscriptionStatus.PENDING);
+  assert.equal(rejected.assignments.items.length, 0);
+  assert.equal(rejected.events.items[0]?.processingStatus, PaymentWebhookProcessingStatus.IGNORED);
+  assert.equal(rejected.events.items[0]?.errorMessage, "live_mode does not match Mercado Pago environment");
+});
+
 test("future recurring payments create one transaction per provider payment and replay does not duplicate", async () => {
   const h = createHarness();
   await processStep(h.service, "setup", h.ids);
@@ -176,7 +204,7 @@ type Harness = {
 
 type TransactionRunner = { run<T>(operation: () => Promise<T>): Promise<T> };
 
-function createHarness(transaction: TransactionRunner = { run: async <T>(operation: () => Promise<T>) => operation() }): Harness {
+function createHarness(transaction: TransactionRunner = { run: async <T>(operation: () => Promise<T>) => operation() }, mercadoPagoEnvironment?: "test" | "production"): Harness {
   const subscriptions = new MemorySubscriptions();
   const transactions = new MemoryTransactions();
   const assignments = new MemoryAssignments();
@@ -201,18 +229,19 @@ function createHarness(transaction: TransactionRunner = { run: async <T>(operati
     webhookEvents: events, subscriptions, transactions, assignments, provider,
     transaction,
     now: () => "2026-10-15T12:00:00.000Z", generateId: (prefix) => `${prefix}-${transactions.items.length + 1}`,
+    ...(mercadoPagoEnvironment === undefined ? {} : { mercadoPagoEnvironment }),
   });
   return { service, subscriptions, transactions, assignments, events, provider, ids: { setup: "payment-setup", subscription: "pre-a", recurring: "authorized-1", businessId: "business-a" } };
 }
 
-async function processStep(service: MercadoPagoWebhookService, step: string, ids: Harness["ids"], eventId = step, eventType?: string) {
+async function processStep(service: MercadoPagoWebhookService, step: string, ids: Harness["ids"], eventId = step, eventType?: string, liveMode?: boolean) {
   const actualType = eventType ?? (step === "setup" ? "payment" : step === "subscription" ? "subscription_preapproval" : step === "recurring" ? "subscription_authorized_payment" : "payment");
   const resourceId = step === "setup" ? ids.setup : step === "subscription" ? ids.subscription : step === "recurring" ? ids.recurring : step;
-  return service.process({ event: makeEvent(eventId, resourceId, actualType), eventType: actualType, resourceId });
+  return service.process({ event: makeEvent(eventId, resourceId, actualType, liveMode), eventType: actualType, resourceId });
 }
 
-function makeEvent(id: string, resourceId: string, eventType: string): PaymentWebhookEvent {
-  return { id: `event-row-${id}`, provider: "mercadopago", providerEventId: id, providerRequestId: `request-${id}`, resourceId, eventType, payloadHash: `hash-${id}`, processingStatus: PaymentWebhookProcessingStatus.RECEIVED, receivedAt: "2026-10-15T12:00:00.000Z" };
+function makeEvent(id: string, resourceId: string, eventType: string, liveMode?: boolean): PaymentWebhookEvent {
+  return { id: `event-row-${id}`, provider: "mercadopago", providerEventId: id, providerRequestId: `request-${id}`, resourceId, eventType, ...(liveMode === undefined ? {} : { liveMode }), payloadHash: `hash-${id}`, processingStatus: PaymentWebhookProcessingStatus.RECEIVED, receivedAt: "2026-10-15T12:00:00.000Z" };
 }
 
 function payment(id: string, externalReference: string, amountCents: number): ProviderPaymentResource {
@@ -233,9 +262,12 @@ class FakeProvider implements PaymentProviderReadApi {
   authorized = new Map<string, ProviderAuthorizedPaymentResource>();
   waitForPayment?: Promise<void>;
   failReads = false;
-  async getSubscription(id: string): Promise<ProviderSubscriptionResource> { if (this.failReads) throw new PaymentProviderTransientError("provider secret"); return this.subscriptions.get(id)!; }
-  async getPayment(id: string): Promise<ProviderPaymentResource> { if (this.waitForPayment) await this.waitForPayment; if (this.failReads) throw new PaymentProviderTransientError("provider secret"); return this.payments.get(id)!; }
-  async getAuthorizedPayment(id: string): Promise<ProviderAuthorizedPaymentResource> { if (this.failReads) throw new PaymentProviderTransientError("provider secret"); return this.authorized.get(id)!; }
+  subscriptionReads = 0;
+  paymentReads = 0;
+  authorizedReads = 0;
+  async getSubscription(id: string): Promise<ProviderSubscriptionResource> { this.subscriptionReads += 1; if (this.failReads) throw new PaymentProviderTransientError("provider secret"); return this.subscriptions.get(id)!; }
+  async getPayment(id: string): Promise<ProviderPaymentResource> { this.paymentReads += 1; if (this.waitForPayment) await this.waitForPayment; if (this.failReads) throw new PaymentProviderTransientError("provider secret"); return this.payments.get(id)!; }
+  async getAuthorizedPayment(id: string): Promise<ProviderAuthorizedPaymentResource> { this.authorizedReads += 1; if (this.failReads) throw new PaymentProviderTransientError("provider secret"); return this.authorized.get(id)!; }
 }
 
 class MemorySubscriptions implements SubscriptionRepository {

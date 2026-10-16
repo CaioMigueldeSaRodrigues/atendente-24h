@@ -37,6 +37,7 @@ import { PostgresPaymentWebhookEventRepository } from "../infrastructure/postgre
 import { MercadoPagoWebhookService } from "../core/mercado-pago-webhook-service.js";
 import { paymentProviderReadApi } from "../core/payment-provider.js";
 import { MercadoPagoWebhookVerifier } from "../integrations/payment/mercado-pago-webhook-verifier.js";
+import type { MercadoPagoEnvironment } from "../config/payment-environment.js";
 
 export type BasicPlanPostgresRuntimeOptions = {
   postgres: PostgresEnvironment;
@@ -46,6 +47,7 @@ export type BasicPlanPostgresRuntimeOptions = {
   interpreterFactory?: (usageRecorder: AiUsageRecorder) => MessageInterpreter;
   aiUsageBilling?: AiUsageBillingConfig;
   paymentProvider?: PaymentProvider;
+  mercadoPagoEnvironment?: MercadoPagoEnvironment;
   paymentWebhookSecret?: string;
   paymentPayerEmailResolver?: (businessId: string) => Promise<string | null>;
   evolutionGoWebhookCredential?: EvolutionGoWebhookCredential;
@@ -63,6 +65,10 @@ export async function createBasicPlanPostgresRuntime(options: BasicPlanPostgresR
   if (options.evolutionGoWebhookCredential && !options.evolutionGoTextSender && !options.evolutionGoBaseUrl) {
     throw new Error("Evolution Go base URL is required when the webhook is configured");
   }
+  const paymentProvider = options.paymentProvider ?? new MockPaymentProvider();
+  if (paymentProvider.name === "mercadopago" && options.mercadoPagoEnvironment === undefined) {
+    throw new Error("MERCADO_PAGO_ENVIRONMENT is required for the Mercado Pago runtime");
+  }
   const database = new PostgresDatabase(options.postgres, options.allowInsecureLocalForTests === undefined
     ? {} : { allowInsecureLocal: options.allowInsecureLocalForTests });
   let server: Server | undefined;
@@ -76,7 +82,6 @@ export async function createBasicPlanPostgresRuntime(options: BasicPlanPostgresR
       () => `ai-usage-${randomUUID()}`,
       now,
     );
-    const paymentProvider = options.paymentProvider ?? new MockPaymentProvider();
     const billingProfileService = new BusinessBillingProfileService(new PostgresBusinessBillingProfileRepository(database));
     const subscriptionService = new SubscriptionService({
       subscriptionRepository: new PostgresSubscriptionRepository(database),
@@ -97,6 +102,7 @@ export async function createBasicPlanPostgresRuntime(options: BasicPlanPostgresR
           transaction: { run: (operation) => database.transaction(async () => operation()) },
           now,
           generateId: (prefix) => `${prefix}-${randomUUID()}`,
+          ...(options.mercadoPagoEnvironment === undefined ? {} : { mercadoPagoEnvironment: options.mercadoPagoEnvironment }),
         })
       : undefined;
     const interpreter = options.interpreterFactory?.(aiUsageMeasurement) ?? options.interpreter;

@@ -16,6 +16,7 @@ export type PaymentWebhookEvent = {
   providerRequestId?: string;
   resourceId: string;
   eventType: string;
+  liveMode?: boolean;
   payloadHash: string;
   processingStatus: PaymentWebhookProcessingStatus;
   receivedAt: string;

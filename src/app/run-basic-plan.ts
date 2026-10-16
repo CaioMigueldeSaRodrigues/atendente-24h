@@ -47,6 +47,7 @@ async function main(): Promise<void> {
         postgres: postgresConfigFromEnvironment(process.env),
         aiUsageBilling: readAiUsageBillingConfig(process.env),
         paymentProvider: createPaymentProvider(paymentEnvironment),
+        ...(paymentEnvironment.mercadoPagoEnvironment === undefined ? {} : { mercadoPagoEnvironment: paymentEnvironment.mercadoPagoEnvironment }),
         ...(paymentEnvironment.mercadoPagoWebhookSecret ? { paymentWebhookSecret: paymentEnvironment.mercadoPagoWebhookSecret } : {}),
         interpreterFactory: (usageRecorder) => createRuntimeMessageInterpreter(
           process.env,

@@ -1356,6 +1356,7 @@ async function handleMercadoPagoWebhook(
         ...(requestId === undefined ? {} : { providerRequestId: requestId }),
         resourceId: resourceId || "unknown",
         eventType: payload.type,
+        ...(typeof payload.live_mode === "boolean" ? { liveMode: payload.live_mode } : {}),
         payloadHash,
         processingStatus: "PROCESSING",
         receivedAt: new Date().toISOString(),

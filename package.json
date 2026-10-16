@@ -13,6 +13,8 @@
     "check:postgres": "npm run build && node --env-file-if-exists=.env.local dist/infrastructure/postgres/check-postgres-connection.js",
     "transfer:postgres": "npm run build && node --env-file-if-exists=.env.local dist/infrastructure/postgres/transfer-sqlite-to-postgres.js",
     "test:postgres": "tsc -p tsconfig.test.json && node --test dist-test/tests/integration/postgres-*.test.js",
+    "sandbox:mp-business": "npm run build && node --env-file-if-exists=.env.local dist/integrations/payment/run-mercadopago-sandbox-business.js",
+    "smoke:mercadopago:sandbox": "npm run build && node --env-file-if-exists=.env.local dist/integrations/payment/run-mercadopago-sandbox-smoke.js",
     "preview:operator": "node dist/app/run-operator-preview.js"
   },
   "devDependencies": {

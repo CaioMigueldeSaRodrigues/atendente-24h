@@ -12,19 +12,13 @@ import { BusinessBillingProfileService } from "../../src/core/business-billing-p
 import { PostgresBusinessBillingProfileRepository } from "../../src/infrastructure/postgres/postgres-business-billing-profile-repository.js";
 
 const config: PostgresEnvironment = {
-  host: process.env.POSTGRES_TEST_HOST ?? "",
-  port: Number(process.env.POSTGRES_TEST_PORT ?? 5432),
-  database: process.env.POSTGRES_TEST_DATABASE ?? "",
-  user: process.env.POSTGRES_TEST_USER ?? "",
+  host: "127.0.0.1",
+  port: 55432,
+  database: "atendente24h_test",
+  user: "test_user",
   password: process.env.POSTGRES_TEST_PASSWORD ?? "",
 };
-const enabled = Boolean(
-  process.env.POSTGRES_TEST_HOST
-  && process.env.POSTGRES_TEST_DATABASE
-  && /(?:test|ci|dev)/i.test(process.env.POSTGRES_TEST_DATABASE)
-  && process.env.POSTGRES_TEST_USER
-  && process.env.POSTGRES_TEST_PASSWORD,
-);
+const enabled = Boolean(process.env.POSTGRES_TEST_PASSWORD);
 
 test("PostgreSQL billing foundation isolates tenants, persists intents, and keeps entitlement unchanged", { skip: !enabled }, async () => {
   const admin = new PostgresDatabase(config, { allowInsecureLocal: true });
@@ -33,7 +27,7 @@ test("PostgreSQL billing foundation isolates tenants, persists intents, and keep
   const database = new PostgresDatabase(config, { allowInsecureLocal: true, searchPath: schema });
   try {
     const applied = await applyPostgresMigrations(database);
-    assert.deepEqual(applied.slice(-7), ["013_saas_subscriptions.sql", "014_payment_transactions.sql", "015_payment_webhook_events.sql", "016_payment_checkout_urls.sql", "017_business_billing_profiles.sql", "018_mercadopago_webhook_activation.sql", "019_payment_transaction_subscription_index.sql"]);
+    assert.deepEqual(applied.slice(-8), ["013_saas_subscriptions.sql", "014_payment_transactions.sql", "015_payment_webhook_events.sql", "016_payment_checkout_urls.sql", "017_business_billing_profiles.sql", "018_mercadopago_webhook_activation.sql", "019_payment_transaction_subscription_index.sql", "020_mercadopago_live_mode_guard.sql"]);
     for (const businessId of ["billing-business-a", "billing-business-b"]) {
       await database.query("INSERT INTO automotive_businesses(id,name,business_type,timezone,active,created_at,updated_at) VALUES($1,$1,'OTHER','UTC',true,$2,$2)", [businessId, "2026-10-15T00:00:00Z"]);
     }

@@ -10,16 +10,17 @@ export class PostgresPaymentWebhookEventRepository implements PaymentWebhookEven
     await this.database.query(`
       INSERT INTO payment_webhook_events(
         id,business_id,provider,provider_event_id,provider_request_id,resource_id,
-        event_type,payload_hash,processing_status,received_at,processed_at,error_message
-      ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+        event_type,live_mode,payload_hash,processing_status,received_at,processed_at,error_message
+      ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
       ON CONFLICT (id) DO UPDATE SET
         business_id=excluded.business_id,
+        live_mode=excluded.live_mode,
         processing_status=excluded.processing_status,
         processed_at=excluded.processed_at,
         error_message=excluded.error_message
     `, [
       event.id, event.businessId ?? null, event.provider, event.providerEventId ?? null,
-      event.providerRequestId ?? null, event.resourceId, event.eventType, event.payloadHash,
+      event.providerRequestId ?? null, event.resourceId, event.eventType, event.liveMode ?? null, event.payloadHash,
       event.processingStatus, event.receivedAt, event.processedAt ?? null, event.errorMessage ?? null,
     ]);
   }
@@ -41,19 +42,20 @@ export class PostgresPaymentWebhookEventRepository implements PaymentWebhookEven
         const current = map(row);
         if (current.processingStatus === PaymentWebhookProcessingStatus.PROCESSED || current.processingStatus === PaymentWebhookProcessingStatus.IGNORED) return { status: "duplicate", event: current };
         if (current.processingStatus === PaymentWebhookProcessingStatus.PROCESSING) return { status: "in_progress", event: current };
-        await client.query("UPDATE payment_webhook_events SET processing_status='PROCESSING',error_message=NULL,processed_at=NULL,payload_hash=$3,resource_id=$4,event_type=$5,provider_request_id=$6 WHERE provider=$1 AND provider_event_id=$2", [event.provider, event.providerEventId ?? event.id, event.payloadHash, event.resourceId, event.eventType, event.providerRequestId ?? null]);
-        const { errorMessage: _errorMessage, processedAt: _processedAt, ...eventWithoutProcessing } = { ...current, ...event };
+        await client.query("UPDATE payment_webhook_events SET processing_status='PROCESSING',error_message=NULL,processed_at=NULL,payload_hash=$3,resource_id=$4,event_type=$5,live_mode=$6,provider_request_id=$7 WHERE provider=$1 AND provider_event_id=$2", [event.provider, event.providerEventId ?? event.id, event.payloadHash, event.resourceId, event.eventType, event.liveMode ?? null, event.providerRequestId ?? null]);
+        const { errorMessage: _errorMessage, processedAt: _processedAt, liveMode: _liveMode, ...currentWithoutProcessing } = current;
+        const eventWithoutProcessing = { ...currentWithoutProcessing, ...event };
         return { status: "claimed", event: { ...eventWithoutProcessing, providerEventId: event.providerEventId ?? event.id, processingStatus: PaymentWebhookProcessingStatus.PROCESSING } };
       }
       const providerEventId = event.providerEventId ?? event.id;
       const inserted = await client.query(`
         INSERT INTO payment_webhook_events(
           id,business_id,provider,provider_event_id,provider_request_id,resource_id,
-          event_type,payload_hash,processing_status,received_at
-        ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'PROCESSING',$9)
+          event_type,live_mode,payload_hash,processing_status,received_at
+        ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'PROCESSING',$10)
         ON CONFLICT DO NOTHING
         RETURNING id
-      `, [event.id, event.businessId ?? null, event.provider, providerEventId, event.providerRequestId ?? null, event.resourceId, event.eventType, event.payloadHash, event.receivedAt]);
+      `, [event.id, event.businessId ?? null, event.provider, providerEventId, event.providerRequestId ?? null, event.resourceId, event.eventType, event.liveMode ?? null, event.payloadHash, event.receivedAt]);
       if (inserted.rowCount === 1) return { status: "claimed", event: { ...event, providerEventId, processingStatus: PaymentWebhookProcessingStatus.PROCESSING } };
       const concurrent = await client.query<Row>("SELECT * FROM payment_webhook_events WHERE provider=$1 AND provider_event_id=$2 FOR UPDATE", [event.provider, providerEventId]);
       const current = concurrent.rows[0] === undefined ? null : map(concurrent.rows[0]);
@@ -77,6 +79,7 @@ function map(row: Row): PaymentWebhookEvent {
     ...(row.provider_request_id == null ? {} : { providerRequestId: String(row.provider_request_id) }),
     resourceId: String(row.resource_id),
     eventType: String(row.event_type),
+    ...(row.live_mode == null ? {} : { liveMode: row.live_mode === true }),
     payloadHash: String(row.payload_hash),
     processingStatus: processingStatus as PaymentWebhookEvent["processingStatus"],
     receivedAt: dateText(row.received_at),

@@ -92,12 +92,14 @@ test("same idempotency key is tenant-scoped and does not mix two businesses", as
   assert.equal(providerCalls, 4);
 });
 
-test("payment mode defaults to mock and never accepts incomplete Mercado Pago configuration", () => {
+test("payment mode defaults to mock and Mercado Pago requires an explicit environment", () => {
   assert.deepEqual(readPaymentEnvironment({}), { mode: "mock" });
   assert.throws(() => readPaymentEnvironment({ PAYMENT_MODE: "invalid" }), /PAYMENT_MODE must be mock or mercadopago/);
-  assert.throws(() => readPaymentEnvironment({ PAYMENT_MODE: "mercadopago" }), /MERCADO_PAGO_ACCESS_TOKEN/);
-  assert.deepEqual(readPaymentEnvironment({ PAYMENT_MODE: "mercadopago", MERCADO_PAGO_ACCESS_TOKEN: "token", MERCADO_PAGO_WEBHOOK_SECRET: "secret", MERCADO_PAGO_BACK_URL: "https://example.test/checkout" }), {
-    mode: "mercadopago", mercadoPagoAccessToken: "token", mercadoPagoWebhookSecret: "secret", mercadoPagoBackUrl: "https://example.test/checkout",
+  assert.throws(() => readPaymentEnvironment({ PAYMENT_MODE: "mercadopago" }), /MERCADO_PAGO_ENVIRONMENT/);
+  assert.throws(() => readPaymentEnvironment({ PAYMENT_MODE: "mercadopago", MERCADO_PAGO_ENVIRONMENT: "sandbox" }), /MERCADO_PAGO_ENVIRONMENT must be test or production/);
+  assert.throws(() => readPaymentEnvironment({ PAYMENT_MODE: "mercadopago", MERCADO_PAGO_ENVIRONMENT: "test", MERCADO_PAGO_ACCESS_TOKEN: "token", MERCADO_PAGO_WEBHOOK_SECRET: "secret", MERCADO_PAGO_BACK_URL: "http://example.test/checkout" }), /MERCADO_PAGO_BACK_URL must be a valid HTTPS URL/);
+  assert.deepEqual(readPaymentEnvironment({ PAYMENT_MODE: "mercadopago", MERCADO_PAGO_ENVIRONMENT: "test", MERCADO_PAGO_ACCESS_TOKEN: "token", MERCADO_PAGO_WEBHOOK_SECRET: "secret", MERCADO_PAGO_BACK_URL: "https://example.test/checkout" }), {
+    mode: "mercadopago", mercadoPagoEnvironment: "test", mercadoPagoAccessToken: "token", mercadoPagoWebhookSecret: "secret", mercadoPagoBackUrl: "https://example.test/checkout",
   });
 });
 

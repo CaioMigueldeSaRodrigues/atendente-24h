@@ -14,13 +14,13 @@ import { PostgresPaymentWebhookEventRepository } from "../../src/infrastructure/
 import { PostgresSubscriptionRepository } from "../../src/infrastructure/postgres/postgres-subscription-repository.js";
 
 const config: PostgresEnvironment = {
-  host: process.env.POSTGRES_TEST_HOST ?? "",
-  port: Number(process.env.POSTGRES_TEST_PORT ?? 5432),
-  database: process.env.POSTGRES_TEST_DATABASE ?? "",
-  user: process.env.POSTGRES_TEST_USER ?? "",
+  host: "127.0.0.1",
+  port: 55432,
+  database: "atendente24h_test",
+  user: "test_user",
   password: process.env.POSTGRES_TEST_PASSWORD ?? "",
 };
-const enabled = Boolean(process.env.POSTGRES_TEST_HOST && process.env.POSTGRES_TEST_DATABASE && /(?:test|ci|dev)/i.test(process.env.POSTGRES_TEST_DATABASE) && process.env.POSTGRES_TEST_USER && process.env.POSTGRES_TEST_PASSWORD);
+const enabled = Boolean(process.env.POSTGRES_TEST_PASSWORD);
 
 test("PostgreSQL Mercado Pago webhook claims replay and activates entitlement transactionally", { skip: !enabled }, async () => {
   const admin = new PostgresDatabase(config, { allowInsecureLocal: true });

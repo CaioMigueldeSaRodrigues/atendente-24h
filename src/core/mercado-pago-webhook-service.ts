@@ -31,7 +31,10 @@ export type MercadoPagoWebhookServiceDependencies = {
   transaction: PaymentWebhookTransaction;
   now: () => string;
   generateId: (prefix: string) => string;
+  mercadoPagoEnvironment?: MercadoPagoEnvironment;
 };
+
+export type MercadoPagoEnvironment = "test" | "production";
 
 export type MercadoPagoWebhookInput = {
   event: PaymentWebhookEvent;
@@ -78,6 +81,16 @@ export class MercadoPagoWebhookService {
         processingStatus: PaymentWebhookProcessingStatus.IGNORED,
         processedAt: this.dependencies.now(),
         errorMessage: "unsupported event type",
+      });
+      return { status: "ignored", activated: false };
+    }
+
+    if (this.dependencies.mercadoPagoEnvironment !== undefined && !isLiveModeAllowed(input.event.liveMode, this.dependencies.mercadoPagoEnvironment)) {
+      await this.dependencies.webhookEvents.update({
+        ...claimedEvent.event,
+        processingStatus: PaymentWebhookProcessingStatus.IGNORED,
+        processedAt: this.dependencies.now(),
+        errorMessage: "live_mode does not match Mercado Pago environment",
       });
       return { status: "ignored", activated: false };
     }
@@ -287,3 +300,7 @@ function paymentTransactionStatus(status: string, statusDetail: string | undefin
 }
 
 function rejected(message: string): MercadoPagoWebhookRejectedError { return new MercadoPagoWebhookRejectedError(message); }
+
+function isLiveModeAllowed(liveMode: boolean | undefined, environment: MercadoPagoEnvironment): boolean {
+  return liveMode === (environment === "production");
+}

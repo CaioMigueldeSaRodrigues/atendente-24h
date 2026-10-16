@@ -23,19 +23,13 @@ import {
 import { createBasicPlanPostgresRuntime } from "../../src/app/basic-plan-postgres-runtime.js";
 
 const config: PostgresEnvironment = {
-  host: process.env.POSTGRES_TEST_HOST ?? "",
-  port: Number(process.env.POSTGRES_TEST_PORT ?? 5432),
-  database: process.env.POSTGRES_TEST_DATABASE ?? "",
-  user: process.env.POSTGRES_TEST_USER ?? "",
+  host: "127.0.0.1",
+  port: 55432,
+  database: "atendente24h_test",
+  user: "test_user",
   password: process.env.POSTGRES_TEST_PASSWORD ?? "",
 };
-const enabled = Boolean(
-  process.env.POSTGRES_TEST_HOST
-  && process.env.POSTGRES_TEST_DATABASE
-  && /(?:test|ci|dev)/i.test(process.env.POSTGRES_TEST_DATABASE)
-  && process.env.POSTGRES_TEST_USER
-  && process.env.POSTGRES_TEST_PASSWORD,
-);
+const enabled = Boolean(process.env.POSTGRES_TEST_PASSWORD);
 const runtimeInterpretation: AIInterpretation = {
   intent: Intent.GENERAL_INFORMATION,
   extractedCustomerData: {},
@@ -90,6 +84,7 @@ test("PostgreSQL migrations and repositories persist tenant data and serialize c
       "017_business_billing_profiles.sql",
       "018_mercadopago_webhook_activation.sql",
       "019_payment_transaction_subscription_index.sql",
+      "020_mercadopago_live_mode_guard.sql",
     ]);
     assert.deepEqual(await applyPostgresMigrations(db),[]);
     const transferBusinessId=`transfer-test-${businessId}`;
