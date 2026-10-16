@@ -30,8 +30,12 @@ test("sandbox smoke refuses production before any external work", async () => {
 });
 
 test("dry-run validates the dedicated business and payer without creating a provider intent", async () => {
+  const environment = smokeEnvironment({ MERCADO_PAGO_SANDBOX_DRY_RUN: "true", MERCADO_PAGO_TEST_PAYER_EMAIL: " PAYER@EXAMPLE.TEST " });
+  delete environment.MERCADO_PAGO_ACCESS_TOKEN;
+  delete environment.MERCADO_PAGO_WEBHOOK_SECRET;
+  delete environment.MERCADO_PAGO_BACK_URL;
   let providerCreated = false;
-  const result = await runMercadoPagoSandboxSmoke(smokeEnvironment({ MERCADO_PAGO_SANDBOX_DRY_RUN: "true", MERCADO_PAGO_TEST_PAYER_EMAIL: " PAYER@EXAMPLE.TEST " }), {
+  const result = await runMercadoPagoSandboxSmoke(environment, {
     createDatabase: () => fakeSandboxDatabase(),
     migrate: async () => [],
     createPaymentProvider: () => { providerCreated = true; throw new Error("provider must not be created in dry-run"); },
@@ -45,6 +49,26 @@ test("dry-run validates the dedicated business and payer without creating a prov
   assert.deepEqual(sandboxPostgresConfig({ POSTGRES_TEST_PASSWORD: "local-test-password" }), {
     host: "127.0.0.1", port: 55432, database: "atendente24h_test", user: "test_user", password: "local-test-password",
   });
+});
+
+test("real sandbox smoke still requires complete provider credentials", async () => {
+  const missingCredentialCases = [
+    ["MERCADO_PAGO_ACCESS_TOKEN", /MERCADO_PAGO_ACCESS_TOKEN is required/],
+    ["MERCADO_PAGO_WEBHOOK_SECRET", /MERCADO_PAGO_WEBHOOK_SECRET is required/],
+    ["MERCADO_PAGO_BACK_URL", /MERCADO_PAGO_BACK_URL is required/],
+  ] as const;
+
+  for (const [credential, expectedError] of missingCredentialCases) {
+    const environment = smokeEnvironment();
+    delete environment[credential];
+    await assert.rejects(
+      runMercadoPagoSandboxSmoke(environment, {
+        createDatabase: () => { throw new Error("database must not be opened before credential validation"); },
+        createPaymentProvider: () => { throw new Error("provider must not be created"); },
+      }),
+      expectedError,
+    );
+  }
 });
 
 test("sandbox RUN_ID is a stable source for idempotency and separates homologations", () => {

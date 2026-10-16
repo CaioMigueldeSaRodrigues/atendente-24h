@@ -148,7 +148,9 @@ export async function runMercadoPagoSandboxSmoke(
   dependencies: SandboxSmokeDependencies = {},
 ): Promise<SandboxSmokeReport> {
   const safety = assertSandboxSafety(environment, { requireRunId: true });
-  const paymentEnvironment = readPaymentEnvironment(environment);
+  const paymentEnvironment = readPaymentEnvironment(environment, {
+    requireMercadoPagoCredentials: !safety.dryRun,
+  });
   if (paymentEnvironment.mode !== "mercadopago" || paymentEnvironment.mercadoPagoEnvironment !== MercadoPagoEnvironment.TEST) {
     throw new Error("Sandbox smoke requires PAYMENT_MODE=mercadopago and MERCADO_PAGO_ENVIRONMENT=test");
   }

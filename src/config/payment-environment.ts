@@ -20,13 +20,21 @@ export type PaymentEnvironment = {
   mercadoPagoBackUrl?: string;
 };
 
-export function readPaymentEnvironment(environment: NodeJS.ProcessEnv): PaymentEnvironment {
+export type PaymentEnvironmentReadOptions = {
+  requireMercadoPagoCredentials?: boolean;
+};
+
+export function readPaymentEnvironment(
+  environment: NodeJS.ProcessEnv,
+  options: PaymentEnvironmentReadOptions = {},
+): PaymentEnvironment {
   const mode = environment.PAYMENT_MODE?.trim() || PaymentMode.MOCK;
   if (mode !== PaymentMode.MOCK && mode !== PaymentMode.MERCADO_PAGO) {
     throw new Error("PAYMENT_MODE must be mock or mercadopago");
   }
   if (mode === PaymentMode.MOCK) return { mode: PaymentMode.MOCK };
   const mercadoPagoEnvironment = requiredEnvironment(environment.MERCADO_PAGO_ENVIRONMENT);
+  if (options.requireMercadoPagoCredentials === false) return { mode, mercadoPagoEnvironment };
   const accessToken = required(environment.MERCADO_PAGO_ACCESS_TOKEN, "MERCADO_PAGO_ACCESS_TOKEN");
   const webhookSecret = required(environment.MERCADO_PAGO_WEBHOOK_SECRET, "MERCADO_PAGO_WEBHOOK_SECRET");
   const backUrl = requiredHttpsUrl(environment.MERCADO_PAGO_BACK_URL, "MERCADO_PAGO_BACK_URL");
