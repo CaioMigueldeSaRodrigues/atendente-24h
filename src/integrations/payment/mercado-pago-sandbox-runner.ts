@@ -12,7 +12,7 @@ import { PostgresPaymentTransactionRepository } from "../../infrastructure/postg
 import { PostgresSubscriptionRepository } from "../../infrastructure/postgres/postgres-subscription-repository.js";
 import { PostgresAutomotiveBusinessRepository } from "../../infrastructure/postgres/postgres-repositories.js";
 import { applyPostgresMigrations } from "../../infrastructure/postgres/postgres-migrations.js";
-import { PostgresDatabase, type PostgresEnvironment } from "../../infrastructure/postgres/postgres-database.js";
+import { parsePostgresPort, PostgresDatabase, type PostgresEnvironment } from "../../infrastructure/postgres/postgres-database.js";
 
 export const MERCADO_PAGO_SANDBOX_BUSINESS_ID = "sandbox-mp-business";
 export const MERCADO_PAGO_SANDBOX_BUSINESS_NAME = "Mercado Pago Sandbox";
@@ -50,7 +50,7 @@ export type SandboxSmokeDependencies = {
 export function sandboxPostgresConfig(environment: NodeJS.ProcessEnv): PostgresEnvironment {
   return {
     host: "127.0.0.1",
-    port: 55432,
+    port: parsePostgresPort(environment.POSTGRES_TEST_PORT, "POSTGRES_TEST_PORT", 55432),
     database: "atendente24h_test",
     user: "test_user",
     password: environment.POSTGRES_TEST_PASSWORD?.trim() ?? "",

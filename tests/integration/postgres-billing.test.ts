@@ -10,15 +10,10 @@ import { MockPaymentProvider } from "../../src/integrations/payment/mock-payment
 import { PaymentWebhookProcessingStatus } from "../../src/core/payment-webhook-event.js";
 import { BusinessBillingProfileService } from "../../src/core/business-billing-profile.js";
 import { PostgresBusinessBillingProfileRepository } from "../../src/infrastructure/postgres/postgres-business-billing-profile-repository.js";
+import { postgresTestConfig, postgresTestEnabled } from "../postgres-test-environment.js";
 
-const config: PostgresEnvironment = {
-  host: "127.0.0.1",
-  port: 55432,
-  database: "atendente24h_test",
-  user: "test_user",
-  password: process.env.POSTGRES_TEST_PASSWORD ?? "",
-};
-const enabled = Boolean(process.env.POSTGRES_TEST_PASSWORD);
+const config: PostgresEnvironment = postgresTestConfig();
+const enabled = postgresTestEnabled();
 
 test("PostgreSQL billing foundation isolates tenants, persists intents, and keeps entitlement unchanged", { skip: !enabled }, async () => {
   const admin = new PostgresDatabase(config, { allowInsecureLocal: true });

@@ -2,7 +2,7 @@
 
 ## Execução
 
-Pré-requisitos: Node compatível com o projeto, dependências instaladas, Chromium do Playwright (`npx playwright install chromium`) e PostgreSQL **16** descartável em `127.0.0.1:55432`, database `atendente24h_test`, usuário `test_user`. Configurar somente `POSTGRES_TEST_PASSWORD` no ambiente; não versionar credenciais. Executar `npm run test:e2e` na raiz.
+Pré-requisitos: Node compatível com o projeto, dependências instaladas, Chromium do Playwright (`npx playwright install chromium`) e PostgreSQL **16** descartável em `127.0.0.1:${POSTGRES_TEST_PORT}` (padrão `55432`), database `atendente24h_test`, usuário `test_user`. Configurar `POSTGRES_TEST_PASSWORD` e, quando necessário, `POSTGRES_TEST_PORT` somente no ambiente; não versionar credenciais. Executar `npm run test:e2e` na raiz.
 
 O comando compila e valida o ambiente. Configuração ausente, servidor remoto, PostgreSQL de outra versão ou navegador ausente impedem aprovação; não são convertidos em sucesso ou skip. Nenhum Docker é iniciado ou destruído pelo script. Nunca apontar para Supabase.
 

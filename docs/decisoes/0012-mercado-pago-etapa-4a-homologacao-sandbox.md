@@ -31,11 +31,13 @@ O comando `npm run smoke:mercadopago:sandbox` valida a configuração, a oficina
 
 `MERCADO_PAGO_SANDBOX_DRY_RUN=true` executa as validações de banco/configuração e exibe plano, ciclo e valores esperados sem criar intenção local ou recurso externo e sem chamar o provider.
 
-O runner usa somente o PostgreSQL local de teste: `127.0.0.1:55432`, database `atendente24h_test`, usuário `test_user` e senha de `POSTGRES_TEST_PASSWORD` quando disponível. Nenhum banco de produção é usado pelo smoke ou pelos testes PostgreSQL.
+O runner usa somente o PostgreSQL local de teste: `127.0.0.1:${POSTGRES_TEST_PORT}`, com `POSTGRES_TEST_PORT=55432` por padrão, database `atendente24h_test`, usuário `test_user` e senha de `POSTGRES_TEST_PASSWORD` quando disponível. Nenhum banco de produção é usado pelo smoke ou pelos testes PostgreSQL.
 
 ### Conta comprador e URL pública
 
 A homologação real deve usar uma conta comprador dedicada do Mercado Pago, associada ao email persistido no billing profile da oficina de teste. Uma futura execução real exigirá uma URL pública HTTPS apontando para `POST /v1/payments/mercadopago/webhook`. `MERCADO_PAGO_BACK_URL` também deve ser uma URL HTTPS válida e apropriada ao teste.
+
+Para assinaturas, os eventos necessários são `payment`, `subscription_preapproval` e `subscription_authorized_payment`, conforme a [documentação oficial de Webhooks para assinaturas](https://www.mercadopago.com.br/developers/pt/docs/subscriptions/additional-content/your-integrations/notifications/webhooks). A integração valida `x-signature`/`x-request-id`/`data.id`, confirma o recurso na API server-side e responde `200` após o processamento idempotente. Não foi adicionado `notification_url` ao corpo de `/preapproval`: a [referência oficial de criação da assinatura](https://www.mercadopago.com.br/developers/pt/reference/online-payments/subscriptions/create-preapproval/post) não lista esse campo; a configuração deve seguir o mecanismo oficial disponível para a aplicação e para assinaturas, sem inventar parâmetros.
 
 Não instalar ngrok, Cloudflare Tunnel ou outra dependência automaticamente e não configurar o webhook no painel nesta etapa.
 

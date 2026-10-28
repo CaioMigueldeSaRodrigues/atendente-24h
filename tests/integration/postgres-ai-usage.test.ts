@@ -4,15 +4,10 @@ import { AiUsageMeasurementService } from "../../src/core/ai-usage.js";
 import { PostgresDatabase, type PostgresEnvironment } from "../../src/infrastructure/postgres/postgres-database.js";
 import { applyPostgresMigrations } from "../../src/infrastructure/postgres/postgres-migrations.js";
 import { PostgresAiUsageRepository } from "../../src/infrastructure/postgres/postgres-ai-usage-repository.js";
+import { postgresTestConfig, postgresTestEnabled } from "../postgres-test-environment.js";
 
-const config: PostgresEnvironment = {
-  host: "127.0.0.1",
-  port: 55432,
-  database: "atendente24h_test",
-  user: "test_user",
-  password: process.env.POSTGRES_TEST_PASSWORD ?? "",
-};
-const enabled = Boolean(process.env.POSTGRES_TEST_PASSWORD);
+const config: PostgresEnvironment = postgresTestConfig();
+const enabled = postgresTestEnabled();
 
 test("PostgreSQL AI usage aggregates monthly and keeps historical pricing", { skip: !enabled }, async () => {
   const admin = new PostgresDatabase(config, { allowInsecureLocal: true });

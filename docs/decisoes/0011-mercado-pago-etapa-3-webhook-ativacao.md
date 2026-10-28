@@ -26,6 +26,12 @@ O entitlement somente é ativado em uma transação PostgreSQL quando todos os f
 
 A avaliação é executada após cada fato, sem assumir ordem dos webhooks. A atribuição de plano é tenant-scoped e possui fonte determinística por assinatura.
 
-## Recorrência e estados ainda não comerciais
+## Política de suspensão, cancelamento e revogação
 
-Cada `provider_payment_id` recorrente pode gerar uma transação `SUBSCRIPTION` própria, sem duplicação. Falhas futuras são registradas, mas não revogam entitlement nem iniciam dunning, grace period ou suspensão automática. Estados `paused` e `canceled` são persistidos na assinatura e impedem nova ativação; a política de revogação de plano permanece pendente.
+Cada `provider_payment_id` recorrente pode gerar uma transação `SUBSCRIPTION` própria, sem duplicação. O histórico financeiro nunca é apagado nem convertido em outro evento para retirar acesso.
+
+- `paused`: suspende imediatamente o acesso. A atribuição ativa cuja fonte seja exatamente `mercadopago-subscription:<subscription-id>` é encerrada como `ENDED`.
+- `canceled`: cancela a assinatura e revoga imediatamente a mesma atribuição. O estado é terminal para essa assinatura; uma nova assinatura é necessária para reativação.
+- `FAILED`, pagamentos recusados, estornos e chargebacks: permanecem registrados como fatos financeiros e não revogam automaticamente o acesso nesta etapa. A revogação automática ocorre quando o Mercado Pago confirmar a transição da assinatura para `paused` ou `canceled`.
+
+A rotina de revogação é executada na mesma transação do processamento do webhook, é idempotente e só altera a atribuição do mesmo tenant e da mesma assinatura. Uma atribuição de outra assinatura ou de outro tenant permanece intacta.

@@ -21,6 +21,9 @@ import { SqliteEvolutionGoConversationLinkRepository } from "../../src/infrastru
 import { createBasicPlanHttpServer } from "../../src/infrastructure/http/basic-plan-http-server.js";
 import type { EvolutionGoWebhookReplayGuard } from "../../src/channels/whatsapp/evolution-go-webhook-replay-guard.js";
 import { withSqliteTransaction } from "../../src/infrastructure/sqlite/sqlite-connection-lock.js";
+import { createHmac } from "node:crypto";
+import { MercadoPagoWebhookVerifier } from "../../src/integrations/payment/mercado-pago-webhook-verifier.js";
+import type { MercadoPagoWebhookService } from "../../src/core/mercado-pago-webhook-service.js";
 
 const timestamp = "2026-09-24T12:00:00.000Z";
 const interpretation: AIInterpretation = {
@@ -69,6 +72,14 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
   let webhookClaimCalls = 0;
   const operationalEvents: string[] = [];
   const sentWebhookMessages: Array<{ recipientJid: string; content: string }> = [];
+  let mercadoPagoWebhookCalls = 0;
+  const mercadoPagoWebhookSecret = "mercado-pago-webhook-secret-ficticio";
+  const mercadoPagoWebhookService = {
+    process: async () => {
+      mercadoPagoWebhookCalls += 1;
+      return { status: "processed" as const, activated: false };
+    },
+  } as unknown as MercadoPagoWebhookService;
   let failNextSend = false;
   const webhookCredential = {
     instanceName: "instancia-ficticia",
@@ -116,6 +127,8 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
     now: () => new Date(Date.parse(timestamp) + clockTick++).toISOString(),
     generateId: (prefix: string) => `${prefix}-${++sequence}`,
     operationalLog: (event: string) => operationalEvents.push(event),
+    mercadoPagoWebhookVerifier: new MercadoPagoWebhookVerifier(mercadoPagoWebhookSecret),
+    mercadoPagoWebhookService,
   };
   const server = createBasicPlanHttpServer(serverDependencies);
 
@@ -488,6 +501,50 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
     assert.equal(health.status, 200);
     assert.equal(health.headers.get("content-type"), "application/json; charset=utf-8");
     assert.deepEqual(await health.json(), { status: "ok" });
+
+    const paymentReturn = await request("/payment-return");
+    assert.equal(paymentReturn.status, 200);
+    assert.equal(paymentReturn.headers.get("content-type"), "text/html; charset=utf-8");
+    assert.equal(paymentReturn.headers.get("content-security-policy"), "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");
+    const paymentReturnHtml = await paymentReturn.text();
+    assert.match(paymentReturnHtml, /Atendente 24h/);
+    assert.match(paymentReturnHtml, /Você retornou ao sistema/);
+    assert.match(paymentReturnHtml, /A confirma[çc][ãa]o do pagamento será processada/);
+    assert.match(paymentReturnHtml, /n[ãa]o confirma aprova[çc][ãa]o/);
+
+    const paymentReturnWithUnexpectedQuery = await request("/payment-return?status=approved&payment_id=financial-secret&payer_email=private@example.test");
+    assert.equal(paymentReturnWithUnexpectedQuery.status, 200);
+    const paymentReturnQueryHtml = await paymentReturnWithUnexpectedQuery.text();
+    assert.equal(paymentReturnQueryHtml.includes("approved"), false);
+    assert.equal(paymentReturnQueryHtml.includes("financial-secret"), false);
+    assert.equal(paymentReturnQueryHtml.includes("private@example.test"), false);
+    assert.equal(mercadoPagoWebhookCalls, 0);
+
+    const webhookDataId = "payment-fictitious";
+    const webhookRequestId = "request-fictitious";
+    const webhookTimestamp = "1700000000";
+    const webhookManifest = `id:${webhookDataId};request-id:${webhookRequestId};ts:${webhookTimestamp};`;
+    const webhookSignature = createHmac("sha256", mercadoPagoWebhookSecret).update(webhookManifest).digest("hex");
+    const financialWebhook = await request(`/v1/payments/mercadopago/webhook?data.id=${webhookDataId}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-request-id": webhookRequestId,
+        "x-signature": `ts=${webhookTimestamp};v1=${webhookSignature}`,
+      },
+      body: JSON.stringify({ id: "event-fictitious", type: "payment", data: { id: webhookDataId } }),
+    });
+    assert.equal(financialWebhook.status, 200);
+    assert.deepEqual(await financialWebhook.json(), { accepted: true, status: "processed" });
+    assert.equal(mercadoPagoWebhookCalls, 1);
+
+    const invalidFinancialWebhook = await request(`/v1/payments/mercadopago/webhook?data.id=${webhookDataId}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-request-id": webhookRequestId, "x-signature": "ts=1700000000;v1=invalid" },
+      body: JSON.stringify({ id: "event-invalid", type: "payment", data: { id: webhookDataId } }),
+    });
+    assert.equal(invalidFinancialWebhook.status, 401);
+    assert.equal(mercadoPagoWebhookCalls, 1);
 
     const operatorPage = await request("/operator");
     assert.equal(operatorPage.status, 200);

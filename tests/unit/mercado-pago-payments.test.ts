@@ -39,13 +39,19 @@ test("Mercado Pago builds monthly preapproval from the server catalog", async ()
   assert.equal(requests[0]?.url, "https://api.mercadopago.com/preapproval");
   assert.equal(requests[0]?.headers.Authorization, "Bearer token-not-logged");
   assert.equal(requests[0]?.headers["X-Idempotency-Key"], "local-1:subscription");
-  assert.deepEqual(JSON.parse(requests[0]!.body!), {
+  const body = JSON.parse(requests[0]!.body!) as Record<string, unknown>;
+  assert.deepEqual(body, {
     payer_email: "payer@business-a.test",
+    status: "pending",
     reason: "Atendente 24h - BASIC MONTHLY",
     external_reference: "subscription:local-1",
     auto_recurring: { frequency: 1, frequency_type: "months", transaction_amount: 397, currency_id: "BRL" },
     back_url: "https://app.example.test/payment-return",
   });
+  assert.equal(body.status, "pending");
+  assert.equal("card_token_id" in body, false);
+  assert.equal("preapproval_plan_id" in body, false);
+  assert.notEqual(body.status, "authorized");
 });
 
 test("Mercado Pago builds annual preapproval at twelve-month frequency and keeps setup separate", async () => {
@@ -82,7 +88,14 @@ test("Mercado Pago builds annual preapproval at twelve-month frequency and keeps
 test("Mercado Pago errors are sanitized and retryable calls reuse the same key", async () => {
   const provider = new MercadoPagoPaymentProvider({
     accessToken: "secret-token", backUrl: "https://app.example.test/payment-return",
-    httpClient: async () => ({ status: 400, json: async () => ({ access_token: "must-not-escape", message: "sensitive" }) }),
+    httpClient: async () => ({ status: 400, headers: { get: (name: string) => name === "x-request-id" ? "req-sandbox-400" : null }, json: async () => ({
+      error: "bad_request",
+      message: "payer_email: payer@business-a.test Authorization: Bearer secret-token",
+      cause: [{ code: "invalid_payer_email", description: "must-not-escape" }, { code: 12345, description: "numeric-code" }],
+      access_token: "must-not-escape",
+      payer_email: "payer@business-a.test",
+      card_token_id: "card-secret",
+    }) }),
   });
   await assert.rejects(
     provider.createSubscriptionIntent({
@@ -91,9 +104,19 @@ test("Mercado Pago errors are sanitized and retryable calls reuse the same key",
       externalReference: "subscription:local-1", idempotencyKey: "local-1:subscription",
     }),
     (error: unknown) => error instanceof MercadoPagoProviderError
-      && error.message === "Mercado Pago request failed with HTTP 400"
+      && error.message.includes("Mercado Pago request failed with HTTP 400")
+      && error.message.includes("error=bad_request")
+      && error.message.includes("cause=invalid_payer_email")
       && error.transient === false
-      && !error.message.includes("secret-token"),
+      && error.details?.error === "bad_request"
+      && error.details?.causeCodes[0] === "invalid_payer_email"
+      && error.details?.causeCodes[1] === "12345"
+      && error.requestId === "req-sandbox-400"
+      && error.message.includes("request_id=req-sandbox-400")
+      && !error.message.includes("secret-token")
+      && !error.message.includes("payer@business-a.test")
+      && !error.message.includes("card-secret")
+      && !error.message.includes("access_token"),
   );
 
   const subscriptions = new MemorySubscriptions();

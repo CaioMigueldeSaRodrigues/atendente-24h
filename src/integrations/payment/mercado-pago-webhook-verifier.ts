@@ -31,7 +31,9 @@ export class MercadoPagoWebhookVerifier {
 
 function parseSignature(signature: string): { ts?: string; v1?: string } {
   const result: { ts?: string; v1?: string } = {};
-  for (const component of signature.split(";")) {
+  // The official examples use commas, while semicolons are also accepted by
+  // Mercado Pago SDKs. Accept both separators without relaxing the HMAC check.
+  for (const component of signature.split(/[;,]/)) {
     const separator = component.indexOf("=");
     if (separator < 1) continue;
     const key = component.slice(0, separator).trim();

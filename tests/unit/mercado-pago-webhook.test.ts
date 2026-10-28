@@ -31,6 +31,7 @@ test("Mercado Pago webhook verifier validates the documented HMAC manifest and r
   assert.equal(verifier.verify({ signature: undefined, requestId: "request-1", dataId: "payment-1" }), false);
   assert.equal(verifier.verify({ signature, requestId: undefined, dataId: "payment-1" }), false);
   assert.equal(verifier.verify({ signature: sign(secret, "payment-1", undefined, "1700000000"), requestId: undefined, dataId: "payment-1" }), true);
+  assert.equal(verifier.verify({ signature: signature.replace(";v1=", ",v1="), requestId: "request-1", dataId: "payment-1" }), true);
 });
 
 test("A+B+C activates exactly once and remains tenant-scoped", async () => {
@@ -78,6 +79,25 @@ test("invalid amount, currency, reference and canceled/paused preapproval are ig
   assert.equal(paused.status, "processed");
   assert.equal(h.subscriptions.items[0]?.status, SubscriptionStatus.PAUSED);
   assert.equal(h.assignments.items.length, 0);
+});
+
+test("paused and canceled subscriptions revoke only their own entitlement and preserve financial history", async () => {
+  for (const [providerStatus, localStatus] of [["paused", SubscriptionStatus.PAUSED], ["canceled", SubscriptionStatus.CANCELED]] as const) {
+    const h = createHarness();
+    await processStep(h.service, "setup", h.ids);
+    await processStep(h.service, "subscription", h.ids);
+    await processStep(h.service, "recurring", h.ids);
+    const financialHistory = h.transactions.items.map((item) => ({ id: item.id, status: item.status, providerPaymentId: item.providerPaymentId }));
+    h.assignments.items.push({ id: "other-business-plan", businessId: "business-b", plan: AdminPlan.BASIC, status: "ACTIVE", startedAt: "2026-10-15T00:00:00.000Z", updatedAt: "2026-10-15T00:00:00.000Z", source: "mercadopago-subscription:other" });
+    h.provider.subscriptions.set("pre-a", { ...h.provider.subscriptions.get("pre-a")!, status: providerStatus });
+
+    const result = await processStep(h.service, "subscription", h.ids, `${providerStatus}-event`);
+    assert.equal(result.status, "processed");
+    assert.equal(h.subscriptions.items[0]?.status, localStatus);
+    assert.equal(h.assignments.items[0]?.status, "ENDED");
+    assert.deepEqual(h.transactions.items.map((item) => ({ id: item.id, status: item.status, providerPaymentId: item.providerPaymentId })), financialHistory);
+    assert.equal((await h.assignments.findCurrent("business-b"))?.status, "ACTIVE");
+  }
 });
 
 test("test environment accepts only live_mode=false", async () => {
@@ -184,9 +204,23 @@ test("public webhook endpoint requires HMAC but does not require operator sessio
     const unauthorized = await fetch(url, { method: "POST", headers: { "content-type": "application/json", "x-request-id": "http-event-1", "x-signature": "ts=1700000000;v1=00" }, body: payload });
     assert.equal(unauthorized.status, 401);
     assert.equal(h.events.items.length, 0);
+    const mismatchedResource = await fetch(url, { method: "POST", headers: { "content-type": "application/json", "x-request-id": "http-event-mismatch", "x-signature": sign("webhook-secret", "payment-setup", "http-event-mismatch", "1700000000") }, body: JSON.stringify({ type: "payment", data: { id: "payment-other" } }) });
+    assert.equal(mismatchedResource.status, 400);
+    assert.equal(h.events.items.length, 0);
     const accepted = await fetch(url, { method: "POST", headers: { "content-type": "application/json", "x-request-id": "http-event-1", "x-signature": sign("webhook-secret", "payment-setup", "http-event-1", "1700000000") }, body: payload });
     assert.equal(accepted.status, 200);
     assert.deepEqual(await accepted.json(), { accepted: true, status: "processed" });
+
+    const subscriptionPayload = JSON.stringify({ id: 202, type: "subscription_preapproval", data: { id: "pre-a" } });
+    const subscriptionResponse = await fetch(`http://127.0.0.1:${address.port}/v1/payments/mercadopago/webhook?data.id=pre-a`, { method: "POST", headers: { "content-type": "application/json", "x-request-id": "http-event-2", "x-signature": sign("webhook-secret", "pre-a", "http-event-2", "1700000000") }, body: subscriptionPayload });
+    assert.equal(subscriptionResponse.status, 200);
+    assert.deepEqual(await subscriptionResponse.json(), { accepted: true, status: "processed" });
+
+    const recurringPayload = JSON.stringify({ id: 303, type: "subscription_authorized_payment", data: { id: "authorized-1" } });
+    const recurringResponse = await fetch(`http://127.0.0.1:${address.port}/v1/payments/mercadopago/webhook?data.id=authorized-1`, { method: "POST", headers: { "content-type": "application/json", "x-request-id": "http-event-3", "x-signature": sign("webhook-secret", "authorized-1", "http-event-3", "1700000000") }, body: recurringPayload });
+    assert.equal(recurringResponse.status, 200);
+    assert.deepEqual(await recurringResponse.json(), { accepted: true, status: "processed" });
+    assert.equal(h.assignments.items[0]?.status, "ACTIVE");
   } finally {
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }

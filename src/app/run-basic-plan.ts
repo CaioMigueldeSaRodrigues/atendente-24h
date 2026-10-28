@@ -4,7 +4,7 @@ import { BusinessType } from "../core/domain/enums.js";
 import { createRuntimeMessageInterpreter, isGate3FakeInterpreterEnabled } from "./runtime-message-interpreter.js";
 import { createBasicPlanRuntime } from "./basic-plan-runtime.js";
 import { createBasicPlanPostgresRuntime } from "./basic-plan-postgres-runtime.js";
-import { postgresConfigFromEnvironment } from "../infrastructure/postgres/postgres-database.js";
+import { isPostgresInsecureLocalEnabled, postgresConfigFromEnvironment } from "../infrastructure/postgres/postgres-database.js";
 import { readEvolutionGoWebhookCredential } from "./evolution-go-webhook-environment.js";
 import { BasicBusinessOperatorAuthorizer } from "../infrastructure/http/basic-business-operator-authorizer.js";
 import type { BasicPlanOperationalEvent } from "../infrastructure/http/basic-plan-http-server.js";
@@ -45,6 +45,7 @@ async function main(): Promise<void> {
     : await createBasicPlanPostgresRuntime({
         ...common,
         postgres: postgresConfigFromEnvironment(process.env),
+        ...(isPostgresInsecureLocalEnabled(process.env) ? { allowInsecureLocalForTests: true } : {}),
         aiUsageBilling: readAiUsageBillingConfig(process.env),
         paymentProvider: createPaymentProvider(paymentEnvironment),
         ...(paymentEnvironment.mercadoPagoEnvironment === undefined ? {} : { mercadoPagoEnvironment: paymentEnvironment.mercadoPagoEnvironment }),

@@ -9,18 +9,26 @@ export type PostgresEnvironment = {
   password: string;
 };
 
+export function isPostgresInsecureLocalEnabled(environment: NodeJS.ProcessEnv): boolean {
+  return environment.POSTGRES_ALLOW_INSECURE_LOCAL?.trim().toLowerCase() === "true";
+}
+
+export function parsePostgresPort(value: string | undefined, name: string, defaultPort: number): number {
+  const portText = value?.trim() || String(defaultPort);
+  const port = Number(portText);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(`${name} must be a valid TCP port`);
+  return port;
+}
+
 export function postgresConfigFromEnvironment(env: NodeJS.ProcessEnv): PostgresEnvironment {
   const required = (name: string): string => {
     const value = env[name]?.trim();
     if (!value) throw new Error(`${name} is required for PostgreSQL`);
     return value;
   };
-  const portText = env.PGPORT?.trim() || "5432";
-  const port = Number(portText);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("PGPORT must be a valid TCP port");
   return {
     host: required("PGHOST"),
-    port,
+    port: parsePostgresPort(env.PGPORT, "PGPORT", 5432),
     database: required("PGDATABASE"),
     user: required("PGUSER"),
     password: required("PGPASSWORD"),
@@ -29,7 +37,7 @@ export function postgresConfigFromEnvironment(env: NodeJS.ProcessEnv): PostgresE
 
 export function createConfiguredPostgresDatabase(env: NodeJS.ProcessEnv): PostgresDatabase {
   return new PostgresDatabase(postgresConfigFromEnvironment(env), {
-    allowInsecureLocal: env.POSTGRES_ALLOW_INSECURE_LOCAL === "true",
+    allowInsecureLocal: isPostgresInsecureLocalEnabled(env),
   });
 }
 

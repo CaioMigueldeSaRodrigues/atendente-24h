@@ -91,6 +91,13 @@ test("creates and reuses the pilot business and persists conversations across ru
     const health = await fetch(`http://127.0.0.1:${firstAddress.port}/health`);
     assert.equal(health.status, 200);
     assert.deepEqual(await health.json(), { status: "ok" });
+    const paymentReturn = await fetch(`http://127.0.0.1:${firstAddress.port}/payment-return?status=approved&payment_id=should-not-appear`);
+    assert.equal(paymentReturn.status, 200);
+    assert.equal(paymentReturn.headers.get("content-type"), "text/html; charset=utf-8");
+    const paymentReturnHtml = await paymentReturn.text();
+    assert.match(paymentReturnHtml, /Atendente 24h/);
+    assert.match(paymentReturnHtml, /Você retornou ao sistema/);
+    assert.equal(paymentReturnHtml.includes("should-not-appear"), false);
     const unauthenticatedOperatorPage = await fetch(`http://127.0.0.1:${firstAddress.port}/operator`);
     assert.equal(unauthenticatedOperatorPage.status, 401);
     assert.match(unauthenticatedOperatorPage.headers.get("www-authenticate") ?? "", /^Basic /);

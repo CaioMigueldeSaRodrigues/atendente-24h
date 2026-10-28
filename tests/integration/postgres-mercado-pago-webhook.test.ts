@@ -12,15 +12,10 @@ import { PostgresDatabase, type PostgresEnvironment } from "../../src/infrastruc
 import { PostgresPaymentTransactionRepository } from "../../src/infrastructure/postgres/postgres-payment-transaction-repository.js";
 import { PostgresPaymentWebhookEventRepository } from "../../src/infrastructure/postgres/postgres-payment-webhook-event-repository.js";
 import { PostgresSubscriptionRepository } from "../../src/infrastructure/postgres/postgres-subscription-repository.js";
+import { postgresTestConfig, postgresTestEnabled } from "../postgres-test-environment.js";
 
-const config: PostgresEnvironment = {
-  host: "127.0.0.1",
-  port: 55432,
-  database: "atendente24h_test",
-  user: "test_user",
-  password: process.env.POSTGRES_TEST_PASSWORD ?? "",
-};
-const enabled = Boolean(process.env.POSTGRES_TEST_PASSWORD);
+const config: PostgresEnvironment = postgresTestConfig();
+const enabled = postgresTestEnabled();
 
 test("PostgreSQL Mercado Pago webhook claims replay and activates entitlement transactionally", { skip: !enabled }, async () => {
   const admin = new PostgresDatabase(config, { allowInsecureLocal: true });

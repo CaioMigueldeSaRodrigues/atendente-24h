@@ -12,24 +12,35 @@ export type MercadoPagoHttpRequest = {
 
 export type MercadoPagoHttpResponse = {
   status: number;
+  headers?: { get(name: string): string | null };
   json(): Promise<unknown>;
 };
 
 export type MercadoPagoHttpClient = (request: MercadoPagoHttpRequest) => Promise<MercadoPagoHttpResponse>;
 
+export type MercadoPagoSafeErrorDetails = {
+  error?: string;
+  message?: string;
+  causeCodes: readonly string[];
+};
+
 export class MercadoPagoProviderError extends PaymentProviderError {
   readonly statusCode: number;
+  readonly details: MercadoPagoSafeErrorDetails | undefined;
+  readonly requestId: string | undefined;
 
-  constructor(statusCode: number, transient = false) {
-    super(statusCode === 0 ? "Mercado Pago request failed before receiving a response" : `Mercado Pago request failed with HTTP ${statusCode}`, transient);
+  constructor(statusCode: number, transient = false, details?: MercadoPagoSafeErrorDetails, requestId?: string) {
+    super(formatProviderErrorMessage(statusCode, details, requestId), transient);
     this.name = "MercadoPagoProviderError";
     this.statusCode = statusCode;
+    this.details = details;
+    this.requestId = requestId;
   }
 }
 
 export class MercadoPagoProviderTransientError extends MercadoPagoProviderError {
-  constructor(statusCode = 0) {
-    super(statusCode, true);
+  constructor(statusCode = 0, details?: MercadoPagoSafeErrorDetails, requestId?: string) {
+    super(statusCode, true, details, requestId);
     this.name = "MercadoPagoProviderTransientError";
   }
 }
@@ -100,6 +111,7 @@ export class MercadoPagoPaymentProvider implements PaymentProvider {
   async createSubscriptionIntent(input: ProviderSubscriptionIntent): Promise<ProviderIntentResult> {
     const response = await this.request("/preapproval", input.idempotencyKey, {
       payer_email: input.payerEmail,
+      status: "pending",
       reason: `Atendente 24h - ${input.plan} ${input.billingCycle}`,
       external_reference: input.externalReference,
       auto_recurring: {
@@ -109,7 +121,7 @@ export class MercadoPagoPaymentProvider implements PaymentProvider {
         currency_id: "BRL",
       },
       back_url: this.options.backUrl,
-    });
+    }, [input.payerEmail]);
     return {
       status: providerStatus(response.status),
       ...optionalField("providerSubscriptionId", stringField(response.body, "id")),
@@ -135,7 +147,7 @@ export class MercadoPagoPaymentProvider implements PaymentProvider {
         pending: this.options.backUrl,
         failure: this.options.backUrl,
       },
-    });
+    }, [input.payerEmail]);
     return {
       status: providerStatus(response.status),
       ...optionalField("providerPaymentId", stringField(response.body, "id")),
@@ -145,7 +157,7 @@ export class MercadoPagoPaymentProvider implements PaymentProvider {
     };
   }
 
-  private async request(path: string, idempotencyKey: string, body: unknown): Promise<{ status: number; body: Record<string, unknown> }> {
+  private async request(path: string, idempotencyKey: string, body: unknown, sensitiveValues: readonly string[] = []): Promise<{ status: number; body: Record<string, unknown> }> {
     let response: MercadoPagoHttpResponse;
     try {
       response = await this.httpClient({
@@ -162,8 +174,10 @@ export class MercadoPagoPaymentProvider implements PaymentProvider {
       throw new PaymentProviderTransientError();
     }
     if (response.status < 200 || response.status >= 300) {
-      // The provider response is deliberately not included: it may contain payer or credential-related data.
-      throw providerError(response.status);
+      const requestId = readRequestId(response);
+      throw providerError(response.status, response.status >= 400 && response.status < 500
+        ? await readSafeErrorDetails(response, [this.options.accessToken, this.options.backUrl, ...sensitiveValues])
+        : undefined, requestId);
     }
     const payload = await response.json();
     if (!isRecord(payload)) throw new MercadoPagoProviderError(response.status);
@@ -181,7 +195,12 @@ export class MercadoPagoPaymentProvider implements PaymentProvider {
     } catch {
       throw new PaymentProviderTransientError();
     }
-    if (response.status < 200 || response.status >= 300) throw providerError(response.status);
+    if (response.status < 200 || response.status >= 300) {
+      const requestId = readRequestId(response);
+      throw providerError(response.status, response.status >= 400 && response.status < 500
+        ? await readSafeErrorDetails(response, [this.options.accessToken, this.options.backUrl])
+        : undefined, requestId);
+    }
     const payload = await response.json();
     if (!isRecord(payload)) throw new MercadoPagoProviderError(response.status);
     return payload;
@@ -190,15 +209,15 @@ export class MercadoPagoPaymentProvider implements PaymentProvider {
 
 const defaultHttpClient: MercadoPagoHttpClient = async (request) => {
   const response = await fetch(request.url, { method: request.method, headers: request.headers, ...(request.body === undefined ? {} : { body: request.body }) });
-  return { status: response.status, json: () => response.json() as Promise<unknown> };
+  return { status: response.status, headers: response.headers, json: () => response.json() as Promise<unknown> };
 };
 
 function providerStatus(httpStatus: number): PaymentTransactionStatus {
   return httpStatus >= 200 && httpStatus < 300 ? PaymentTransactionStatus.PENDING : PaymentTransactionStatus.FAILED;
 }
 
-function providerError(statusCode: number): MercadoPagoProviderError {
-  return isTransientStatus(statusCode) ? new MercadoPagoProviderTransientError(statusCode) : new MercadoPagoProviderError(statusCode);
+function providerError(statusCode: number, details?: MercadoPagoSafeErrorDetails, requestId?: string): MercadoPagoProviderError {
+  return isTransientStatus(statusCode) ? new MercadoPagoProviderTransientError(statusCode, details, requestId) : new MercadoPagoProviderError(statusCode, false, details, requestId);
 }
 
 function isTransientStatus(statusCode: number): boolean {
@@ -233,4 +252,68 @@ function optionalField(key: string, value: string | undefined): Record<string, s
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+async function readSafeErrorDetails(response: MercadoPagoHttpResponse, sensitiveValues: readonly string[]): Promise<MercadoPagoSafeErrorDetails | undefined> {
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    return undefined;
+  }
+  if (!isRecord(payload)) return undefined;
+  const error = safeDiagnosticText(payload.error, sensitiveValues);
+  const message = safeDiagnosticText(payload.message, sensitiveValues);
+  const causeCodes = Array.isArray(payload.cause)
+    ? [...new Set(payload.cause
+      .filter(isRecord)
+      .map((cause) => safeDiagnosticText(
+  typeof cause.code === "number" && Number.isFinite(cause.code)
+    ? String(cause.code)
+    : cause.code,
+  sensitiveValues,
+))
+      .filter((code): code is string => code !== undefined))].slice(0, 10)
+    : [];
+  if (error === undefined && message === undefined && causeCodes.length === 0) return undefined;
+  return {
+    ...(error === undefined ? {} : { error }),
+    ...(message === undefined ? {} : { message }),
+    causeCodes,
+  };
+}
+
+function safeDiagnosticText(value: unknown, sensitiveValues: readonly string[]): string | undefined {
+  if (typeof value !== "string") return undefined;
+  let safe = value.trim();
+  if (!safe) return undefined;
+  for (const sensitiveValue of sensitiveValues) {
+    const normalized = sensitiveValue.trim();
+    if (normalized) safe = safe.split(normalized).join("[redacted]");
+  }
+  safe = safe
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[redacted-email]")
+    .replace(/\bBearer\s+[^\s,;]+/gi, "Bearer [redacted]")
+    .replace(/\b(?:access[_ -]?token|authorization|webhook[_ -]?secret|card[_ -]?token(?:[_ -]?id)?|payer[_ -]?email)\b\s*[:=]\s*[^\s,;]+/gi, "[redacted]")
+    .replace(/[\r\n\t]+/g, " ")
+    .slice(0, 240)
+    .trim();
+  return safe || undefined;
+}
+
+function readRequestId(response: MercadoPagoHttpResponse): string | undefined {
+  const value = response.headers?.get("x-request-id")?.trim();
+  return value !== undefined && /^[A-Za-z0-9._:-]{1,128}$/.test(value) ? value : undefined;
+}
+
+function formatProviderErrorMessage(statusCode: number, details?: MercadoPagoSafeErrorDetails, requestId?: string): string {
+  const base = statusCode === 0 ? "Mercado Pago request failed before receiving a response" : `Mercado Pago request failed with HTTP ${statusCode}`;
+  if (details === undefined && requestId === undefined) return base;
+  const diagnostic = [
+    details === undefined || details.error === undefined ? undefined : `error=${details.error}`,
+    details === undefined || details.message === undefined ? undefined : `message=${details.message}`,
+    details === undefined || details.causeCodes.length === 0 ? undefined : `cause=${details.causeCodes.join(",")}`,
+    requestId === undefined ? undefined : `request_id=${requestId}`,
+  ].filter((value): value is string => value !== undefined).join("; ");
+  return diagnostic ? `${base}: ${diagnostic}` : base;
 }

@@ -249,7 +249,12 @@ export async function evaluateSubscriptionActivation(
   dependencies: Pick<MercadoPagoWebhookServiceDependencies, "subscriptions" | "transactions" | "assignments" | "now" | "generateId">,
 ): Promise<boolean> {
   const subscription = await dependencies.subscriptions.findById(businessId, subscriptionId);
-  if (subscription === null || subscription.status === SubscriptionStatus.CANCELED || subscription.status === SubscriptionStatus.PAUSED || subscription.status === SubscriptionStatus.FAILED) return false;
+  if (subscription === null) return false;
+  if (subscription.status === SubscriptionStatus.CANCELED || subscription.status === SubscriptionStatus.PAUSED) {
+    await revokeSubscriptionAccess(subscription, dependencies);
+    return false;
+  }
+  if (subscription.status === SubscriptionStatus.FAILED) return false;
   const transactions = await dependencies.transactions.listBySubscription(businessId, subscriptionId);
   const setupPaid = transactions.some((item) => item.type === PaymentTransactionType.SETUP_FEE && item.status === PaymentTransactionStatus.SUCCEEDED && item.providerPaymentId !== undefined);
   const recurringPaid = transactions.some((item) => item.type === PaymentTransactionType.SUBSCRIPTION
@@ -270,6 +275,19 @@ export async function evaluateSubscriptionActivation(
   }
   if (subscription.status !== SubscriptionStatus.ACTIVE) await dependencies.subscriptions.save({ ...subscription, status: SubscriptionStatus.ACTIVE, updatedAt: dependencies.now() });
   return true;
+}
+
+async function revokeSubscriptionAccess(
+  subscription: Subscription,
+  dependencies: Pick<MercadoPagoWebhookServiceDependencies, "assignments" | "now">,
+): Promise<void> {
+  const current = await dependencies.assignments.findCurrent(subscription.businessId);
+  const source = `mercadopago-subscription:${subscription.id}`;
+  // Never revoke an entitlement owned by another subscription. The assignment
+  // is ended as history; financial transactions are intentionally untouched.
+  if (current !== null && current.source === source) {
+    await dependencies.assignments.save({ ...current, status: "ENDED", updatedAt: dependencies.now() });
+  }
 }
 
 type ApplyResult = { businessId: string; activated: boolean };

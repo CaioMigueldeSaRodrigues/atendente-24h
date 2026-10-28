@@ -49,6 +49,8 @@ test("dry-run validates the dedicated business and payer without creating a prov
   assert.deepEqual(sandboxPostgresConfig({ POSTGRES_TEST_PASSWORD: "local-test-password" }), {
     host: "127.0.0.1", port: 55432, database: "atendente24h_test", user: "test_user", password: "local-test-password",
   });
+  assert.deepEqual(sandboxPostgresConfig({ POSTGRES_TEST_PORT: "15432", POSTGRES_TEST_PASSWORD: "local-test-password" }).port, 15432);
+  assert.throws(() => sandboxPostgresConfig({ POSTGRES_TEST_PORT: "not-a-port" }), /POSTGRES_TEST_PORT must be a valid TCP port/);
 });
 
 test("real sandbox smoke still requires complete provider credentials", async () => {

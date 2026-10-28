@@ -21,15 +21,10 @@ import {
   evolutionGoConversationAdvisoryLockKey,
 } from "../../src/infrastructure/postgres/postgres-repositories.js";
 import { createBasicPlanPostgresRuntime } from "../../src/app/basic-plan-postgres-runtime.js";
+import { postgresTestConfig, postgresTestEnabled } from "../postgres-test-environment.js";
 
-const config: PostgresEnvironment = {
-  host: "127.0.0.1",
-  port: 55432,
-  database: "atendente24h_test",
-  user: "test_user",
-  password: process.env.POSTGRES_TEST_PASSWORD ?? "",
-};
-const enabled = Boolean(process.env.POSTGRES_TEST_PASSWORD);
+const config: PostgresEnvironment = postgresTestConfig();
+const enabled = postgresTestEnabled();
 const runtimeInterpretation: AIInterpretation = {
   intent: Intent.GENERAL_INFORMATION,
   extractedCustomerData: {},

@@ -44,6 +44,7 @@ import { MercadoPagoProviderError } from "../../integrations/payment/mercado-pag
 import { createHash } from "node:crypto";
 import { MercadoPagoWebhookVerifier } from "../../integrations/payment/mercado-pago-webhook-verifier.js";
 import { MercadoPagoWebhookEventType, MercadoPagoWebhookService, MercadoPagoWebhookTransientError } from "../../core/mercado-pago-webhook-service.js";
+import { renderBasicPlanPaymentReturnUi } from "./basic-plan-payment-return-ui.js";
 
 const MAX_BODY_BYTES = 1024 * 1024;
 
@@ -500,6 +501,13 @@ async function handleRequest(
     }
     response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     response.end(renderBasicPlanOperatorUi(dependencies.operator));
+    return;
+  }
+
+  if (request.method === "GET" && pathname === "/payment-return") {
+    response.setHeader("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");
+    response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    response.end(renderBasicPlanPaymentReturnUi());
     return;
   }
 
@@ -1340,13 +1348,25 @@ async function handleMercadoPagoWebhook(
   if (!verifier.verify({ signature, requestId, dataId })) { sendError(response, 401, "Unauthorized"); return; }
   let payload: unknown;
   try { payload = JSON.parse(raw.toString("utf8")) as unknown; } catch { sendError(response, 400, "Invalid JSON"); return; }
-  if (!isRecord(payload) || typeof payload.type !== "string") { sendError(response, 400, "Invalid webhook payload"); return; }
+  if (!isRecord(payload) || typeof payload.type !== "string") {
+    sendError(response, 400, "Invalid webhook payload");
+    return;
+  }
   const resourceId = dataId ?? "";
-  if (Object.values(MercadoPagoWebhookEventType).includes(payload.type as MercadoPagoWebhookEventType) && !resourceId) { sendError(response, 400, "Invalid webhook resource"); return; }
+  const supportedEvent = Object.values(MercadoPagoWebhookEventType).includes(payload.type as MercadoPagoWebhookEventType);
+  const payloadResourceId = isRecord(payload.data) && typeof payload.data.id === "string" ? payload.data.id.trim() : "";
+  if (supportedEvent && (!resourceId || !payloadResourceId || resourceId !== payloadResourceId)) {
+    sendError(response, 400, "Invalid webhook resource");
+    return;
+  }
   const payloadHash = createHash("sha256").update(raw).digest("hex");
-  const providerEventId = typeof payload.id === "string" && payload.id.trim()
+  const providerEventId = ((typeof payload.id === "string" && payload.id.trim()
     ? payload.id.trim()
-    : requestId?.trim() || `${payload.type}:${resourceId || "unknown"}:${payloadHash}`;
+    : typeof payload.id === "number" && Number.isSafeInteger(payload.id) && payload.id > 0
+      ? String(payload.id)
+      : undefined)
+    ?? requestId?.trim()
+    ?? `${payload.type}:${resourceId || "unknown"}:${payloadHash}`);
   try {
     const result = await service.process({
       event: {
