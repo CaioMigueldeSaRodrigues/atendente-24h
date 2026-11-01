@@ -104,7 +104,7 @@ test("persists the authorized quote as an assistant Message", async () => {
   assert.equal(message.channel, Channel.WHATSAPP);
   assert.equal(
     message.content,
-    "O orçamento autorizado é de R$ 125,00. Deseja prosseguir?",
+    "O orçamento autorizado para Pastilhas de freio é de R$ 125,00. Deseja prosseguir?",
   );
   assert.equal(message.createdAt, publishedAt);
 });
@@ -133,7 +133,7 @@ test("uses the authorized price stored on the QuoteRequest", async () => {
 
   assert.equal(
     result.content,
-    "O orçamento autorizado é de R$ 9.876,54. Deseja prosseguir?",
+    "O orçamento autorizado para Pastilhas de freio é de R$ 9.876,54. Deseja prosseguir?",
   );
 });
 
@@ -167,7 +167,7 @@ test("returns channel delivery data for the saved Message", async () => {
     messageId: "message-generated",
     conversationId: "conversation-1",
     quoteRequestId: "quote-1",
-    content: "O orçamento autorizado é de R$ 125,00. Deseja prosseguir?",
+    content: "O orçamento autorizado para Pastilhas de freio é de R$ 125,00. Deseja prosseguir?",
     channel: Channel.WHATSAPP,
   });
 });

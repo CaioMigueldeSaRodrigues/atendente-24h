@@ -97,6 +97,7 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
     applyProviderReceipt: (input) => evolutionGoWebhookReplayGuard.applyProviderReceipt(input),
     complete: (input) => evolutionGoWebhookReplayGuard.complete(input),
     release: (input) => evolutionGoWebhookReplayGuard.release(input),
+    expireLease: (input) => evolutionGoWebhookReplayGuard.expireLease(input),
   };
   const serverDependencies = {
     conversationRepository, messageRepository, customerRepository, vehicleRepository,
@@ -212,17 +213,7 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
     assert.equal(validWebhook.status, 202);
     const validWebhookText = await validWebhook.text();
     assert.equal(validWebhookText.includes(webhookCredential.instanceToken), false);
-    assert.deepEqual(JSON.parse(validWebhookText), {
-      accepted: true,
-      message: {
-        instanceName: "instancia-ficticia",
-        externalMessageId: "mensagem-ficticia-123",
-        senderJid: "5511999990000@s.whatsapp.net",
-        senderName: "Contato Fictício",
-        content: "Mensagem de teste fictícia",
-        occurredAt: "2026-09-24T12:00:00.000Z",
-      },
-    });
+    assert.deepEqual(JSON.parse(validWebhookText), { accepted: true });
     assert.deepEqual(sentWebhookMessages, [{
       recipientJid: "5511999990000@s.whatsapp.net",
       content: "Resposta sintética do webhook",
@@ -392,17 +383,7 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
     });
     assert.equal(retryIgnoredWebhook.status, 202);
     await assertWebhookTokenOmitted(retryIgnoredWebhook);
-    assert.deepEqual(await retryIgnoredWebhook.json(), {
-      accepted: true,
-      message: {
-        instanceName: "instancia-ficticia",
-        externalMessageId: "mensagem-ignorada-ficticia",
-        senderJid: "5511999990000@s.whatsapp.net",
-        senderName: "Contato Fictício",
-        content: "Mensagem de teste fictícia",
-        occurredAt: "2026-09-24T12:00:00.000Z",
-      },
-    });
+    assert.deepEqual(await retryIgnoredWebhook.json(), { accepted: true });
     const reactionWebhook = await post(webhookPath, {
       ...webhookPayload,
       data: {
@@ -457,6 +438,7 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
         applyProviderReceipt: () => { throw new Error("applyProviderReceipt should not be called for an in-progress claim"); },
         complete: () => { throw new Error("complete should not be called for an in-progress claim"); },
         release: () => false,
+        expireLease: () => false,
       },
     });
     try {
@@ -561,7 +543,7 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
     assert.doesNotMatch(operatorHtml, /innerHTML/);
     assert.doesNotMatch(operatorHtml, /super-secret-test-key|OPENAI_API_KEY/);
     assert.match(operatorHtml, /meta name="viewport"/);
-    const operatorScript = operatorHtml.match(/<script>([\s\S]*?)<\/script>/)?.[1];
+    const operatorScript = operatorHtml.match(/<script nonce="[^"]+">([\s\S]*?)<\/script>/)?.[1];
     assert.ok(operatorScript);
     assert.doesNotThrow(() => new Script(operatorScript));
 
@@ -578,7 +560,7 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
       const maliciousHtml = await (await fetch(`http://127.0.0.1:${maliciousAddress.port}/operator`)).text();
       assert.equal(maliciousHtml.includes("<script>alert(1)</script>"), false);
       assert.match(maliciousHtml, /\\u003c\/script\\u003e/);
-      const maliciousScript = maliciousHtml.match(/<script>([\s\S]*?)<\/script>/)?.[1];
+      const maliciousScript = maliciousHtml.match(/<script nonce="[^"]+">([\s\S]*?)<\/script>/)?.[1];
       assert.ok(maliciousScript);
       assert.doesNotThrow(() => new Script(maliciousScript));
     } finally {
@@ -689,10 +671,11 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
     assert.equal(webPendingItem?.quote.status, QuoteRequestStatus.WAITING_BUSINESS);
     assert.equal(webPendingItem?.customer?.name, "Carlos");
     assert.equal(webPendingItem?.contactLabel, undefined);
-    assert.equal(maskedPendingItem?.contactLabel, "WhatsApp \u2022\u2022\u2022\u2022 1234");
+    // The panel shows the customer's full number (the operator has to call back), never the raw JID.
+    assert.equal(maskedPendingItem?.contactLabel, "WhatsApp 5511888881234");
     const sensitivePaths: string[] = [];
     const inspectPending = (value: unknown, path: string): void => {
-      if (typeof value === "string" && (value.includes("5511999990000") || value.includes("5511888881234") || value.includes("@s.whatsapp.net"))) sensitivePaths.push(path);
+      if (typeof value === "string" && (value.includes("5511999990000") || value.includes("@s.whatsapp.net"))) sensitivePaths.push(path);
       else if (Array.isArray(value)) value.forEach((entry, index) => inspectPending(entry, `${path}[${index}]`));
       else if (value !== null && typeof value === "object") Object.entries(value).forEach(([key, entry]) => inspectPending(entry, `${path}.${key}`));
     };
@@ -701,8 +684,6 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
     assert.equal(pendingRaw.includes("5511999990000@s.whatsapp.net"), false);
     assert.equal(pendingRaw.includes("5511999990000"), false);
     assert.equal(pendingRaw.includes("5511888881234@s.whatsapp.net"), false);
-    const maskedNumberIndex = pendingRaw.indexOf("5511888881234");
-    assert.equal(maskedNumberIndex, -1, pendingRaw.slice(Math.max(0, maskedNumberIndex - 20), maskedNumberIndex + 30).replace(/\\d/g, "#"));
     assert.equal(pendingRaw.includes("primaryPhone"), false);
     assert.deepEqual(webPendingItem?.vehicle && {
       brand: webPendingItem.vehicle.brand,
@@ -714,13 +695,20 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
 
     const publishedTooEarly = await post(`/v1/businesses/business-a/quotes/${quoteId}/publish`, {});
     assert.equal(publishedTooEarly.status, 409);
-    const invalidNegativePrice = await post(`/v1/businesses/business-a/quotes/${quoteId}/respond`, { amountCents: -1, currency: "BRL" });
+    const expectedUpdatedAt = (await quoteRequestRepository.findById("business-a", quoteId))!.updatedAt;
+    const withoutRevision = await post(`/v1/businesses/business-a/quotes/${quoteId}/respond`, { amountCents: 65000, currency: "BRL" });
+    assert.equal(withoutRevision.status, 400);
+    const staleRevision = await post(`/v1/businesses/business-a/quotes/${quoteId}/respond`, { amountCents: 65000, currency: "BRL", expectedUpdatedAt: "2000-01-01T00:00:00.000Z" });
+    assert.equal(staleRevision.status, 409);
+    assert.deepEqual(await staleRevision.json(), { error: "QUOTE_STALE" });
+    assert.equal((await quoteRequestRepository.findById("business-a", quoteId))?.authorizedPrice, undefined);
+    const invalidNegativePrice = await post(`/v1/businesses/business-a/quotes/${quoteId}/respond`, { amountCents: -1, currency: "BRL", expectedUpdatedAt });
     assert.equal(invalidNegativePrice.status, 400);
-    const invalidDecimalPrice = await post(`/v1/businesses/business-a/quotes/${quoteId}/respond`, { amountCents: 10.5, currency: "BRL" });
+    const invalidDecimalPrice = await post(`/v1/businesses/business-a/quotes/${quoteId}/respond`, { amountCents: 10.5, currency: "BRL", expectedUpdatedAt });
     assert.equal(invalidDecimalPrice.status, 400);
-    const invalidCurrency = await post(`/v1/businesses/business-a/quotes/${quoteId}/respond`, { amountCents: 65000, currency: "USD" });
+    const invalidCurrency = await post(`/v1/businesses/business-a/quotes/${quoteId}/respond`, { amountCents: 65000, currency: "USD", expectedUpdatedAt });
     assert.equal(invalidCurrency.status, 400);
-    const missingQuote = await post("/v1/businesses/business-a/quotes/missing/respond", { amountCents: 1, currency: "BRL" });
+    const missingQuote = await post("/v1/businesses/business-a/quotes/missing/respond", { amountCents: 1, currency: "BRL", expectedUpdatedAt });
     assert.equal(missingQuote.status, 404);
 
     const otherBusinessMessages = await request(`/v1/businesses/business-b/conversations/${conversationId}/messages`);
@@ -733,25 +721,25 @@ test("serves the commercial cycle over HTTP and enforces business isolation", as
     const crossTenantMessage = await post(`/v1/businesses/business-b/conversations/${conversationId}/messages`, { content: "cross tenant" });
     assert.equal(crossTenantConversation.status, 404);
     assert.equal(crossTenantMessage.status, 404);
-    const crossTenantRespond = await post(`/v1/businesses/business-b/quotes/${quoteId}/respond`, { amountCents: 65000, currency: "BRL" });
+    const crossTenantRespond = await post(`/v1/businesses/business-b/quotes/${quoteId}/respond`, { amountCents: 65000, currency: "BRL", expectedUpdatedAt });
     const crossTenantPublish = await post(`/v1/businesses/business-b/quotes/${quoteId}/publish`, {});
     assert.equal(crossTenantRespond.status, 404);
     assert.equal(crossTenantPublish.status, 404);
 
-    const responded = await post(`/v1/businesses/business-a/quotes/${quoteId}/respond`, { amountCents: 65000, currency: "BRL" });
+    const responded = await post(`/v1/businesses/business-a/quotes/${quoteId}/respond`, { amountCents: 65000, currency: "BRL", expectedUpdatedAt });
     assert.equal(responded.status, 200);
     assert.deepEqual((await responded.json() as { authorizedPrice: unknown }).authorizedPrice, { amountCents: 65000, currency: "BRL" });
     const queueAfterRespond = await request("/v1/businesses/business-a/quotes/pending");
     const authorizedQueue = await queueAfterRespond.json() as { items: Array<{ quote: { id: string; status: string } }> };
     assert.equal(authorizedQueue.items.length, 2);
     assert.equal(authorizedQueue.items.find((item) => item.quote.id === quoteId)?.quote.status, QuoteRequestStatus.RESPONDED);
-    const secondResponse = await post(`/v1/businesses/business-a/quotes/${quoteId}/respond`, { amountCents: 65000, currency: "BRL" });
+    const secondResponse = await post(`/v1/businesses/business-a/quotes/${quoteId}/respond`, { amountCents: 65000, currency: "BRL", expectedUpdatedAt });
     assert.equal(secondResponse.status, 409);
 
     const published = await post(`/v1/businesses/business-a/quotes/${quoteId}/publish`, {});
     assert.equal(published.status, 200);
     const publishedBody = await published.json() as { content: string; channel: string };
-    assert.equal(publishedBody.content, "O orçamento autorizado é de R$ 650,00. Deseja prosseguir?");
+    assert.equal(publishedBody.content, "O orçamento autorizado para Pastilhas de freio é de R$ 650,00. Deseja prosseguir?");
     assert.equal(publishedBody.channel, Channel.WEB);
     const finalHistory = (await (await request(`/v1/businesses/business-a/conversations/${conversationId}/messages`)).json() as { messages: Array<{ content: string; senderType: string }> }).messages;
     assert.ok(finalHistory.some((message) => message.senderType === SenderType.ASSISTANT && message.content === publishedBody.content));

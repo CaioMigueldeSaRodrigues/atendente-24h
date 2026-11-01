@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import test from "node:test";
-import { EvolutionGoTextSender } from "../../src/channels/whatsapp/evolution-go-text-sender.js";
+import { EVOLUTION_GO_SEND_TIMEOUT_MS, EvolutionGoTextSender } from "../../src/channels/whatsapp/evolution-go-text-sender.js";
 
 const token = "synthetic-private-token";
 const content = "synthetic private reply";
@@ -47,6 +47,21 @@ test("sends text with the exact Evolution Go request", async () => {
   });
 });
 
+test("the provider formats only a number marked for it", async () => {
+  const bodies: unknown[] = [];
+  const sender = new EvolutionGoTextSender({
+    baseUrl: "https://evolution.example",
+    instanceToken: token,
+    fetch: async (_url, init) => { bodies.push(JSON.parse(String(init?.body))); return Response.json({ data: { Info: { ID: "provider-id" } } }); },
+  });
+  await sender.sendText({ recipientJid: "5592999991234", content, formatJid: true });
+  await sender.sendText({ recipientJid, content });
+  assert.deepEqual(bodies, [
+    { number: "5592999991234", text: content, formatJid: true },
+    { number: recipientJid, text: content, formatJid: false },
+  ]);
+});
+
 test("rejects empty configuration and message fields", async () => {
   assert.throws(() => new EvolutionGoTextSender({ baseUrl: " ", instanceToken: token }));
   assert.throws(() => new EvolutionGoTextSender({ baseUrl: "http://localhost", instanceToken: " " }));
@@ -76,4 +91,25 @@ test("uses a safe generic error for HTTP and invalid JSON responses", async () =
       });
     });
   }
+});
+
+test("requires HTTPS for hosts with a dot, except loopback", () => {
+  for (const baseUrl of ["http://evolution.example", "http://10.0.0.5:8080", "ftp://evolution.example", "not a url"]) {
+    assert.throws(() => new EvolutionGoTextSender({ baseUrl, instanceToken: token }), { message: "Evolution Go sender configuration is invalid" });
+  }
+  for (const baseUrl of ["https://evolution.example", "http://localhost:8080", "http://127.0.0.1:8080", "http://[::1]:8080", "http://evolution:8080"]) {
+    assert.ok(new EvolutionGoTextSender({ baseUrl, instanceToken: token }));
+  }
+});
+
+test("bounds the provider call with a 10 second deadline", async () => {
+  let signal: AbortSignal | undefined;
+  const sender = new EvolutionGoTextSender({
+    baseUrl: "https://evolution.example",
+    instanceToken: token,
+    fetch: async (_url, init) => { signal = init?.signal ?? undefined; return Response.json({ data: { Info: { ID: "provider-id" } } }); },
+  });
+  await sender.sendText({ recipientJid, content });
+  assert.ok(signal instanceof AbortSignal);
+  assert.equal(EVOLUTION_GO_SEND_TIMEOUT_MS, 10_000);
 });

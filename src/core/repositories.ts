@@ -87,6 +87,8 @@ export interface QuoteRequestRepository {
     conversationId: string,
   ): Promise<QuoteRequest[]>;
   save(entity: QuoteRequest): Promise<void>;
+  /** Applies customer intake data unless the quote is priced or has a live draft; returns whether it applied. */
+  updateIntake(entity: QuoteRequest): Promise<boolean>;
 }
 
 export interface QuoteDraftRepository {
@@ -142,6 +144,7 @@ export interface OutboundDeliveryRepository {
     now: string,
     leaseUntil: string,
     claimToken: string,
+    ignoreSchedule?: boolean,
   ): Promise<OutboundDeliveryClaimResult>;
   markDelivered(
     businessId: string,
@@ -167,5 +170,9 @@ export interface AppointmentRepository {
 
 export interface HumanHandoffRepository {
   findById(businessId: string, id: string): Promise<HumanHandoff | null>;
+  /** Handoffs still waiting for or with a person (REQUESTED, QUEUED, ACCEPTED), oldest first. */
+  listOpen(businessId: string): Promise<HumanHandoff[]>;
+  /** Every handoff of the conversation, whatever its status, oldest first. */
+  listByConversation(businessId: string, conversationId: string): Promise<HumanHandoff[]>;
   save(entity: HumanHandoff): Promise<void>;
 }

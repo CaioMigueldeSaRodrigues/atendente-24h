@@ -5,13 +5,15 @@ import type { AddressInfo } from "node:net";
 import { test as base, expect } from "@playwright/test";
 import { BusinessType, Channel, Intent, InventoryAvailability } from "../../src/core/domain/enums.js";
 import type { AIInterpretation } from "../../src/core/domain/types.js";
+import type { MessageInterpreterInput } from "../../src/core/message-interpreter.js";
 import { AdminPlan } from "../../src/core/admin-plan-entitlement.js";
 import { AssignmentBusinessCapabilityPolicy } from "../../src/core/business-capability-policy.js";
 import { BasicBusinessOperatorAuthorizer } from "../../src/infrastructure/http/basic-business-operator-authorizer.js";
 import { createBasicPlanHttpServer, type BasicPlanHttpServerDependencies } from "../../src/infrastructure/http/basic-plan-http-server.js";
 import { PostgresDatabase } from "../../src/infrastructure/postgres/postgres-database.js";
-import { applyPostgresMigrations } from "../../src/infrastructure/postgres/postgres-migrations.js";
+import { applyPostgresMigrations, MIGRATIONS } from "../../src/infrastructure/postgres/postgres-migrations.js";
 import * as R from "../../src/infrastructure/postgres/postgres-repositories.js";
+import { PostgresBusinessProfileRepository } from "../../src/infrastructure/postgres/postgres-business-profile-repository.js";
 import { PostgresStockCheckRepository } from "../../src/infrastructure/postgres/postgres-stock-check-repository.js";
 import { PostgresQuoteDraftRepository } from "../../src/infrastructure/postgres/postgres-quote-draft-repository.js";
 import { PostgresBusinessPlanAssignmentRepository } from "../../src/infrastructure/postgres/postgres-business-plan-assignment-repository.js";
@@ -22,7 +24,7 @@ import { gateEnvironment } from "./environment.js";
 export const businessId = "gate-workshop-a";
 export const otherBusinessId = "gate-workshop-b";
 export const customerText = "Sou João Açúcar. Toyota Corolla XEi 2020. Quero troca de óleo 5W30.";
-export const moneyReply = (amount: string) => `O orçamento autorizado é de R$ ${amount}. Deseja prosseguir?`;
+export const moneyReply = (amount: string) => `O orçamento autorizado para Troca de óleo é de R$ ${amount}. Deseja prosseguir?`;
 export const draftBody = () => ({ products: [{ requestedItem: "Óleo 5W30", sku: "OIL-5W30", quantity: 4, quantitySource: "OPERATOR_CONFIRMED" }], labor: [{ description: "Troca de óleo", quantity: 1, quantitySource: "OPERATOR_CONFIRMED" }] });
 
 export class Harness {
@@ -37,6 +39,10 @@ export class Harness {
   url = "";
   interpreterMode: "normal" | "throw" | "timeout" = "normal";
   interpreterCalls: string[] = [];
+  interpreterInputs: MessageInterpreterInput[] = [];
+  // When set, the whole system (server, repositories, webhook timestamps) reads this clock, one millisecond per reading, so messages keep their order.
+  clock: number | undefined;
+  private ticks = 0;
   senderFails = false;
   senderCalls: Array<{ recipientJid: string; content: string; delivered: boolean }> = [];
   inventoryCalls = 0;
@@ -58,9 +64,9 @@ export class Harness {
   async start(empty = false) {
     this.db = new PostgresDatabase(this.config, { allowInsecureLocal: true, searchPath: this.schema });
     const applied = await applyPostgresMigrations(this.db);
-    assert.deepEqual(applied.map((name) => name.slice(0, 3)), empty ? ["001", "002", "003", "004", "005", "006", "007", "008", "009"] : []);
+    assert.deepEqual(applied, empty ? [...MIGRATIONS] : []);
     assert.deepEqual(await applyPostgresMigrations(this.db), []);
-    const now = () => new Date().toISOString();
+    const now = () => this.nowIso();
     const businesses = new R.PostgresAutomotiveBusinessRepository(this.db);
     if (empty) {
       for (const id of [businessId, otherBusinessId]) await businesses.save({ id, name: id, businessType: BusinessType.WORKSHOP, timezone: "UTC", active: true, createdAt: now(), updatedAt: now() });
@@ -93,6 +99,8 @@ export class Harness {
       commercialEventRepository: observe(new R.PostgresCommercialEventRepository(this.db)),
       appointmentRepository: observe(new R.PostgresAppointmentRepository(this.db)),
       humanHandoffRepository: observe(new R.PostgresHumanHandoffRepository(this.db)),
+      businessProfileRepository: new PostgresBusinessProfileRepository(this.db),
+      businessRepository: businesses,
       stockCheckRepository: observe(new PostgresStockCheckRepository(this.db)),
       quoteDraftRepository: observe(new PostgresQuoteDraftRepository(this.db)),
       businessCapabilityPolicy: new AssignmentBusinessCapabilityPolicy(new PostgresBusinessPlanAssignmentRepository(this.db), new PostgresBusinessAssistantIntegrationSettingsRepository(this.db), { inventory: true, productPricing: true, laborPricing: true }),
@@ -119,8 +127,10 @@ export class Harness {
       } },
       laborPriceReadPort: { read: async () => ({ status: "AVAILABLE", price: { amountCents: 9000, currency: "BRL" }, source: "gate1-synthetic", checkedAt: now() }) },
       operator: { businessId, businessName: "Oficina Gate 1", integratedQuotes: true },
-      interpreter: { interpret: async ({ content }) => {
+      interpreter: { interpret: async (input) => {
+        const { content } = input;
         this.interpreterCalls.push(content);
+        this.interpreterInputs.push(input);
         if (this.interpreterMode === "throw") throw new Error("Synthetic interpreter unavailable");
         if (this.interpreterMode === "timeout") { await new Promise((resolve) => setTimeout(resolve, 30)); throw new Error("Synthetic interpreter deadline exceeded"); }
         const quote = content.includes("óleo") || content === "Quero orçamento";
@@ -144,6 +154,10 @@ export class Harness {
     this.url = `http://127.0.0.1:${(this.server.address() as AddressInfo).port}`;
   }
 
+  nowIso(): string {
+    return this.clock === undefined ? new Date().toISOString() : new Date(this.clock + this.ticks++).toISOString();
+  }
+
   async plan(plan: AdminPlan, optIn = false) {
     const at = new Date().toISOString();
     await new PostgresBusinessPlanAssignmentRepository(this.db).save({ id: "gate-plan", businessId, plan, status: "ACTIVE", startedAt: at, updatedAt: at, source: "gate1" });
@@ -155,7 +169,7 @@ export class Harness {
   }
   route(path: string) { return `/v1/businesses/${businessId}${path}`; }
   webhook(content = customerText, id = randomUUID(), sender = `${Date.now()}@s.whatsapp.net`) {
-    return { event: "Message", instanceName: this.instance, instanceToken: this.webhookToken, data: { Info: { ID: id, Type: "text", Sender: sender, Chat: sender, Timestamp: new Date().toISOString(), IsFromMe: false, IsGroup: false }, Message: { conversation: content } } };
+    return { event: "Message", instanceName: this.instance, instanceToken: this.webhookToken, data: { Info: { ID: id, Type: "text", Sender: sender, Chat: sender, Timestamp: this.nowIso(), IsFromMe: false, IsGroup: false }, Message: { conversation: content } } };
   }
   sendWebhook(payload: unknown) { return this.request("/v1/channels/whatsapp/evolution-go/webhook", "POST", payload, false); }
   async intake() {
@@ -163,7 +177,7 @@ export class Harness {
     expect(response.status).toBe(202);
     const result = await this.db.query("SELECT * FROM quote_requests WHERE business_id=$1 ORDER BY created_at DESC LIMIT 1", [businessId]);
     expect(result.rows).toHaveLength(1);
-    return result.rows[0]! as { id: string; conversation_id: string };
+    return result.rows[0]! as { id: string; conversation_id: string; updated_at: string };
   }
   async stop() { if (this.server?.listening) await new Promise<void>((resolve, reject) => this.server.close((error) => error ? reject(error) : resolve())); if (this.db) await this.db.close(); }
   async restart() { await this.stop(); await this.start(); }

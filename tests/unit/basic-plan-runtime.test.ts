@@ -129,7 +129,7 @@ test("creates and reuses the pilot business and persists conversations across ru
     const createConversation = async (port: number) => {
       const response = await fetch(`http://127.0.0.1:${port}/v1/businesses/${business.businessId}/conversations`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", authorization: operatorAuthorization },
         body: JSON.stringify({ channel: Channel.WEB }),
       });
       assert.equal(response.status, 201);
@@ -207,16 +207,7 @@ test("creates and reuses the pilot business and persists conversations across ru
       body: JSON.stringify(webhookPayload),
     });
     assert.equal(webhookResponse.status, 202);
-    assert.deepEqual(await webhookResponse.json(), {
-      accepted: true,
-      message: {
-        instanceName: webhookCredential.instanceName,
-        externalMessageId: "runtime-message-synthetic-1",
-        senderJid: "15550000001@s.whatsapp.net",
-        content: "Texto sintético para webhook",
-        occurredAt: "2026-09-25T12:00:00.000Z",
-      },
-    });
+    assert.deepEqual(await webhookResponse.json(), { accepted: true });
     const duplicateWebhookResponse = await fetch(webhookUrl, {
       method: "POST",
       headers: { "content-type": "application/json" },

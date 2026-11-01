@@ -69,6 +69,18 @@ Resposta esperada:
 
 Esse endpoint não verifica necessariamente integrações externas.
 
+Complementos operacionais, ambos públicos e sem corpo de detalhe:
+
+GET /ready
+
+responde `200 {"status":"ok"}` quando o banco responde a `SELECT 1` e `503 {"status":"unavailable"}` quando não.
+
+GET /privacidade
+
+página HTML estática com o aviso de privacidade (minuta sujeita a revisão jurídica), linkada na primeira resposta a cada cliente.
+
+Toda resposta carrega o cabeçalho `X-Request-Id`, o mesmo id que o log registra num erro 500.
+
 ---
 
 ## 6. Criar conversa

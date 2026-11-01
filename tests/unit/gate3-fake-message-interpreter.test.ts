@@ -82,3 +82,10 @@ test("fake mode has no contact/provider data and returns the exact Gate 3 quote 
   assert.doesNotMatch(serialized, /\+?\d{8,}/);
   assert.doesNotMatch(serialized, /jid|token/i);
 });
+
+test("fake mode is refused with NODE_ENV=production", () => {
+  const environment = { GATE3_FAKE_INTERPRETER: "true", NODE_ENV: "production" };
+  assert.throws(() => isGate3FakeInterpreterEnabled(environment), { message: "GATE3_FAKE_INTERPRETER is not allowed with NODE_ENV=production" });
+  assert.throws(() => createRuntimeMessageInterpreter(environment), { message: "GATE3_FAKE_INTERPRETER is not allowed with NODE_ENV=production" });
+  assert.equal(isGate3FakeInterpreterEnabled({ GATE3_FAKE_INTERPRETER: "false", NODE_ENV: "production" }), false);
+});

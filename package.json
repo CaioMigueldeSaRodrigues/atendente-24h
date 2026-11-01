@@ -8,7 +8,7 @@
     "typecheck": "tsc --noEmit",
     "test": "tsc -p tsconfig.test.json && node --test dist-test/tests/unit/*.test.js",
     "build": "tsc",
-    "start:basic": "node --env-file-if-exists=.env.local dist/app/run-basic-plan.js",
+    "start": "node --env-file-if-exists=.env.local dist/app/run-basic-plan.js",
     "migrate:postgres": "npm run build && node --env-file-if-exists=.env.local dist/infrastructure/postgres/migrate-postgres.js",
     "check:postgres": "npm run build && node --env-file-if-exists=.env.local dist/infrastructure/postgres/check-postgres-connection.js",
     "transfer:postgres": "npm run build && node --env-file-if-exists=.env.local dist/infrastructure/postgres/transfer-sqlite-to-postgres.js",
@@ -28,6 +28,6 @@
     "@supabase/supabase-js": "2.51.0",
     "openai": "^7.22.0",
     "pg": "^8.23.0",
-    "zod": "^4.6.5"
+    "zod": "^4.6.7"
   }
 }

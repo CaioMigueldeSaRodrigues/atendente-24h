@@ -2,7 +2,7 @@ import OpenAI from "openai";
 import { performance } from "node:perf_hooks";
 import { z } from "zod";
 import type { AiUsageRecorder, AiUsageSnapshot } from "../core/ai-usage.js";
-import type { MessageInterpreter, MessageInterpreterInput } from "../core/message-interpreter.js";
+import { buildInterpreterContext, LLM_MAX_OUTPUT_TOKENS, LLM_TIMEOUT_MS, type MessageInterpreter, type MessageInterpreterInput } from "../core/message-interpreter.js";
 import { modelAIInterpretationSchema, parseAIInterpretation } from "../core/ai-interpretation-schema.js";
 import { INTERPRETER_INSTRUCTIONS } from "./openai-message-interpreter.js";
 
@@ -22,15 +22,7 @@ export class GroqMessageInterpreter implements MessageInterpreter {
   ) {}
 
   async interpret(input: MessageInterpreterInput) {
-    const context = {
-      businessId: input.businessId,
-      conversationId: input.conversationId,
-      content: input.content,
-      history: input.history.map(({ senderType, content }) => ({
-        senderType,
-        content,
-      })),
-    };
+    const context = buildInterpreterContext(input);
 
     const startedAt = performance.now();
     let response: unknown;
@@ -43,6 +35,7 @@ export class GroqMessageInterpreter implements MessageInterpreter {
             { role: "system", content: INTERPRETER_INSTRUCTIONS },
             { role: "user", content: JSON.stringify(context) },
           ],
+          max_completion_tokens: LLM_MAX_OUTPUT_TOKENS,
           response_format: {
             type: "json_schema",
             json_schema: {
@@ -51,7 +44,7 @@ export class GroqMessageInterpreter implements MessageInterpreter {
               schema: groqInterpretationSchema,
             },
           },
-        });
+        }, { signal: AbortSignal.timeout(LLM_TIMEOUT_MS) });
         break;
       } catch (error) {
         await this.recordUsage(input.businessId, input.conversationId, {

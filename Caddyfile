@@ -1,0 +1,8 @@
+# DOMAIN comes from the environment: a public name gets a Let's Encrypt certificate by itself;
+# "http://localhost" serves plain HTTP for a local check.
+{$DOMAIN} {
+	encode zstd gzip
+	reverse_proxy app:3000 {
+		header_up Host {host}
+	}
+}

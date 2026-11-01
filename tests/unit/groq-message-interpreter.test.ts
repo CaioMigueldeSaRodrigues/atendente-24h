@@ -88,7 +88,8 @@ test("uses Groq Chat Completions structured output and current interpretation ru
   assert.match(request.messages[0]!.content, /MINIMIZA/);
   assert.match(request.messages[0]!.content, /UNKNOWN_INFORMATION/);
   assert.match(request.messages[0]!.content, /Nunca invente/);
-  assert.deepEqual(JSON.parse(request.messages[1]!.content), input);
+  assert.deepEqual(JSON.parse(request.messages[1]!.content), { content: input.content, history: input.history });
+  assert.equal((request as unknown as { max_completion_tokens: number }).max_completion_tokens, 1200);
 });
 
 test("records real Groq usage with business, conversation and provider request id", async () => {
@@ -207,4 +208,18 @@ test("does not invalidate a valid answer when usage telemetry fails", async () =
 
   assert.equal(result.intent, Intent.QUOTE_REQUEST);
   assert.equal((observedFailure as Error).message, "database unavailable");
+});
+
+test("Groq receives the workshop facts in the user context and no numeric range in the schema", async () => {
+  const requests: unknown[] = [];
+  const interpreter = new GroqMessageInterpreter(makeClient({ choices: [{ message: { content: JSON.stringify(validModelOutput()) } }] }, requests), "llama-test");
+
+  await interpreter.interpret({ ...input, businessFacts: { services: ["Troca de óleo"], paymentMethods: [] }, localDateTime: "2026-11-07 11:00 (sábado, America/Manaus)" });
+
+  const request = requests[0] as { messages: Array<{ role: string; content: string }>; response_format: { json_schema: { schema: unknown } } };
+  const context = JSON.parse(request.messages[1]!.content) as { businessFacts?: { services: string[] }; localDateTime?: string };
+  assert.deepEqual(context.businessFacts?.services, ["Troca de óleo"]);
+  assert.equal(context.localDateTime, "2026-11-07 11:00 (sábado, America/Manaus)");
+  assert.match(request.messages[0]!.content, /businessFacts/);
+  assert.equal(/minimum|maximum/.test(JSON.stringify(request.response_format.json_schema.schema)), false);
 });

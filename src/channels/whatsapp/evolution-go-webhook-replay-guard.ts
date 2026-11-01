@@ -1,3 +1,5 @@
+export const EVOLUTION_GO_WEBHOOK_LEASE_MS = 5 * 60 * 1000;
+
 export interface EvolutionGoWebhookReplayClaim {
   businessId: string;
   instanceName: string;
@@ -43,4 +45,6 @@ export interface EvolutionGoWebhookReplayGuard {
   applyProviderReceipt(input: EvolutionGoProviderReceipt): boolean | Promise<boolean>;
   complete(input: EvolutionGoWebhookReplayClaimKey): boolean | Promise<boolean>;
   release(input: EvolutionGoWebhookReplayClaimKey): boolean | Promise<boolean>;
+  /** Keeps the claim but makes it available at once: a retry or the worker's recovery can take it over. */
+  expireLease(input: EvolutionGoWebhookReplayClaimKey & { at: string }): boolean | Promise<boolean>;
 }

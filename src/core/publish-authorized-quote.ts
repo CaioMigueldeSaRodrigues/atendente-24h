@@ -37,7 +37,10 @@ export async function publishAuthorizedQuote(
     throw new Error("QuoteRequest not found");
   }
 
-  const content = buildAuthorizedQuoteReply(quoteRequest);
+  const customerTexts = (await dependencies.messageRepository.listByConversation(input.businessId, quoteRequest.conversationId))
+    .filter(({ senderType }) => senderType === SenderType.CUSTOMER)
+    .map((message) => message.content);
+  const content = buildAuthorizedQuoteReply(quoteRequest, customerTexts);
   const conversation = await dependencies.conversationRepository.findById(
     input.businessId,
     quoteRequest.conversationId,

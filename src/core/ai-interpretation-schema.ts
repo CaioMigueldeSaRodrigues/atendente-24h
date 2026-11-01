@@ -2,6 +2,10 @@ import { z } from "zod";
 import { HandoffReason, Intent } from "./domain/enums.js";
 import type { AIInterpretation } from "./domain/types.js";
 
+const MIN_VEHICLE_YEAR = 1900;
+const MAX_VEHICLE_YEAR = 2100;
+const MAX_VEHICLE_MILEAGE = 3_000_000;
+
 export const modelAIInterpretationSchema = z
   .object({
     intent: z.nativeEnum(Intent),
@@ -45,12 +49,24 @@ export const modelAIInterpretationSchema = z
     requiresHuman: z.boolean(),
     handoffReason: z.nativeEnum(HandoffReason).nullable(),
     proposedResponse: z.string().min(1),
-    confidence: z.number().min(0).max(1).nullable(),
+    confidence: z.number().nullable(),
   })
   .strict();
 
+// The range stays out of the schema sent to the model: providers differ on which JSON Schema keywords they accept.
+function checkConfidence(value: number | null): void {
+  if (value !== null && !(value >= 0 && value <= 1)) throw new Error("AI confidence is out of range");
+}
+
+function integerInRange(value: number | null, min: number, max: number): number | null {
+  return value !== null && Number.isInteger(value) && value >= min && value <= max ? value : null;
+}
+
 export function parseAIInterpretation(input: unknown): AIInterpretation {
   const parsed = modelAIInterpretationSchema.parse(input);
+  checkConfidence(parsed.confidence);
+  const year = integerInRange(parsed.extractedVehicleData.year, MIN_VEHICLE_YEAR, MAX_VEHICLE_YEAR);
+  const mileage = integerInRange(parsed.extractedVehicleData.mileage, 0, MAX_VEHICLE_MILEAGE);
 
   return {
     intent: parsed.intent,
@@ -72,18 +88,14 @@ export function parseAIInterpretation(input: unknown): AIInterpretation {
       ...(parsed.extractedVehicleData.model !== null
         ? { model: parsed.extractedVehicleData.model }
         : {}),
-      ...(parsed.extractedVehicleData.year !== null
-        ? { year: parsed.extractedVehicleData.year }
-        : {}),
+      ...(year !== null ? { year } : {}),
       ...(parsed.extractedVehicleData.version !== null
         ? { version: parsed.extractedVehicleData.version }
         : {}),
       ...(parsed.extractedVehicleData.licensePlate !== null
         ? { licensePlate: parsed.extractedVehicleData.licensePlate }
         : {}),
-      ...(parsed.extractedVehicleData.mileage !== null
-        ? { mileage: parsed.extractedVehicleData.mileage }
-        : {}),
+      ...(mileage !== null ? { mileage } : {}),
     },
     ...(parsed.symptomDescription !== null
       ? { symptomDescription: parsed.symptomDescription }

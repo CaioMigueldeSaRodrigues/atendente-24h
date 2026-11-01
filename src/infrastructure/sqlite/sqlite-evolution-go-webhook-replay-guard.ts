@@ -217,6 +217,13 @@ export class SqliteEvolutionGoWebhookReplayGuard implements EvolutionGoWebhookRe
     });
   }
 
+  expireLease(input: EvolutionGoWebhookReplayClaimKey & { at: string }): boolean {
+    return tryWithSqliteConnectionLock(this.database, () => this.database.prepare(`
+      UPDATE evolution_go_webhook_claims SET lease_until = ?
+      WHERE business_id = ? AND instance_name = ? AND external_message_id = ? AND claim_token = ?
+    `).run(input.at, input.businessId, input.instanceName, input.externalMessageId, input.claimToken).changes === 1);
+  }
+
   release(input: EvolutionGoWebhookReplayClaimKey): boolean {
     return tryWithSqliteConnectionLock(this.database, () => {
     const result = this.database.prepare(`

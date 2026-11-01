@@ -88,6 +88,35 @@ export class SqliteQuoteRequestRepository implements QuoteRequestRepository {
     }
   }
 
+  async updateIntake(entity: QuoteRequest): Promise<boolean> {
+    try {
+      const result = await withSqliteConnectionLock(this.database, () => this.database.prepare(`
+        UPDATE quote_requests
+        SET customer_id = ?, request_description = ?, symptom_description = ?, status = ?, updated_at = ?
+        WHERE business_id = ? AND id = ?
+          AND authorized_price_amount_cents IS NULL
+          AND status IN ('REQUESTED', 'WAITING_INFORMATION', 'WAITING_BUSINESS')
+          AND NOT EXISTS (
+            SELECT 1 FROM quote_drafts
+            WHERE quote_drafts.business_id = quote_requests.business_id
+              AND quote_drafts.quote_request_id = quote_requests.id
+              AND quote_drafts.status IN ('PENDING_APPROVAL', 'APPROVED', 'PUBLISHED')
+          )
+      `).run(
+        entity.customerId ?? null,
+        entity.requestDescription,
+        entity.symptomDescription ?? null,
+        entity.status,
+        entity.updatedAt,
+        entity.businessId,
+        entity.id,
+      ));
+      return result.changes === 1;
+    } catch {
+      throw new Error("Failed to save QuoteRequest");
+    }
+  }
+
   async findById(businessId: string, id: string): Promise<QuoteRequest | null> {
     try {
       const row = await withSqliteConnectionLock(this.database, () => this.database.prepare(`

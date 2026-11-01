@@ -25,7 +25,7 @@ test("builds the exact reply using the authorized price", () => {
 
   assert.equal(
     buildAuthorizedQuoteReply(quoteRequest),
-    "O orçamento autorizado é de R$ 125,00. Deseja prosseguir?",
+    "O orçamento autorizado para Pastilhas de freio é de R$ 125,00. Deseja prosseguir?",
   );
 });
 
@@ -36,7 +36,7 @@ test("formats thousands and cents without floating-point rounding", () => {
 
   assert.equal(
     buildAuthorizedQuoteReply(quoteRequest),
-    "O orçamento autorizado é de R$ 1.250,50. Deseja prosseguir?",
+    "O orçamento autorizado para Pastilhas de freio é de R$ 1.250,50. Deseja prosseguir?",
   );
 });
 
@@ -47,7 +47,7 @@ test("formats a zero authorized price", () => {
 
   assert.equal(
     buildAuthorizedQuoteReply(quoteRequest),
-    "O orçamento autorizado é de R$ 0,00. Deseja prosseguir?",
+    "O orçamento autorizado para Pastilhas de freio é de R$ 0,00. Deseja prosseguir?",
   );
 });
 
@@ -105,5 +105,21 @@ test("includes exactly the authorized amount in the reply", () => {
   });
   const reply = buildAuthorizedQuoteReply(quoteRequest);
 
-  assert.equal(reply, "O orçamento autorizado é de R$ 9.876,54. Deseja prosseguir?");
+  assert.equal(reply, "O orçamento autorizado para Pastilhas de freio é de R$ 9.876,54. Deseja prosseguir?");
+});
+
+test("cites a single line and bounded item", () => {
+  const reply = buildAuthorizedQuoteReply(makeQuoteRequest({ requestDescription: `  Troca\n de  ${"x".repeat(500)}` }));
+
+  assert.equal(reply.includes("\n"), false);
+  assert.ok(reply.startsWith("O orçamento autorizado para Troca de x"));
+  assert.ok(reply.length < 200);
+  assert.ok(reply.endsWith("é de R$ 125,00. Deseja prosseguir?"));
+});
+
+test("never echoes the customer's raw text when the description came from it", () => {
+  const raw = "meu carro ta fazendo um barulho estranho, me liga 92 99999-0000";
+  const reply = buildAuthorizedQuoteReply(makeQuoteRequest({ requestDescription: raw }), ["Oi", raw]);
+
+  assert.equal(reply, "O orçamento autorizado para o seu pedido é de R$ 125,00. Deseja prosseguir?");
 });

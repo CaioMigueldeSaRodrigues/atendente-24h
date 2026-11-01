@@ -1,0 +1,54 @@
+# Run with: docker compose --env-file .env.production up -d
+# Every value comes from .env.production (ignored by git); nothing secret is written here.
+# ENV_FILE only exists so a check can point the app at another file.
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: ${ENV_FILE:-.env.production}
+    environment:
+      DATABASE_BACKEND: postgres
+      PGHOST: db
+      PGPORT: "5432"
+      # The database is only reachable on this private network, which has no TLS.
+      POSTGRES_ALLOW_INSECURE_LOCAL: "true"
+    depends_on:
+      db:
+        condition: service_healthy
+    stop_grace_period: 15s
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${PGUSER:?PGUSER is required}
+      POSTGRES_PASSWORD: ${PGPASSWORD:?PGPASSWORD is required}
+      POSTGRES_DB: ${PGDATABASE:?PGDATABASE is required}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:?DOMAIN is required}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

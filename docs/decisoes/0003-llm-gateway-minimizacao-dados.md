@@ -11,7 +11,7 @@ A composição do runtime usa `readLlmEnvironment` e `createMessageInterpreter`,
 | `openai` | `OPENAI_API_KEY` | `OPENAI_MODEL` | `https://api.openai.com/v1` |
 | `openrouter` | `OPENROUTER_API_KEY` | `OPENROUTER_MODEL` | `https://openrouter.ai/api/v1` |
 
-`OPENROUTER_MODEL=openrouter/free` é suportado sem assumir a identidade do modelo subjacente. `OPENROUTER_HTTP_REFERER` e `OPENROUTER_APP_NAME` são opcionais e enviados apenas ao OpenRouter. O SDK tem logging desabilitado, timeout de 120 segundos e nenhuma repetição automática. O roteamento/failover configurado no OpenRouter pertence ao gateway externo.
+`OPENROUTER_MODEL=openrouter/free` é suportado sem assumir a identidade do modelo subjacente. `OPENROUTER_HTTP_REFERER` e `OPENROUTER_APP_NAME` são opcionais e enviados apenas ao OpenRouter. O SDK tem logging desabilitado, timeout de 20 segundos e nenhuma repetição automática. O roteamento/failover configurado no OpenRouter pertence ao gateway externo.
 
 Use `.env.example` como referência e mantenha as credenciais somente no ambiente ou em `.env.local`, ignorado pelo Git. O comando `npm run start:basic` carrega esse arquivo local. Não registre configuração completa, headers ou erros externos brutos.
 

@@ -45,6 +45,11 @@ export class PostgresAiUsageRepository implements AiUsageStore, AiUsageQueryServ
     ]);
   }
 
+  async countCallsSince(businessId: string, since: string): Promise<number> {
+    const result = await this.database.query<Row>("SELECT COUNT(*) AS calls FROM ai_usage_events WHERE business_id=$1 AND created_at >= $2::timestamptz", [businessId, since]);
+    return Number(result.rows[0]?.calls ?? 0);
+  }
+
   async getSummary(input: { businessId: string; period?: { from?: string; to?: string } }): Promise<AiUsageSummary> {
     const { where, params } = periodWhere(input.businessId, input.period);
     const result = await this.database.query<Row>(`SELECT COUNT(*) AS calls,

@@ -9,6 +9,8 @@ export interface EvolutionGoTextSenderOptions {
 export type EvolutionGoTextMessage = ChannelTextMessage;
 
 const SAFE_SEND_ERROR = "Evolution Go text message could not be sent";
+export const EVOLUTION_GO_SEND_TIMEOUT_MS = 10_000;
+const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(["127.0.0.1", "[::1]"]);
 
 export class EvolutionGoTextSender implements ChannelTextSender {
   private readonly endpoint: string;
@@ -16,7 +18,7 @@ export class EvolutionGoTextSender implements ChannelTextSender {
   private readonly fetchImplementation: typeof fetch;
 
   constructor(options: EvolutionGoTextSenderOptions) {
-    if (!nonEmpty(options.baseUrl) || !nonEmpty(options.instanceToken)) {
+    if (!isAllowedBaseUrl(options.baseUrl) || !nonEmpty(options.instanceToken)) {
       throw new Error("Evolution Go sender configuration is invalid");
     }
 
@@ -33,6 +35,7 @@ export class EvolutionGoTextSender implements ChannelTextSender {
     try {
       const response = await this.fetchImplementation(this.endpoint, {
         method: "POST",
+        signal: AbortSignal.timeout(EVOLUTION_GO_SEND_TIMEOUT_MS),
         headers: {
           "Content-Type": "application/json",
           apikey: this.instanceToken,
@@ -40,7 +43,7 @@ export class EvolutionGoTextSender implements ChannelTextSender {
         body: JSON.stringify({
           number: message.recipientJid,
           text: message.content,
-          formatJid: false,
+          formatJid: message.formatJid === true,
         }),
       });
       if (!response.ok) throw new Error(SAFE_SEND_ERROR);
@@ -62,6 +65,16 @@ function readProviderMessageId(body: unknown): string | undefined {
   if (typeof info !== "object" || info === null || Array.isArray(info)) return undefined;
   const id = (info as Record<string, unknown>).ID;
   return typeof id === "string" && id.trim().length > 0 ? id : undefined;
+}
+
+function isAllowedBaseUrl(baseUrl: string): boolean {
+  try {
+    const url = new URL(baseUrl);
+    // A host without a dot is a loopback name or a service inside the private network, such as http://evolution:8080.
+    return url.protocol === "https:" || (url.protocol === "http:" && (LOOPBACK_HOSTS.has(url.hostname) || !url.hostname.includes(".")));
+  } catch {
+    return false;
+  }
 }
 
 function nonEmpty(value: string): boolean {

@@ -9,8 +9,10 @@ import type { EvolutionGoWebhookCredential } from "../channels/whatsapp/evolutio
 import { EvolutionGoTextSender, type EvolutionGoTextMessage } from "../channels/whatsapp/evolution-go-text-sender.js";
 import {
   InMemoryAppointmentRepository,
+  InMemoryBusinessProfileRepository,
   InMemoryHumanHandoffRepository,
 } from "../core/in-memory-repositories.js";
+import { LlmGuard } from "../core/llm-guard.js";
 import { createBasicPlanHttpServer, type BasicPlanOperationalEvent } from "../infrastructure/http/basic-plan-http-server.js";
 import { createSqliteDatabase } from "../infrastructure/sqlite/sqlite-database.js";
 import { SqliteEvolutionGoWebhookReplayGuard } from "../infrastructure/sqlite/sqlite-evolution-go-webhook-replay-guard.js";
@@ -34,6 +36,7 @@ import { UnavailableProductPriceReadAdapter } from "../infrastructure/pricing/lo
 import { UnavailableLaborPriceReadAdapter } from "../infrastructure/pricing/local-labor-price-read-adapter.js";
 import { UnavailableInventoryReadAdapter } from "../infrastructure/inventory/local-inventory-read-adapter.js";
 import type { BusinessOperatorAuthorizer } from "../core/business-operator-authorizer.js";
+import type { Logger } from "../infrastructure/logger.js";
 
 export type BasicPlanBusinessConfig = {
   businessId: string;
@@ -43,6 +46,7 @@ export type BasicPlanBusinessConfig = {
 };
 
 export type BasicPlanRuntimeOptions = {
+  publicOrigin?: string;
   databasePath: string;
   interpreter: MessageInterpreter;
   business: BasicPlanBusinessConfig;
@@ -50,6 +54,8 @@ export type BasicPlanRuntimeOptions = {
   evolutionGoWebhookCredential?: EvolutionGoWebhookCredential;
   evolutionGoBaseUrl?: string;
   evolutionGoTextSender?: { sendText(message: EvolutionGoTextMessage): Promise<void | { providerMessageId: string }> };
+  privacyContact?: string;
+  logger?: Logger;
   operationalLog?: (event: BasicPlanOperationalEvent) => void;
   now?: () => string;
 };
@@ -155,12 +161,20 @@ export async function createBasicPlanRuntime(
         : {}),
       appointmentRepository: new InMemoryAppointmentRepository(),
       humanHandoffRepository: new InMemoryHumanHandoffRepository(),
+      // ponytail: the SQLite runtime keeps the profile and the handoffs in memory (as it already did for handoffs); PostgreSQL is the pilot backend.
+      businessProfileRepository: new InMemoryBusinessProfileRepository(),
+      businessRepository: automotiveBusinessRepository,
       operator: {
         businessId: options.business.businessId,
         businessName: options.business.businessName,
         integratedQuotes: true,
       },
       interpreter: options.interpreter,
+      llmGuard: new LlmGuard({ now }),
+      ...(options.publicOrigin ? { publicOrigin: options.publicOrigin } : {}),
+      ...(options.privacyContact ? { privacyContact: options.privacyContact } : {}),
+      ...(options.logger ? { logger: options.logger } : {}),
+      readiness: async () => { database.prepare("SELECT 1").get(); },
       ...(options.operationalLog ? { operationalLog: options.operationalLog } : {}),
       now,
       generateId: (prefix) => `${prefix}-${randomUUID()}`,

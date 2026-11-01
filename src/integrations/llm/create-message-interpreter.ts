@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import type { MessageInterpreter } from "../../core/message-interpreter.js";
+import { LLM_TIMEOUT_MS, type MessageInterpreter } from "../../core/message-interpreter.js";
 import { OpenAIMessageInterpreter } from "../openai-message-interpreter.js";
 import { GroqMessageInterpreter } from "../groq-message-interpreter.js";
 import type { LlmEnvironment } from "./llm-environment.js";
@@ -16,7 +16,7 @@ export function createMessageInterpreter(
     defaultHeaders: config.defaultHeaders,
     // Nunca encaminhar headers, credenciais ou corpos para o logger do SDK.
     logLevel: "off",
-    timeout: 120_000,
+    timeout: LLM_TIMEOUT_MS,
     maxRetries: 0,
   });
   const options = {

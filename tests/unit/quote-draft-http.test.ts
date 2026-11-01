@@ -85,7 +85,7 @@ test("integrated draft endpoints gate by plan, calculate without outbox and auth
     assert.equal((await fetch(`${base}/v1/businesses/business-http/quotes/quote-http/draft`)).status, 403);
 
     await quoteRequests.save({ id: "quote-manual", businessId: "business-http", opportunityId: "opportunity-http", conversationId: "conversation-http", requestDescription: "Revisão", status: QuoteRequestStatus.WAITING_BUSINESS, requestedAt: "2026-01-01T00:00:00.000Z", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" });
-    const manualRespond = await fetch(`${base}/v1/businesses/business-http/quotes/quote-manual/respond`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ amountCents: 10000, currency: "BRL" }) });
+    const manualRespond = await fetch(`${base}/v1/businesses/business-http/quotes/quote-manual/respond`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ expectedUpdatedAt: (await quoteRequests.findById("business-http", "quote-manual"))!.updatedAt, amountCents: 10000, currency: "BRL" }) });
     assert.equal(manualRespond.status, 200);
     const manualPublish = await fetch(`${base}/v1/businesses/business-http/quotes/quote-manual/publish`, { method: "POST" });
     assert.equal(manualPublish.status, 200);

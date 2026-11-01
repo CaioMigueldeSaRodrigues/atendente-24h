@@ -19,8 +19,11 @@ import { assertDraftSave } from "./quote-draft-write-policy.js";
 import { QuoteDraftError } from "./build-quote-draft.js";
 import type { BusinessAssistantIntegrationSettings, BusinessAssistantIntegrationSettingsRepository } from "./business-assistant-integration-settings.js";
 import {
+  OPEN_HANDOFF_STATUSES,
   OutboundDeliveryStatus,
+  QuoteRequestStatus,
 } from "./domain/enums.js";
+import type { BusinessProfile, BusinessProfileRepository } from "./business-profile.js";
 import type {
   AppointmentRepository,
   AssistantHealthEventRepository,
@@ -287,6 +290,16 @@ export class InMemoryQuoteRequestRepository implements QuoteRequestRepository {
     }
     businessQuoteRequests.set(entity.id, entity);
   }
+
+  async updateIntake(entity: QuoteRequest): Promise<boolean> {
+    const current = this.quoteRequests.get(entity.businessId)?.get(entity.id);
+    const open = current?.status === QuoteRequestStatus.REQUESTED ||
+      current?.status === QuoteRequestStatus.WAITING_INFORMATION ||
+      current?.status === QuoteRequestStatus.WAITING_BUSINESS;
+    if (!open || current?.authorizedPrice !== undefined) return false;
+    await this.save(entity);
+    return true;
+  }
 }
 
 export class InMemoryOutboundDeliveryRepository implements OutboundDeliveryRepository {
@@ -360,12 +373,13 @@ export class InMemoryOutboundDeliveryRepository implements OutboundDeliveryRepos
     now: string,
     leaseUntil: string,
     claimToken: string,
+    ignoreSchedule = false,
   ): Promise<OutboundDeliveryClaimResult> {
     const delivery = await this.findById(businessId, id);
     if (!delivery) throw new Error("OutboundDelivery not found");
     if (delivery.status === OutboundDeliveryStatus.PENDING ||
       (delivery.status === OutboundDeliveryStatus.FAILED_RETRYABLE &&
-        (delivery.nextAttemptAt === undefined || delivery.nextAttemptAt <= now)) ||
+        (ignoreSchedule || delivery.nextAttemptAt === undefined || delivery.nextAttemptAt <= now)) ||
       (delivery.status === OutboundDeliveryStatus.SENDING &&
         delivery.leaseUntil !== undefined && delivery.leaseUntil <= now)) {
       const claimed: OutboundDelivery = {
@@ -455,6 +469,18 @@ export class InMemoryHumanHandoffRepository implements HumanHandoffRepository {
     return this.handoffs.get(businessId)?.get(id) ?? null;
   }
 
+  async listOpen(businessId: string): Promise<HumanHandoff[]> {
+    return [...(this.handoffs.get(businessId)?.values() ?? [])]
+      .filter(({ status }) => OPEN_HANDOFF_STATUSES.includes(status))
+      .sort((left, right) => left.requestedAt.localeCompare(right.requestedAt) || left.id.localeCompare(right.id));
+  }
+
+  async listByConversation(businessId: string, conversationId: string): Promise<HumanHandoff[]> {
+    return [...(this.handoffs.get(businessId)?.values() ?? [])]
+      .filter((handoff) => handoff.conversationId === conversationId)
+      .sort((left, right) => left.requestedAt.localeCompare(right.requestedAt) || left.id.localeCompare(right.id));
+  }
+
   async save(entity: HumanHandoff): Promise<void> {
     let businessHandoffs = this.handoffs.get(entity.businessId);
     if (!businessHandoffs) {
@@ -498,6 +524,15 @@ export class InMemoryBusinessAssistantIntegrationSettingsRepository implements B
     return value ? { ...value } : null;
   }
   async save(value: BusinessAssistantIntegrationSettings): Promise<void> { this.settings.set(value.businessId, { ...value }); }
+}
+
+export class InMemoryBusinessProfileRepository implements BusinessProfileRepository {
+  private readonly profiles = new Map<string, BusinessProfile>();
+  async findByBusinessId(businessId: string): Promise<BusinessProfile | null> {
+    const value = this.profiles.get(businessId);
+    return value ? structuredClone(value) : null;
+  }
+  async save(profile: BusinessProfile): Promise<void> { this.profiles.set(profile.businessId, structuredClone(profile)); }
 }
 
 function cloneDraft(draft: QuoteDraft | undefined): QuoteDraft | null {

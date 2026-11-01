@@ -176,3 +176,26 @@ test("foreign keys reject cross-business Opportunity and Conversation links", as
     });
   });
 });
+
+test("updateIntake never touches a priced quote or one with a live draft", async () => {
+  await withRepositories(async (quotes, opportunities, businesses, conversations, database) => {
+    await seedBase(opportunities, businesses, conversations, "business-a");
+    const open = quote("quote-open", "business-a");
+    const priced = quote("quote-priced", "business-a", "opportunity-1", "conversation-1", { authorizedPrice: { amountCents: 100, currency: "BRL" }, status: QuoteRequestStatus.RESPONDED });
+    const drafted = quote("quote-drafted", "business-a");
+    for (const entity of [open, priced, drafted]) await quotes.save(entity);
+    const insertDraft = (status: string, revision: number) => database.prepare("INSERT INTO quote_drafts(id,business_id,conversation_id,quote_request_id,revision,status,products_subtotal_amount_cents,products_subtotal_currency,labor_subtotal_amount_cents,labor_subtotal_currency,total_amount_cents,total_currency,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+      .run(`draft-${revision}`, "business-a", "conversation-1", "quote-drafted", revision, status, 100, "BRL", 0, "BRL", 100, "BRL", "2026-01-01", "2026-01-01");
+    insertDraft("SUPERSEDED", 1);
+    const changed = (entity: QuoteRequest): QuoteRequest => ({ ...entity, requestDescription: "Outro pedido", updatedAt: "2026-01-05T00:00:00.000Z" });
+
+    assert.equal(await quotes.updateIntake(changed(open)), true);
+    assert.equal((await quotes.findById("business-a", open.id))?.requestDescription, "Outro pedido");
+    assert.equal(await quotes.updateIntake(changed(priced)), false);
+    assert.deepEqual(await quotes.findById("business-a", priced.id), priced);
+    assert.equal(await quotes.updateIntake(changed(drafted)), true);
+    insertDraft("PENDING_APPROVAL", 2);
+    assert.equal(await quotes.updateIntake({ ...changed(drafted), requestDescription: "Terceiro pedido" }), false);
+    assert.equal((await quotes.findById("business-a", drafted.id))?.requestDescription, "Outro pedido");
+  });
+});
