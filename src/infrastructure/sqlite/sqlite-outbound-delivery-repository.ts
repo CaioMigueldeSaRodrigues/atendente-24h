@@ -52,13 +52,13 @@ export class SqliteOutboundDeliveryRepository implements OutboundDeliveryReposit
     } catch (error) { if (error instanceof Error && /OutboundDelivery (not found|message is already attached)/.test(error.message)) throw error; throw new Error("Failed to attach OutboundDelivery message"); }
   }
 
-  async claimForSending(businessId: string, id: string, now: string, leaseUntil: string, claimToken: string): Promise<OutboundDeliveryClaimResult> {
+  async claimForSending(businessId: string, id: string, now: string, leaseUntil: string, claimToken: string, ignoreSchedule = false): Promise<OutboundDeliveryClaimResult> {
     try {
       return await withSqliteConnectionLock(this.database, () => {
         const result = this.database.prepare(`UPDATE outbound_deliveries SET status = ?, attempts = attempts + 1, updated_at = ?, claimed_at = ?, lease_until = ?, claim_token = ?
-          WHERE business_id = ? AND id = ? AND (status = ? OR (status = ? AND (next_attempt_at IS NULL OR next_attempt_at <= ?)) OR (status = ? AND lease_until IS NOT NULL AND lease_until <= ?))`).run(
+          WHERE business_id = ? AND id = ? AND (status = ? OR (status = ? AND (? = 1 OR next_attempt_at IS NULL OR next_attempt_at <= ?)) OR (status = ? AND lease_until IS NOT NULL AND lease_until <= ?))`).run(
           OutboundDeliveryStatus.SENDING, now, now, leaseUntil, claimToken, businessId, id, OutboundDeliveryStatus.PENDING,
-          OutboundDeliveryStatus.FAILED_RETRYABLE, now, OutboundDeliveryStatus.SENDING, now,
+          OutboundDeliveryStatus.FAILED_RETRYABLE, ignoreSchedule ? 1 : 0, now, OutboundDeliveryStatus.SENDING, now,
         );
         const row = this.database.prepare("SELECT * FROM outbound_deliveries WHERE business_id = ? AND id = ?").get(businessId, id) as OutboundDeliveryRow | undefined;
         if (!row) throw new Error("OutboundDelivery not found");

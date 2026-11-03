@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseEvolutionGoInboundText } from "../../src/channels/whatsapp/evolution-go-message-parser.js";
+import { parseEvolutionGoInboundText, parseEvolutionGoUnsupportedMessage, UNSUPPORTED_MESSAGE_CONTENT } from "../../src/channels/whatsapp/evolution-go-message-parser.js";
 
 function payload(message: unknown, info: Record<string, unknown> = {}) {
   return {
@@ -10,8 +10,8 @@ function payload(message: unknown, info: Record<string, unknown> = {}) {
       Info: {
         ID: "msg-ficticia-001",
         Type: "text",
-        Sender: "5511999990000@s.whatsapp.net",
-        Chat: "5511888880000@s.whatsapp.net",
+        Sender: "5511999990000:12@s.whatsapp.net",
+        Chat: "5511999990000@s.whatsapp.net",
         PushName: "Pessoa Fictícia",
         Timestamp: "2026-01-02T03:04:05Z",
         IsFromMe: false,
@@ -44,12 +44,17 @@ test("parses extended text messages", () => {
   );
 });
 
-test("uses Chat when Sender is missing or empty", () => {
-  for (const sender of [undefined, "   "]) {
+test("the customer is the Chat, not the Sender that may carry a device", () => {
+  assert.equal(parseEvolutionGoInboundText(payload({ conversation: "Olá" }))?.senderJid, "5511999990000@s.whatsapp.net");
+  assert.equal(parseEvolutionGoUnsupportedMessage(payload({}, { Type: "audio" }))?.senderJid, "5511999990000@s.whatsapp.net");
+});
+
+test("uses Sender when Chat is missing or empty", () => {
+  for (const chat of [undefined, "   "]) {
     const result = parseEvolutionGoInboundText(
-      payload({ conversation: "Olá" }, { Sender: sender }),
+      payload({ conversation: "Olá" }, { Chat: chat, Sender: "5511999990000@s.whatsapp.net" }),
     );
-    assert.equal(result?.senderJid, "5511888880000@s.whatsapp.net");
+    assert.equal(result?.senderJid, "5511999990000@s.whatsapp.net");
   }
 });
 
@@ -84,4 +89,26 @@ test("returns null for malformed payloads", () => {
 test("ignores empty or whitespace-only text", () => {
   assert.equal(parseEvolutionGoInboundText(payload({ conversation: "   " })), null);
   assert.equal(parseEvolutionGoInboundText(payload({ extendedTextMessage: { text: "\n " } })), null);
+});
+
+test("normalizes non-text customer messages without keeping provider content", () => {
+  for (const Type of ["media", "audio", "image"]) {
+    assert.equal(parseEvolutionGoInboundText(payload({ imageMessage: {} }, { Type })), null);
+    assert.deepEqual(parseEvolutionGoUnsupportedMessage(payload({ imageMessage: { url: "x" } }, { Type })), {
+      instanceName: "clinica-teste",
+      externalMessageId: "msg-ficticia-001",
+      senderJid: "5511999990000@s.whatsapp.net",
+      senderName: "Pessoa Fictícia",
+      occurredAt: "2026-01-02T03:04:05Z",
+      content: UNSUPPORTED_MESSAGE_CONTENT,
+    });
+  }
+});
+
+test("does not answer reactions, own messages, groups or text events", () => {
+  assert.equal(parseEvolutionGoUnsupportedMessage(payload({}, { Type: "reaction" })), null);
+  assert.equal(parseEvolutionGoUnsupportedMessage(payload({}, { Type: "image", IsFromMe: true })), null);
+  assert.equal(parseEvolutionGoUnsupportedMessage(payload({}, { Type: "image", IsGroup: true })), null);
+  assert.equal(parseEvolutionGoUnsupportedMessage(payload({ conversation: "Oi" })), null);
+  assert.equal(parseEvolutionGoUnsupportedMessage(payload({}, { Type: undefined })), null);
 });

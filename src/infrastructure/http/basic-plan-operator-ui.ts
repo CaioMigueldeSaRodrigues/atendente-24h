@@ -5,7 +5,7 @@ export type BasicPlanOperatorConfig = {
   integratedQuotePreview?: { productDescription: string; sku: string; quantity: number; unit: string; laborDescription: string; laborQuantity: number };
 };
 
-export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): string {
+export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig, nonce = ""): string {
   const safeConfig = JSON.stringify(operator)
     .replace(/</g, "\\u003c")
     .replace(/>/g, "\\u003e")
@@ -20,7 +20,7 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
   <title>Orçamentos | Ampliview</title>
-  <style>
+  <style nonce="${nonce}">
     :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #17212b; background: #f3f6f8; }
     * { box-sizing: border-box; }
     body { margin: 0; min-width: 320px; }
@@ -112,13 +112,37 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
     .integrated-note { margin: 8px 0 0; color: #63727d; font-size: 12px; }
     .secondary-action { margin: 0 20px 20px; padding: 7px 10px; background: transparent; color: #52616b; font-size: 12px; font-weight: 600; text-align: left; }
     .secondary-action:hover:not(:disabled) { background: #eaf1f3; color: #26424e; }
+    .side-panel { margin-bottom: 16px; border: 1px solid #dce5e9; border-radius: 13px; background: #fff; box-shadow: 0 3px 12px #19384a0b; }
+    .side-panel > .panel-heading { display: block; cursor: default; }
+    summary.panel-heading { cursor: pointer; }
+    .count-badge { display: inline-flex; min-width: 22px; justify-content: center; margin-left: 8px; padding: 2px 8px; border-radius: 999px; background: #fff2de; color: #80520d; font-size: 12px; }
+    .handoff-list { display: grid; gap: 12px; padding: 14px 18px 18px; }
+    .handoff-empty { margin: 0; color: #63727d; font-size: 13px; }
+    .handoff-item { min-width: 0; padding: 14px; border: 1px solid #e3e9eb; border-radius: 10px; background: #f9fbfb; }
+    .handoff-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; }
+    .handoff-title { margin: 0; font-size: 15px; }
+    .handoff-phone { margin: 4px 0 0; color: #52616b; font-size: 13px; overflow-wrap: anywhere; }
+    .handoff-summary { margin: 10px 0 0; color: #44545d; font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .handoff-history { max-height: 220px; padding: 10px 0; }
+    .handoff-reply { width: 100%; min-height: 72px; padding: 10px; border: 1px solid #b9c9c7; border-radius: 8px; background: #fff; color: #17212b; font: inherit; resize: vertical; }
+    .handoff-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    .panel-note { min-height: 20px; margin: 9px 0 0; color: #52616b; font-size: 12px; line-height: 1.5; }
+    .panel-note[data-kind="error"] { color: #8a2d25; }
+    .panel-note[data-kind="success"] { color: #145b3d; }
+    .quiet-button { background: #eaf1f3; color: #26424e; }
+    .quiet-button:hover:not(:disabled) { background: #dce8eb; }
+    .profile-form { display: grid; gap: 12px; padding: 16px 18px 18px; }
+    .profile-form label { display: grid; gap: 6px; color: #44545d; font-size: 13px; font-weight: 650; }
+    .profile-form input, .profile-form textarea { width: 100%; padding: 10px; border: 1px solid #b9c9c7; border-radius: 8px; background: #fff; color: #17212b; font: inherit; font-weight: 400; }
+    .profile-hours { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; }
+    .profile-hint { margin: 0; color: #63727d; font-size: 12px; }
     [hidden] { display: none !important; }
     @media (max-width: 850px) {
       .header-inner, main { width: min(100% - 28px, 680px); }
       .workspace { display: block; min-height: 0; }
       .detail-panel { display: none; }
       body.detail-open > header { display: none; }
-      body.detail-open .page-heading, body.detail-open .overview { display: none; }
+      body.detail-open .page-heading, body.detail-open .overview, body.detail-open .side-panel { display: none; }
       body.detail-open main { width: 100%; padding: 0; }
       body.detail-open .feedback { margin: 0; border-radius: 0; }
       body.detail-open .workspace { min-height: 100dvh; }
@@ -164,6 +188,10 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
       <button id="refresh-button" type="button">Atualizar</button>
     </section>
     <div id="feedback" class="feedback" role="status" aria-live="polite" hidden></div>
+    <section id="handoff-panel" class="side-panel" aria-labelledby="handoff-title">
+      <h2 id="handoff-title" class="panel-heading">Atendimento humano <span id="handoff-count" class="count-badge">—</span></h2>
+      <div id="handoff-list" class="handoff-list"><p class="handoff-empty">Nenhum cliente aguardando atendimento humano.</p></div>
+    </section>
     <div class="workspace">
       <aside id="queue-panel" class="queue-panel" aria-label="Fila de orçamentos">
         <div class="overview">
@@ -177,8 +205,25 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
         <p id="detail-placeholder" class="detail-placeholder">Selecione um atendimento para ver os detalhes.</p>
       </section>
     </div>
+    <details id="profile-panel" class="side-panel">
+      <summary class="panel-heading">Dados da oficina</summary>
+      <form id="profile-form" class="profile-form">
+        <p class="profile-hint">O atendente responde dúvidas dos clientes somente com o que estiver preenchido aqui. Não informe preços: o valor sai pelo orçamento.</p>
+        <label>Endereço<input id="profile-address" type="text" maxlength="300" autocomplete="off"></label>
+        <label>Telefone da oficina<input id="profile-phone" type="text" maxlength="40" autocomplete="off"></label>
+        <label>WhatsApp para avisos<input id="profile-notify" type="text" inputmode="tel" maxlength="30" autocomplete="off"></label>
+        <p class="profile-hint">Este número recebe um aviso quando um cliente pede atendimento humano. Não é mostrado aos clientes.</p>
+        <div id="profile-hours" class="profile-hours"></div>
+        <p class="profile-hint">Horários no formato 08:00-12:00, 14:00-18:00. Deixe em branco o dia em que a oficina fecha.</p>
+        <label>Serviços (um por linha)<textarea id="profile-services" rows="4"></textarea></label>
+        <label>Formas de pagamento (um por linha)<textarea id="profile-payments" rows="3"></textarea></label>
+        <label>Observações<textarea id="profile-notes" rows="3" maxlength="1000"></textarea></label>
+        <div class="handoff-actions"><button id="profile-save" type="submit">Salvar dados</button></div>
+        <p id="profile-message" class="panel-note" role="status" aria-live="polite"></p>
+      </form>
+    </details>
   </main>
-  <script>
+  <script nonce="${nonce}">
     "use strict";
     const operator = ${safeConfig};
     const queueList = document.getElementById("queue-list");
@@ -810,9 +855,8 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
         sending = true;
         submit.disabled = true;
         try {
-          const response = await fetch("/v1/businesses/" + encodeURIComponent(operator.businessId) + "/quotes/" + encodeURIComponent(item.quote.id) + "/respond", {
-            method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ amountCents, currency: "BRL" }),
-          });
+          const response = await requestManualAuthorization(item, amountCents);
+          if (response === null) return;
           if (!response.ok) throw new Error("authorization failed");
           await loadQueue(true, true);
           actionMessage.textContent = "Valor autorizado. O envio ao cliente é uma etapa separada.";
@@ -866,13 +910,25 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
       }
     }
 
+    async function requestManualAuthorization(item, amountCents) {
+      const response = await fetch("/v1/businesses/" + encodeURIComponent(operator.businessId) + "/quotes/" + encodeURIComponent(item.quote.id) + "/respond", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ amountCents, currency: "BRL", expectedUpdatedAt: item.quote.updatedAt }),
+      });
+      const problem = response.status === 409 ? await response.json().catch(() => null) : null;
+      if (!problem || problem.error !== "QUOTE_STALE") return response;
+      await loadQueue(true, true);
+      setFeedback("Este pedido mudou enquanto você o analisava. O atendimento foi recarregado: confira os dados e autorize de novo.", "error");
+      return null;
+    }
+
     async function authorizeManual(item, input, button, message) {
       const amountCents = priceToCents(input.value);
       if (amountCents === null) { message.textContent = "Informe um valor válido."; message.dataset.kind = "error"; input.focus(); return; }
       if (sending) return;
       sending = true; button.disabled = true; button.textContent = "Processando...";
       try {
-        const response = await fetch("/v1/businesses/" + encodeURIComponent(operator.businessId) + "/quotes/" + encodeURIComponent(item.quote.id) + "/respond", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ amountCents, currency: "BRL" }) });
+        const response = await requestManualAuthorization(item, amountCents);
+        if (response === null) return;
         if (!response.ok) throw new Error("authorize failed");
         message.textContent = "Valor autorizado. O envio ao cliente é uma etapa separada."; message.dataset.kind = "success";
         await loadQueue(true, true);
@@ -1109,7 +1165,228 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
       if (moveFocus) title.focus({ preventScroll: true });
     }
 
+    const handoffList = document.getElementById("handoff-list");
+    const handoffCount = document.getElementById("handoff-count");
+    const handoffDrafts = new Map();
+    let handoffSignature = "";
+    let handoffBusy = false;
+
+    function handoffPath(handoffId, action) {
+      return "/v1/businesses/" + encodeURIComponent(operator.businessId) + "/handoffs" +
+        (handoffId ? "/" + encodeURIComponent(handoffId) + "/" + action : "");
+    }
+
+    async function postHandoff(handoffId, action, body) {
+      const response = await fetch(handoffPath(handoffId, action), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body || {}) });
+      const data = await response.json().catch(() => null);
+      return { ok: response.ok, error: data && typeof data.error === "string" ? data.error : "" };
+    }
+
+    function makeHandoffItem(item) {
+      const article = document.createElement("article");
+      article.className = "handoff-item";
+      article.dataset.handoffId = item.id;
+      const head = document.createElement("div");
+      head.className = "handoff-head";
+      const who = document.createElement("div");
+      const name = document.createElement("h3");
+      name.className = "handoff-title";
+      name.textContent = display(item.customer && item.customer.name);
+      const phone = document.createElement("p");
+      phone.className = "handoff-phone";
+      phone.textContent = item.customer && item.customer.phone ? "Telefone: " + item.customer.phone : "Telefone não informado";
+      who.append(name, phone);
+      const status = document.createElement("span");
+      status.className = "status";
+      status.textContent = item.status === "ACCEPTED" ? "Em atendimento" : "Aguardando atendente";
+      head.append(who, status);
+      const summary = document.createElement("p");
+      summary.className = "handoff-summary";
+      summary.textContent = "Resumo: " + display(item.summary);
+      const history = document.createElement("ol");
+      history.className = "conversation-history handoff-history";
+      for (const message of item.messages || []) history.append(makeHistoryMessage(message));
+      const reply = document.createElement("textarea");
+      reply.className = "handoff-reply";
+      reply.setAttribute("aria-label", "Resposta ao cliente");
+      reply.value = handoffDrafts.get(item.id) || "";
+      reply.addEventListener("input", () => handoffDrafts.set(item.id, reply.value));
+      const message = document.createElement("p");
+      message.className = "panel-note";
+      message.setAttribute("aria-live", "polite");
+      const actions = document.createElement("div");
+      actions.className = "handoff-actions";
+      const assign = document.createElement("button");
+      assign.type = "button";
+      assign.textContent = "Assumir";
+      assign.hidden = item.status === "ACCEPTED";
+      const send = document.createElement("button");
+      send.type = "button";
+      send.textContent = "Enviar resposta";
+      const giveBack = document.createElement("button");
+      giveBack.type = "button";
+      giveBack.className = "quiet-button";
+      giveBack.textContent = "Devolver ao bot";
+      actions.append(assign, send, giveBack);
+      const run = async (button, action, body, failure) => {
+        if (handoffBusy) return;
+        handoffBusy = true;
+        button.disabled = true;
+        try {
+          const result = await postHandoff(item.id, action, body);
+          if (!result.ok) {
+            message.textContent = result.error || failure;
+            message.dataset.kind = "error";
+            return false;
+          }
+          return true;
+        } catch {
+          message.textContent = failure;
+          message.dataset.kind = "error";
+          return false;
+        } finally {
+          handoffBusy = false;
+          button.disabled = false;
+        }
+      };
+      assign.addEventListener("click", async () => {
+        if (await run(assign, "assign", {}, "Não foi possível assumir o atendimento.")) await loadHandoffs(true);
+      });
+      send.addEventListener("click", async () => {
+        const content = reply.value.trim();
+        if (!content) { message.textContent = "Escreva a resposta antes de enviar."; message.dataset.kind = "error"; reply.focus(); return; }
+        if (await run(send, "reply", { content }, "Não foi possível enviar a resposta. O texto continua aqui; tente de novo.")) {
+          handoffDrafts.delete(item.id);
+          await loadHandoffs(true);
+        }
+      });
+      giveBack.addEventListener("click", async () => {
+        if (await run(giveBack, "resolve", {}, "Não foi possível devolver o atendimento ao bot.")) {
+          handoffDrafts.delete(item.id);
+          await loadHandoffs(true);
+        }
+      });
+      article.append(head, summary, history, reply, actions, message);
+      return article;
+    }
+
+    function renderHandoffs(list) {
+      const focusedId = document.activeElement && document.activeElement.classList.contains("handoff-reply")
+        ? document.activeElement.closest(".handoff-item").dataset.handoffId : null;
+      for (const id of [...handoffDrafts.keys()]) if (!list.some((item) => item.id === id)) handoffDrafts.delete(id);
+      handoffList.replaceChildren();
+      if (list.length === 0) {
+        const empty = document.createElement("p");
+        empty.className = "handoff-empty";
+        empty.textContent = "Nenhum cliente aguardando atendimento humano.";
+        handoffList.append(empty);
+        return;
+      }
+      for (const item of list) handoffList.append(makeHandoffItem(item));
+      if (focusedId) {
+        const box = handoffList.querySelector('[data-handoff-id="' + focusedId + '"] .handoff-reply');
+        if (box) box.focus();
+      }
+    }
+
+    async function loadHandoffs(force = false) {
+      try {
+        const response = await fetch(handoffPath());
+        if (!response.ok) throw new Error("handoffs unavailable");
+        const data = await response.json();
+        const list = Array.isArray(data && data.items) ? data.items : [];
+        handoffCount.textContent = String(list.length);
+        const signature = JSON.stringify(list.map((item) => [item.id, item.status, (item.messages || []).length]));
+        if (!force && signature === handoffSignature) return;
+        handoffSignature = signature;
+        renderHandoffs(list);
+      } catch {
+        handoffCount.textContent = "—";
+      }
+    }
+
+    const profileForm = document.getElementById("profile-form");
+    const profileMessage = document.getElementById("profile-message");
+    const profileFields = {
+      address: document.getElementById("profile-address"),
+      phone: document.getElementById("profile-phone"),
+      notify: document.getElementById("profile-notify"),
+      services: document.getElementById("profile-services"),
+      payments: document.getElementById("profile-payments"),
+      notes: document.getElementById("profile-notes"),
+    };
+    const weekdays = ["Domingo", "Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira", "Sábado"];
+    const hoursInputs = weekdays.map((day) => {
+      const label = document.createElement("label");
+      label.append(document.createTextNode(day));
+      const input = document.createElement("input");
+      input.type = "text";
+      input.placeholder = "fechado";
+      input.autocomplete = "off";
+      label.append(input);
+      document.getElementById("profile-hours").append(label);
+      return input;
+    });
+
+    function parseHoursText(text) {
+      return text.split(/[;,]/).map((part) => part.trim()).filter(Boolean).map((part) => {
+        const match = /^([0-9]{1,2}):([0-9]{2}) *- *([0-9]{1,2}):([0-9]{2})$/.exec(part);
+        if (!match) throw new Error("Horário inválido: " + part + ". Use 08:00-12:00.");
+        return { open: match[1].padStart(2, "0") + ":" + match[2], close: match[3].padStart(2, "0") + ":" + match[4] };
+      });
+    }
+
+    function lines(text) {
+      return text.split("\\n").map((line) => line.trim()).filter(Boolean);
+    }
+
+    function fillProfile(profile) {
+      profileFields.address.value = profile.address || "";
+      profileFields.phone.value = profile.phone || "";
+      profileFields.notify.value = profile.notifyPhone || "";
+      profileFields.services.value = (profile.services || []).join("\\n");
+      profileFields.payments.value = (profile.paymentMethods || []).join("\\n");
+      profileFields.notes.value = profile.notes || "";
+      hoursInputs.forEach((input, day) => {
+        const intervals = (profile.openingHours && profile.openingHours[String(day)]) || [];
+        input.value = intervals.map((interval) => interval.open + "-" + interval.close).join(", ");
+      });
+    }
+
+    async function loadProfile() {
+      try {
+        const response = await fetch("/v1/businesses/" + encodeURIComponent(operator.businessId) + "/profile");
+        if (response.ok) fillProfile(await response.json());
+      } catch { /* the form stays empty and can still be filled */ }
+    }
+
+    profileForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const save = document.getElementById("profile-save");
+      save.disabled = true;
+      try {
+        const openingHours = {};
+        hoursInputs.forEach((input, day) => { const intervals = parseHoursText(input.value); if (intervals.length) openingHours[String(day)] = intervals; });
+        const response = await fetch("/v1/businesses/" + encodeURIComponent(operator.businessId) + "/profile", {
+          method: "PUT", headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            address: profileFields.address.value, phone: profileFields.phone.value, notifyPhone: profileFields.notify.value,
+            openingHours, services: lines(profileFields.services.value), paymentMethods: lines(profileFields.payments.value), notes: profileFields.notes.value,
+          }),
+        });
+        const data = await response.json().catch(() => null);
+        if (!response.ok) throw new Error(data && data.error ? data.error : "Não foi possível salvar os dados.");
+        fillProfile(data);
+        profileMessage.textContent = "Dados salvos.";
+        profileMessage.dataset.kind = "success";
+      } catch (error) {
+        profileMessage.textContent = error instanceof Error ? error.message : "Não foi possível salvar os dados.";
+        profileMessage.dataset.kind = "error";
+      } finally { save.disabled = false; }
+    });
+
     async function loadQueue(reconcile = false, acceptSelectedChanges = false) {
+      void loadHandoffs();
       if (loading || (sending && !reconcile)) return;
       loading = true;
       refreshButton.disabled = true;
@@ -1156,8 +1433,9 @@ export function renderBasicPlanOperatorUi(operator: BasicPlanOperatorConfig): st
       }
     }
 
-    refreshButton.addEventListener("click", () => void loadQueue(true, true));
+    refreshButton.addEventListener("click", () => { void loadHandoffs(true); void loadQueue(true, true); });
     renderQueue();
+    void loadProfile();
     void loadIntegratedCapabilities().then(() => loadQueue());
     window.setInterval(() => {
       if (!sending) void loadQueue();

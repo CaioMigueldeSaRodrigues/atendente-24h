@@ -341,9 +341,10 @@ test("preview keeps the existing portals and serves admin data through the real 
     assert.match(manualPanelScript, /submit\.textContent = "Autorizar"/);
     assert.match(manualPanelScript, /publish\.hidden = true/);
     assert.match(manualPanelScript, /await loadQueue\(true, true\)/);
-    assert.match(manualPanelScript, /"\/respond"/);
+    assert.match(operatorHtml, /function requestManualAuthorization[\s\S]*?"\/respond"/);
     assert.match(manualPanelScript, /"\/publish"/);
-    assert.ok(manualPanelScript.indexOf('"/respond"') < manualPanelScript.indexOf('"/publish"'));
+    assert.ok(manualPanelScript.indexOf("requestManualAuthorization(item, amountCents)") > 0);
+    assert.ok(manualPanelScript.indexOf("requestManualAuthorization(item, amountCents)") < manualPanelScript.indexOf('"/publish"'));
     assert.match(operatorHtml, /if \(integratedCapabilities\.canBuildIntegratedQuote\) \{[\s\S]*?String\(data\.availableQuantity\) \+ " " \+ data\.unit/);
     assert.doesNotMatch(operatorHtml, /local-fixture/);
     assert.doesNotMatch(operatorHtml, /No local preview price configured|String\.fromCharCode|troca de Ã/);

@@ -176,6 +176,9 @@ export enum HandoffStatus {
   CANCELLED = "CANCELLED",
 }
 
+// A handoff in one of these still needs, or has, a person on the conversation.
+export const OPEN_HANDOFF_STATUSES: readonly HandoffStatus[] = [HandoffStatus.REQUESTED, HandoffStatus.QUEUED, HandoffStatus.ACCEPTED];
+
 export enum BusinessFactType {
   BUSINESS_HOURS = "BUSINESS_HOURS",
   ADDRESS = "ADDRESS",

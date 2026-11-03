@@ -223,6 +223,7 @@ test("registra orçamento no primeiro turno e aceita dados opcionais depois sem 
     const respondResponse = await post(`/v1/businesses/business-a/quotes/${quoteId}/respond`, {
       amountCents: 65000,
       currency: "BRL",
+      expectedUpdatedAt: quoteRequests[0]!.updatedAt,
     });
     assert.equal(respondResponse.status, 200);
     assert.deepEqual((await respondResponse.json() as { authorizedPrice: unknown }).authorizedPrice, {

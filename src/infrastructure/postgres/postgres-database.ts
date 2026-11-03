@@ -13,6 +13,11 @@ export function isPostgresInsecureLocalEnabled(environment: NodeJS.ProcessEnv): 
   return environment.POSTGRES_ALLOW_INSECURE_LOCAL?.trim().toLowerCase() === "true";
 }
 
+// Loopback or a single-label internal name such as a compose service ("db"); a name with a dot is reached over a network and keeps verified TLS.
+export function isInternalPostgresHost(host: string): boolean {
+  return ["localhost", "127.0.0.1", "::1"].includes(host) || /^[a-z0-9][a-z0-9_-]*$/i.test(host);
+}
+
 export function parsePostgresPort(value: string | undefined, name: string, defaultPort: number): number {
   const portText = value?.trim() || String(defaultPort);
   const port = Number(portText);
@@ -45,9 +50,9 @@ export class PostgresDatabase {
   private readonly transactionContext = new AsyncLocalStorage<PoolClient>();
   private readonly pool: Pool;
 
-  constructor(config: PostgresEnvironment, options: { allowInsecureLocal?: boolean; searchPath?: string } = {}) {
-    if (options.allowInsecureLocal && !["localhost", "127.0.0.1", "::1"].includes(config.host)) {
-      throw new Error("Insecure PostgreSQL is restricted to loopback hosts");
+  constructor(config: PostgresEnvironment, options: { allowInsecureLocal?: boolean; searchPath?: string; onPoolError?: (code: string | undefined) => void } = {}) {
+    if (options.allowInsecureLocal && !isInternalPostgresHost(config.host)) {
+      throw new Error("Insecure PostgreSQL is restricted to loopback and internal hosts");
     }
     if (options.searchPath !== undefined && !/^[a-z_][a-z0-9_]*$/.test(options.searchPath)) {
       throw new Error("PostgreSQL searchPath must be a safe identifier");
@@ -62,8 +67,10 @@ export class PostgresDatabase {
       application_name: "atendente-24h",
     };
     this.pool = new Pool(poolConfig);
-    this.pool.on("error", () => {
-      // Pool errors are deliberately not logged because driver diagnostics can include connection data.
+    // Only the error code leaves here: driver diagnostics can include connection data.
+    this.pool.on("error", (error) => {
+      const code = (error as { code?: unknown }).code;
+      try { options.onPoolError?.(typeof code === "string" ? code : undefined); } catch { /* logging must not throw */ }
     });
   }
 
@@ -86,6 +93,23 @@ export class PostgresDatabase {
       throw error;
     } finally {
       client.release();
+    }
+  }
+
+  // Holds a session advisory lock on a dedicated connection while the operation runs, so it may use the pool freely.
+  async withAdvisoryLock<T>(key: number, operation: () => Promise<T>): Promise<T> {
+    const client = await this.pool.connect();
+    let unlocked = false;
+    try {
+      await client.query("SELECT pg_advisory_lock($1)", [key]);
+      try {
+        return await operation();
+      } finally {
+        unlocked = await client.query("SELECT pg_advisory_unlock($1)", [key]).then(() => true, () => false);
+      }
+    } finally {
+      // A connection that could not unlock is destroyed, which drops the lock with its session.
+      client.release(unlocked ? undefined : true);
     }
   }
 

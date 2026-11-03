@@ -204,7 +204,7 @@ test("accepted quote creates a visible appointment request and confirmation is i
     assert.equal(pendingAppointmentItem.quote.authorizedPrice?.amountCents, 30000);
     assert.equal(pendingAppointmentItem.quoteActionable, false);
     assert.equal(pendingAppointmentItem.appointmentDelivery, null);
-    assert.equal(pendingAppointmentItem.contactLabel, "WhatsApp •••• 0000");
+    assert.equal(pendingAppointmentItem.contactLabel, "WhatsApp 5511999990000");
     assert.equal(newQuoteItem.appointment, null);
     assert.equal(newQuoteItem.quoteActionable, true);
     assert.doesNotMatch(JSON.stringify(pending), /5511999990000@s\.whatsapp\.net/);

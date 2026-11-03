@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readLlmEnvironment } from "../../src/integrations/llm/llm-environment.js";
+import { LLM_TIMEOUT_MS } from "../../src/core/message-interpreter.js";
+import { readLlmDailyCallsPerBusiness, readLlmEnvironment } from "../../src/integrations/llm/llm-environment.js";
 import { createMessageInterpreter } from "../../src/integrations/llm/create-message-interpreter.js";
 
 for (const provider of ["openai", "openrouter"] as const) {
@@ -146,4 +147,31 @@ test("groq: factory uses Chat Completions, configured base URL and structured ou
   assert.equal(usageEvents[0]?.conversationId, "conversation-factory");
   assert.equal(usageEvents[0]?.usage.provider, "groq");
   assert.equal(usageEvents[0]?.usage.providerRequestId, "req-factory-groq");
+});
+
+test("openrouter/free is refused only in production", () => {
+  const environment = { LLM_PROVIDER: "openrouter", OPENROUTER_API_KEY: "synthetic-credential", OPENROUTER_MODEL: "openrouter/free" };
+  assert.equal(readLlmEnvironment({ ...environment, NODE_ENV: "development" }).model, "openrouter/free");
+  assert.throws(() => readLlmEnvironment({ ...environment, NODE_ENV: "production" }), { message: "openrouter/free is not allowed with NODE_ENV=production" });
+  assert.equal(readLlmEnvironment({ ...environment, OPENROUTER_MODEL: "paid/model", NODE_ENV: "production" }).model, "paid/model");
+});
+
+test("reads the daily LLM ceiling with a default and refuses invalid values", () => {
+  assert.equal(readLlmDailyCallsPerBusiness({}), 2000);
+  assert.equal(readLlmDailyCallsPerBusiness({ LLM_DAILY_CALLS_PER_BUSINESS: "150" }), 150);
+  for (const value of ["0", "-1", "1.5", "muitos"]) {
+    assert.throws(() => readLlmDailyCallsPerBusiness({ LLM_DAILY_CALLS_PER_BUSINESS: value }), { message: "LLM_DAILY_CALLS_PER_BUSINESS must be a positive integer" });
+  }
+});
+
+test("interpreter requests carry a deadline that also covers the response body", async (t) => {
+  let signal: AbortSignal | null | undefined;
+  t.mock.method(globalThis, "fetch", async (_input: RequestInfo | URL, init?: RequestInit) => {
+    signal = init?.signal;
+    return Response.json({ error: { message: "Synthetic unavailable" } }, { status: 503 });
+  });
+  const interpreter = createMessageInterpreter(readLlmEnvironment({ LLM_PROVIDER: "openai", OPENAI_API_KEY: "synthetic-credential", OPENAI_MODEL: "synthetic-model" }));
+  await assert.rejects(interpreter.interpret({ businessId: "b", conversationId: "c", content: "oi", history: [] }));
+  assert.ok(signal instanceof AbortSignal);
+  assert.equal(LLM_TIMEOUT_MS, 20_000);
 });

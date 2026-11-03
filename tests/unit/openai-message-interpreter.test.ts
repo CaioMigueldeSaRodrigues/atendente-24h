@@ -3,7 +3,7 @@ import test from "node:test";
 import OpenAI from "openai";
 import { Intent, SenderType, Channel } from "../../src/core/domain/enums.js";
 import type { Message } from "../../src/core/domain/entities.js";
-import { OpenAIMessageInterpreter } from "../../src/integrations/openai-message-interpreter.js";
+import { INTERPRETER_INSTRUCTIONS, OpenAIMessageInterpreter } from "../../src/integrations/openai-message-interpreter.js";
 
 const validModelOutput = () => ({
   intent: Intent.QUOTE_REQUEST,
@@ -168,9 +168,8 @@ test("sends current content and only reduced conversation history", async () => 
 
   const request = capturedRequest(requests);
   const context = JSON.parse(request.input) as Record<string, unknown>;
-  assert.deepEqual(Object.keys(context).sort(), ["businessId", "content", "conversationId", "history"]);
-  assert.equal(context.businessId, "business-1");
-  assert.equal(context.conversationId, "conversation-1");
+  assert.deepEqual(Object.keys(context).sort(), ["content", "history"]);
+  assert.equal((request as unknown as { max_output_tokens: number }).max_output_tokens, 1200);
   assert.equal(context.content, "Quero orçamento para pastilhas.");
   assert.deepEqual(context.history, [
     {
@@ -252,4 +251,32 @@ test("preserves explicitly declared phone and plate through structured parsing",
   assert.deepEqual(result.extractedCustomerData, { primaryPhone: "11999999999" });
   assert.deepEqual(result.extractedVehicleData, { licensePlate: "ABC1D23" });
   assert.deepEqual(result.missingData, []);
+});
+
+test("sends the workshop facts and the local time as data, and tells the model to answer only from them", async () => {
+  const { interpreter, requests } = makeInterpreter(validModelOutput());
+  const businessFacts = { address: "Rua A, 1", openingHours: { sábado: "08:00-12:00" }, services: ["Troca de óleo"], paymentMethods: ["Pix"] };
+
+  await interpreter.interpret({ ...makeInput(), businessFacts, localDateTime: "2026-11-07 11:00 (sábado, America/Manaus)" });
+
+  const request = capturedRequest(requests);
+  const context = JSON.parse(request.input) as { businessFacts?: unknown; localDateTime?: string };
+  assert.deepEqual(context.businessFacts, businessFacts);
+  assert.equal(context.localDateTime, "2026-11-07 11:00 (sábado, America/Manaus)");
+  assert.match(request.instructions, /businessFacts/);
+  assert.match(request.instructions, /somente esses fatos/);
+  assert.match(request.instructions, /UNKNOWN_INFORMATION/);
+  assert.match(request.instructions, /Nunca informe preço/);
+});
+
+test("without registered facts the context is exactly what it was before", async () => {
+  const { interpreter, requests } = makeInterpreter(validModelOutput());
+
+  await interpreter.interpret(makeInput());
+
+  assert.deepEqual(Object.keys(JSON.parse(capturedRequest(requests).input) as object), ["content", "history"]);
+});
+
+test("the prompt shared with Groq turns the acceptance of a price into an appointment request", () => {
+  assert.match(INTERPRETER_INSTRUCTIONS, /ACEITE DE PREÇO[\s\S]*"sim", "pode fazer", "fechado"[\s\S]*intent = APPOINTMENT_REQUEST/);
 });

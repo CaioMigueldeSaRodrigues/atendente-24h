@@ -166,3 +166,23 @@ test("lease expirada permite recuperação e claim antigo não pode finalizar", 
     fixture.database.close();
   }
 });
+
+test("an operator retry ignores the backoff, the worker path does not", async () => {
+  const fixture = await createFixture();
+  try {
+    await fixture.repository.create(delivery());
+    const claim = await fixture.repository.claimForSending("business-a", "delivery-a", "2026-10-01T12:01:00.000Z", "2026-10-01T12:02:00.000Z", "claim-a");
+    await fixture.repository.markFailed("business-a", "delivery-a", {
+      status: OutboundDeliveryStatus.FAILED_RETRYABLE,
+      lastError: "synthetic",
+      nextAttemptAt: "2026-10-01T14:00:00.000Z",
+      updatedAt: "2026-10-01T12:01:00.000Z",
+    }, claim.delivery.claimToken!);
+    const scheduled = await fixture.repository.claimForSending("business-a", "delivery-a", "2026-10-01T12:02:00.000Z", "2026-10-01T12:03:00.000Z", "claim-b");
+    assert.equal(scheduled.claimed, false);
+    const manual = await fixture.repository.claimForSending("business-a", "delivery-a", "2026-10-01T12:02:00.000Z", "2026-10-01T12:03:00.000Z", "claim-c", true);
+    assert.equal(manual.claimed, true);
+  } finally {
+    fixture.database.close();
+  }
+});

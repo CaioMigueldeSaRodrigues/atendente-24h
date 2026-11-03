@@ -39,6 +39,8 @@ export type Customer = {
   primaryPhone?: string;
   email?: string;
   preferredContactChannel?: Channel;
+  // Set when the first reply told this customer they talk to a virtual assistant and where the privacy notice is.
+  privacyNoticeAt?: string;
   createdAt: string;
   updatedAt: string;
 };

@@ -86,7 +86,9 @@ test("requested date and time do not confirm an appointment", () => {
 });
 
 test("requires explicit handoff for HUMAN_REQUEST", () => {
-  assert.equal(requiresExplicitHumanHandoff(Intent.HUMAN_REQUEST), true);
+  for (const intent of [Intent.HUMAN_REQUEST, Intent.APPOINTMENT_CHANGE, Intent.APPOINTMENT_CANCEL, Intent.VEHICLE_STATUS, Intent.WARRANTY, Intent.COMPLAINT]) {
+    assert.equal(requiresExplicitHumanHandoff(intent), true, intent);
+  }
 });
 
 test("does not require explicit handoff for QUOTE_REQUEST", () => {

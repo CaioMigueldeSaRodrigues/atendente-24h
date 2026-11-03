@@ -1,23 +1,25 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import type { AppointmentRepository, CommercialEventRepository, ConversationRepository, CustomerRepository, HumanHandoffRepository, MessageRepository, OpportunityRepository, OutboundDeliveryRepository, QuoteDraftRepository, QuoteRequestRepository, StockCheckRepository, VehicleRepository } from "../../core/repositories.js";
+import type { AppointmentRepository, AutomotiveBusinessRepository, CommercialEventRepository, ConversationRepository, CustomerRepository, HumanHandoffRepository, MessageRepository, OpportunityRepository, OutboundDeliveryRepository, QuoteDraftRepository, QuoteRequestRepository, StockCheckRepository, VehicleRepository } from "../../core/repositories.js";
 import type { MessageInterpreter } from "../../core/message-interpreter.js";
 import { Channel, ConversationStatus, Intent, InventoryAvailability, OutboundDeliveryStatus, QuoteRequestStatus } from "../../core/domain/enums.js";
 import type { Channel as ChannelType } from "../../core/domain/enums.js";
 import type { Conversation } from "../../core/domain/entities.js";
-import { processMessage } from "../../core/process-message.js";
+import { applyInterpretation, interpretCustomerMessage, MAX_MESSAGE_CHARS, processMessage, receiveCustomerMessage, type InterpretationOutcome } from "../../core/process-message.js";
 import { respondToQuote } from "../../core/respond-to-quote.js";
 import { confirmAppointment, ConfirmAppointmentError } from "../../core/confirm-appointment.js";
 import { publishAuthorizedQuote } from "../../core/publish-authorized-quote.js";
 import { outboundDeliveryLeaseUntil } from "../../core/outbound-delivery-policy.js";
-import { parseEvolutionGoInboundText } from "../../channels/whatsapp/evolution-go-message-parser.js";
+import { parseEvolutionGoInboundText, parseEvolutionGoUnsupportedMessage } from "../../channels/whatsapp/evolution-go-message-parser.js";
 import { parseEvolutionGoReceipt } from "../../channels/whatsapp/evolution-go-receipt-parser.js";
 import {
   authenticateEvolutionGoWebhook,
   type EvolutionGoWebhookCredential,
 } from "../../channels/whatsapp/evolution-go-webhook-auth.js";
-import type { EvolutionGoWebhookReplayGuard } from "../../channels/whatsapp/evolution-go-webhook-replay-guard.js";
+import { EVOLUTION_GO_WEBHOOK_LEASE_MS, type EvolutionGoProcessedWebhook, type EvolutionGoWebhookReplayGuard } from "../../channels/whatsapp/evolution-go-webhook-replay-guard.js";
 import type { EvolutionGoConversationLinkRepository } from "../../channels/whatsapp/evolution-go-conversation-link.js";
-import { maskEvolutionGoContact } from "../../channels/whatsapp/masked-contact.js";
+import { ensureEvolutionGoCustomer, phoneFromJid } from "../../channels/whatsapp/evolution-go-customer.js";
+import { BusinessProfileError, emptyBusinessProfile, parseBusinessProfileInput, type BusinessProfile, type BusinessProfileRepository } from "../../core/business-profile.js";
+import { HumanHandoffError, assignHandoff, listOpenHandoffs, replyToHandoff, resolveHandoff, type HumanHandoffServiceDependencies } from "../../core/human-handoff-service.js";
 import type { EvolutionGoTextMessage } from "../../channels/whatsapp/evolution-go-text-sender.js";
 import type { EvolutionGoWebhookTransaction } from "../../channels/whatsapp/evolution-go-webhook-transaction.js";
 import type { ChannelTextSender } from "../../channels/channel-text-sender.js";
@@ -41,12 +43,22 @@ import { isQuoteOperatorActionable } from "../../core/quote-actionability.js";
 import type { AiUsageQueryService } from "../../core/ai-usage.js";
 import type { SubscriptionService } from "../../core/subscription-service.js";
 import { MercadoPagoProviderError } from "../../integrations/payment/mercado-pago-payment-provider.js";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { MercadoPagoWebhookVerifier } from "../../integrations/payment/mercado-pago-webhook-verifier.js";
 import { MercadoPagoWebhookEventType, MercadoPagoWebhookService, MercadoPagoWebhookTransientError } from "../../core/mercado-pago-webhook-service.js";
 import { renderBasicPlanPaymentReturnUi } from "./basic-plan-payment-return-ui.js";
+import type { LlmGuard } from "../../core/llm-guard.js";
+import { errorFields, type Logger } from "../logger.js";
+import { PRIVACY_PAGE_CSP, renderPrivacyPage } from "./privacy-page.js";
 
 const MAX_BODY_BYTES = 1024 * 1024;
+const EVOLUTION_GO_WEBHOOK_PATH = "/v1/channels/whatsapp/evolution-go/webhook";
+const MERCADO_PAGO_WEBHOOK_PATH = "/v1/payments/mercadopago/webhook";
+const METHODS_WITHOUT_ORIGIN_CHECK: ReadonlySet<string | undefined> = new Set(["GET", "HEAD", "OPTIONS"]);
+const HANDOFF_NOTICE = "Atendente 24h: há um cliente aguardando atendimento humano. Abra o painel para responder.";
+const TAKEN_CONVERSATION_NOTICE = "Atendente 24h: um cliente em atendimento humano escreveu de novo. Abra o painel para responder.";
+const TAKEN_CONVERSATION_NOTICE_INTERVAL_MS = 30 * 60 * 1000;
+const JSON_RESPONSE_CSP = "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 type PublishedQuoteDeliveryStatus =
   | "DELIVERED"
@@ -93,6 +105,8 @@ export type BasicPlanHttpServerDependencies = {
   outboundDeliveryRepository: OutboundDeliveryRepository;
   appointmentRepository: AppointmentRepository;
   humanHandoffRepository: HumanHandoffRepository;
+  businessProfileRepository?: BusinessProfileRepository;
+  businessRepository?: Pick<AutomotiveBusinessRepository, "findById">;
   inventoryReadPort?: InventoryReadPort;
   stockCheckRepository?: StockCheckRepository;
   quoteDraftRepository?: QuoteDraftRepository;
@@ -120,7 +134,15 @@ export type BasicPlanHttpServerDependencies = {
   evolutionGoWebhookTransaction: EvolutionGoWebhookTransaction;
   operator: BasicPlanOperatorConfig;
   interpreter: MessageInterpreter;
+  llmGuard?: LlmGuard;
+  publicOrigin?: string;
+  // Shown on /privacidade as the way to reach the person in charge of the data (PRIVACY_CONTACT).
+  privacyContact?: string;
   operationalLog?: (event: BasicPlanOperationalEvent) => void;
+  // Structured log for failures that carry no customer data (HTTP 500, readiness).
+  logger?: Logger;
+  // Rejects when the database cannot be reached; GET /ready answers from it.
+  readiness?: () => Promise<void>;
   now: () => string;
   generateId: (prefix: string) => string;
 };
@@ -129,7 +151,12 @@ export type BasicPlanOperationalEvent =
   | "WEBHOOK Message accepted"
   | "WEBHOOK stale message ignored"
   | "LLM completed"
+  | "LLM failed"
+  | "LLM limit reached"
+  | "Outbound worker error"
+  | "Handoff notice failed"
   | "Evolution send accepted"
+  | "Evolution send failed"
   | "Receipt DELIVERED applied"
   | "Receipt READ applied"
   | "Webhook error receipt_apply"
@@ -168,11 +195,27 @@ export function createBasicPlanHttpServer(
     appointmentConfirming: new Map(),
   };
   return createServer((request, response) => {
+    const requestId = randomUUID();
+    response.setHeader("X-Request-Id", requestId);
     void handleRequest(request, response, dependencies, deliveryState).catch((cause: unknown) => {
       const error = mapError(cause);
+      if (error.status === 500) {
+        dependencies.logger?.error("HTTP 500", { requestId, method: request.method, route: routeTemplate(request.url), ...errorFields(cause) });
+      }
       sendError(response, error.status, error.body);
     });
   });
+}
+
+// The words of the routes above; any other path segment is an identifier and never reaches the log.
+const ROUTE_WORDS: ReadonlySet<string> = new Set([
+  "v1", "businesses", "capabilities", "quotes", "draft", "authorize", "pending", "inventory", "respond", "publish", "handoffs", "assign", "reply", "resolve",
+  "conversations", "messages", "profile", "ai-usage", "subscriptions", "checkout", "appointments", "confirm", "channels", "whatsapp", "evolution-go", "webhook",
+  "payments", "mercadopago", "admin", "platform", "overview", "plans", "health", "issues", "demand", "operator", "payment-return", "ready", "privacidade",
+]);
+
+function routeTemplate(url: string | undefined): string {
+  return (url ?? "/").split("?")[0]!.split("/").map((part) => part === "" || ROUTE_WORDS.has(part) ? part : ":id").join("/");
 }
 
 async function deliverPublishedQuote(
@@ -204,12 +247,14 @@ async function deliverPublishedQuote(
       return deliveryFailureResult(currentDelivery.lastError);
     }
 
+    // Every call here comes from an operator action, which outranks the worker's backoff.
     const claim = await repository.claimForSending(
       input.businessId,
       currentDelivery.id,
       dependencies.now(),
       outboundDeliveryLeaseUntil(dependencies.now()),
       dependencies.generateId("outbound-claim"),
+      true,
     );
     if (!claim.claimed) {
       if (claim.delivery.status === OutboundDeliveryStatus.DELIVERED) {
@@ -263,7 +308,7 @@ async function deliverPublishedQuote(
 
     let sendResult: void | { providerMessageId: string };
     try {
-      sendResult = await sender.sendText({ recipientJid: recipientRef, content: input.content });
+      sendResult = await sendCountingFailure(sender, { recipientJid: recipientRef, content: input.content }, dependencies);
     } catch (cause) {
       await repository.markFailed(input.businessId, currentDelivery.id, {
         status: OutboundDeliveryStatus.FAILED_RETRYABLE,
@@ -318,6 +363,65 @@ async function resolveDeliveryRecipient(
   return { recipientRef: link.senderJid, retryable: false };
 }
 
+async function sendCountingFailure(
+  sender: NonNullable<BasicPlanHttpServerDependencies["evolutionGoTextSender"]>,
+  message: EvolutionGoTextMessage,
+  dependencies: BasicPlanHttpServerDependencies,
+): Promise<void | { providerMessageId: string }> {
+  try {
+    return await sender.sendText(message);
+  } catch (cause) {
+    emitOperationalEvent(dependencies, "Evolution send failed");
+    throw cause;
+  }
+}
+
+function handoffServiceDependencies(dependencies: BasicPlanHttpServerDependencies): HumanHandoffServiceDependencies {
+  return {
+    humanHandoffRepository: dependencies.humanHandoffRepository,
+    conversationRepository: dependencies.conversationRepository,
+    messageRepository: dependencies.messageRepository,
+    customerRepository: dependencies.customerRepository,
+    sendToCustomer: async (conversation, content) => {
+      if (conversation.channel !== Channel.WHATSAPP) return; // WEB customers read the stored history
+      const sender = dependencies.channelTextSenders?.[Channel.WHATSAPP];
+      const recipient = await resolveDeliveryRecipient({ businessId: conversation.businessId, conversationId: conversation.id, channel: conversation.channel }, dependencies);
+      if (!sender || recipient.recipientRef === undefined) throw new Error("Channel is unavailable");
+      await sendCountingFailure(sender, { recipientJid: recipient.recipientRef, content }, dependencies);
+    },
+    now: dependencies.now,
+    generateId: dependencies.generateId,
+  };
+}
+
+// Runs after the transaction that opened the handoff has committed. It never blocks or fails the customer's message, and the log names no customer content.
+export function notifyWorkshopOfHandoff(businessId: string, dependencies: BasicPlanHttpServerDependencies, content = HANDOFF_NOTICE): void {
+  void (async () => {
+    try {
+      const notifyPhone = (await dependencies.businessProfileRepository?.findByBusinessId(businessId))?.notifyPhone;
+      const sender = dependencies.channelTextSenders?.[Channel.WHATSAPP];
+      if (notifyPhone === undefined || !sender) return;
+      await sender.sendText({ recipientJid: notifyPhone, content, formatJid: true });
+    } catch {
+      emitOperationalEvent(dependencies, "Handoff notice failed");
+    }
+  })();
+}
+
+// ponytail: the last notice of each conversation lives in this process, so a restart can repeat one. Persist it when the runtime scales out.
+const takenConversationNotices = new Map<string, number>();
+
+function notifyWorkshopOfTakenConversation(businessId: string, conversationId: string, dependencies: BasicPlanHttpServerDependencies): void {
+  const nowMs = Date.parse(dependencies.now());
+  for (const [key, at] of takenConversationNotices) {
+    if (at <= nowMs - TAKEN_CONVERSATION_NOTICE_INTERVAL_MS) takenConversationNotices.delete(key);
+  }
+  const key = JSON.stringify([businessId, conversationId]);
+  if (takenConversationNotices.has(key)) return;
+  takenConversationNotices.set(key, nowMs);
+  notifyWorkshopOfHandoff(businessId, dependencies, TAKEN_CONVERSATION_NOTICE);
+}
+
 async function resolveOperatorContactLabel(
   businessId: string,
   conversation: Conversation | null,
@@ -327,7 +431,8 @@ async function resolveOperatorContactLabel(
   if (!linkRepository) return "WhatsApp";
   try {
     const link = await linkRepository.findByConversation(businessId, conversation.id);
-    return link === null ? "WhatsApp" : maskEvolutionGoContact(link.senderJid);
+    const phone = link === null ? undefined : phoneFromJid(link.senderJid);
+    return phone === undefined ? "WhatsApp" : `WhatsApp ${phone}`;
   } catch {
     return "WhatsApp";
   }
@@ -488,7 +593,17 @@ async function handleRequest(
 
   setSecurityHeaders(response);
 
-  if (request.method === "POST" && pathname === "/v1/payments/mercadopago/webhook") {
+  if (
+    !METHODS_WITHOUT_ORIGIN_CHECK.has(request.method) &&
+    pathname !== EVOLUTION_GO_WEBHOOK_PATH &&
+    pathname !== MERCADO_PAGO_WEBHOOK_PATH &&
+    hasForeignOrigin(request, dependencies.publicOrigin)
+  ) {
+    sendError(response, 403, "Forbidden");
+    return;
+  }
+
+  if (request.method === "POST" && pathname === MERCADO_PAGO_WEBHOOK_PATH) {
     await handleMercadoPagoWebhook(url, request, response, dependencies);
     return;
   }
@@ -499,8 +614,10 @@ async function handleRequest(
       sendError(response, 401, "Unauthorized");
       return;
     }
+    const nonce = randomBytes(16).toString("base64");
+    response.setHeader("Content-Security-Policy", `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`);
     response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-    response.end(renderBasicPlanOperatorUi(dependencies.operator));
+    response.end(renderBasicPlanOperatorUi(dependencies.operator, nonce));
     return;
   }
 
@@ -513,6 +630,26 @@ async function handleRequest(
 
   if (request.method === "GET" && pathname === "/health") {
     sendJson(response, 200, { status: "ok" });
+    return;
+  }
+
+  // Readiness answers only yes or no; the reason goes to the log, never to the caller.
+  if (request.method === "GET" && pathname === "/ready") {
+    try {
+      await dependencies.readiness?.();
+    } catch (cause) {
+      dependencies.logger?.warn("Readiness check failed", errorFields(cause));
+      sendJson(response, 503, { status: "unavailable" });
+      return;
+    }
+    sendJson(response, 200, { status: "ok" });
+    return;
+  }
+
+  if (request.method === "GET" && pathname === "/privacidade") {
+    response.setHeader("Content-Security-Policy", PRIVACY_PAGE_CSP);
+    response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    response.end(renderPrivacyPage({ businessName: dependencies.operator.businessName, ...(dependencies.privacyContact ? { contact: dependencies.privacyContact } : {}) }));
     return;
   }
 
@@ -576,13 +713,13 @@ async function handleRequest(
     return;
   }
 
-  if (request.method === "POST" && pathname === "/v1/channels/whatsapp/evolution-go/webhook") {
+  if (request.method === "POST" && pathname === EVOLUTION_GO_WEBHOOK_PATH) {
     const credentials = dependencies.evolutionGoWebhookCredentials;
     if (!credentials || credentials.length === 0) {
       sendError(response, 404, "Not found");
       return;
     }
-    const payload = await readJsonBody(request, response);
+    const payload = await parseJsonBody(request, response);
     if (payload === undefined) return;
     const authenticatedWebhook = authenticateEvolutionGoWebhook(payload, credentials);
     if (authenticatedWebhook === null) {
@@ -612,11 +749,13 @@ async function handleRequest(
       sendJson(response, 202, { accepted: true, reason: "provider_receipt" });
       return;
     }
-    const message = parseEvolutionGoInboundText(payload);
-    if (message === null) {
+    const textMessage = parseEvolutionGoInboundText(payload);
+    const inbound = textMessage ?? parseEvolutionGoUnsupportedMessage(payload);
+    if (inbound === null) {
       sendJson(response, 202, { accepted: false, reason: "ignored_event" });
       return;
     }
+    const message = { ...inbound, content: inbound.content.slice(0, MAX_MESSAGE_CHARS) };
     const receivedAt = dependencies.now();
     if (isStaleEvolutionGoInboundMessage(message.occurredAt, receivedAt)) {
       emitOperationalEvent(dependencies, "WEBHOOK stale message ignored");
@@ -640,7 +779,7 @@ async function handleRequest(
         externalMessageId: message.externalMessageId,
         receivedAt,
         claimedAt: receivedAt,
-        leaseUntil: new Date(Date.parse(receivedAt) + 5 * 60 * 1000).toISOString(),
+        leaseUntil: new Date(Date.parse(receivedAt) + EVOLUTION_GO_WEBHOOK_LEASE_MS).toISOString(),
         claimToken,
       });
     } catch (cause) {
@@ -659,21 +798,24 @@ async function handleRequest(
       return;
     }
     const activeClaim = claim.status === "claimed" ? claim : undefined;
-    let processed = claim.status === "processed" ? claim.processed : undefined;
+    let processed: EvolutionGoProcessedWebhook | null | undefined = claim.status === "processed" ? claim.processed : undefined;
     if (processed === undefined) {
       if (activeClaim === undefined) {
         sendError(response, 503, "Service unavailable");
         return;
       }
+      const claimKey = {
+        businessId: authenticatedWebhook.businessId,
+        instanceName: authenticatedWebhook.instanceName,
+        externalMessageId: message.externalMessageId,
+        claimToken: activeClaim.claimToken,
+      };
+      let messageSaved = false;
+      let handoffOpened = false;
+      let customerWroteToPerson = false;
       try {
-        processed = await dependencies.evolutionGoWebhookTransaction.run(async () => {
-          const locked = await replayGuard.lockForProcessing({
-            businessId: authenticatedWebhook.businessId,
-            instanceName: authenticatedWebhook.instanceName,
-            externalMessageId: message.externalMessageId,
-            claimToken: activeClaim.claimToken,
-          });
-          if (!locked) throw new Error("Evolution Go webhook claim is no longer active");
+        const received = await dependencies.evolutionGoWebhookTransaction.run(async () => {
+          if (!(await replayGuard.lockForProcessing(claimKey))) throw new Error("Evolution Go webhook claim is no longer active");
 
           const resolved = await resolveEvolutionGoConversation({
             businessId: authenticatedWebhook.businessId,
@@ -685,45 +827,77 @@ async function handleRequest(
             now: dependencies.now,
             generateId: dependencies.generateId,
           });
-          const result = await processMessage({
+          await ensureEvolutionGoCustomer(resolved.conversation, { senderJid: message.senderJid, ...(message.senderName ? { senderName: message.senderName } : {}) }, dependencies);
+          return receiveCustomerMessage({
             businessId: authenticatedWebhook.businessId,
             conversationId: resolved.conversation.id,
             content: message.content,
+            externalMessageId: message.externalMessageId,
           }, dependencies);
-          emitOperationalEvent(dependencies, "LLM completed");
-          const persisted = await replayGuard.markProcessed({
+        });
+
+        messageSaved = true;
+
+        // No transaction is open here: a slow LLM must never hold a pooled connection.
+        const outcome: InterpretationOutcome = textMessage === null
+          ? { status: "UNSUPPORTED" }
+          : await interpretCustomerMessage(received, message.senderJid, dependencies);
+        if (outcome.status !== "UNSUPPORTED" && outcome.status !== "HUMAN_ACTIVE") {
+          emitOperationalEvent(dependencies, outcome.status === "INTERPRETED" ? "LLM completed" : outcome.status === "FAILED" ? "LLM failed" : "LLM limit reached");
+        }
+
+        const conversationId = received.conversation.id;
+        processed = await dependencies.evolutionGoWebhookTransaction.run(async () => {
+          if (!(await replayGuard.lockForProcessing(claimKey))) throw new Error("Evolution Go webhook claim is no longer active");
+          return linkRepository.runAtomically({
             businessId: authenticatedWebhook.businessId,
             instanceName: authenticatedWebhook.instanceName,
-            externalMessageId: message.externalMessageId,
-            claimToken: activeClaim.claimToken,
-            conversationId: resolved.conversation.id,
             senderJid: message.senderJid,
-            reply: result.reply,
+          }, async () => {
+            const result = await applyInterpretation({
+              businessId: authenticatedWebhook.businessId,
+              conversationId,
+              content: message.content,
+            }, outcome, dependencies);
+            if (result.handoffOpened) handoffOpened = true;
+            if (result.customerWroteToPerson) customerWroteToPerson = true;
+            if (result.silenced) return null;
+            const persisted = await replayGuard.markProcessed({
+              ...claimKey,
+              conversationId,
+              senderJid: message.senderJid,
+              reply: result.reply,
+            });
+            if (!persisted) throw new Error("Unable to persist Evolution Go webhook result");
+            return {
+              conversationId,
+              senderJid: message.senderJid,
+              reply: result.reply,
+            };
           });
-          if (!persisted) throw new Error("Unable to persist Evolution Go webhook result");
-          return {
-            conversationId: resolved.conversation.id,
-            senderJid: message.senderJid,
-            reply: result.reply,
-          };
         });
+        // The transaction is committed: the workshop is told without holding the customer's answer.
+        if (handoffOpened) notifyWorkshopOfHandoff(authenticatedWebhook.businessId, dependencies);
+        if (customerWroteToPerson) notifyWorkshopOfTakenConversation(authenticatedWebhook.businessId, conversationId, dependencies);
+        if (processed === null) {
+          if (!(await replayGuard.complete(claimKey))) throw new Error("Unable to persist Evolution Go webhook result");
+          sendJson(response, 202, { accepted: true });
+          return;
+        }
       } catch (error) {
-        await replayGuard.release({
-          businessId: authenticatedWebhook.businessId,
-          instanceName: authenticatedWebhook.instanceName,
-          externalMessageId: message.externalMessageId,
-          claimToken: activeClaim.claimToken,
-        });
+        // A saved message must keep its claim, otherwise the worker could not answer it if no retry ever comes.
+        if (messageSaved) await replayGuard.expireLease({ ...claimKey, at: dependencies.now() });
+        else await replayGuard.release(claimKey);
         throw error;
       }
     }
 
     let sendResult: void | { providerMessageId: string };
     try {
-      sendResult = await textSender.sendText({
+      sendResult = await sendCountingFailure(textSender, {
         recipientJid: processed.senderJid,
         content: processed.reply,
-      });
+      }, dependencies);
     } catch {
       sendError(response, 503, "Service unavailable");
       return;
@@ -740,7 +914,61 @@ async function handleRequest(
       sendError(response, 503, "Service unavailable");
       return;
     }
-    sendJson(response, 202, { accepted: true, message });
+    sendJson(response, 202, { accepted: true });
+    return;
+  }
+
+  const profileMatch = pathname.match(/^\/v1\/businesses\/([^/]+)\/profile$/);
+  if (profileMatch && (request.method === "GET" || request.method === "PUT")) {
+    const businessId = decodePathPart(profileMatch[1]);
+    if (businessId === null) { sendError(response, 400, "Invalid path"); return; }
+    if (!(await isOperatorAuthorized(request, businessId, dependencies))) { sendError(response, 404, "Not found"); return; }
+    const repository = dependencies.businessProfileRepository;
+    if (!repository) { sendError(response, 503, "Business profile is not configured"); return; }
+    if (request.method === "GET") {
+      sendJson(response, 200, (await repository.findByBusinessId(businessId)) ?? emptyBusinessProfile(businessId));
+      return;
+    }
+    const body = await readJsonBody(request, response);
+    if (body === undefined) return;
+    let profile: BusinessProfile;
+    try {
+      profile = { ...parseBusinessProfileInput(body), businessId, updatedAt: dependencies.now() };
+    } catch (cause) {
+      if (cause instanceof BusinessProfileError) { sendError(response, 400, cause.message); return; }
+      throw cause;
+    }
+    await repository.save(profile);
+    sendJson(response, 200, profile);
+    return;
+  }
+
+  const handoffsMatch = pathname.match(/^\/v1\/businesses\/([^/]+)\/handoffs$/);
+  if (request.method === "GET" && handoffsMatch) {
+    const businessId = decodePathPart(handoffsMatch[1]);
+    if (businessId === null) { sendError(response, 400, "Invalid path"); return; }
+    if (!(await isOperatorAuthorized(request, businessId, dependencies))) { sendError(response, 404, "Not found"); return; }
+    sendJson(response, 200, { items: await listOpenHandoffs(businessId, handoffServiceDependencies(dependencies)) });
+    return;
+  }
+
+  const handoffActionMatch = pathname.match(/^\/v1\/businesses\/([^/]+)\/handoffs\/([^/]+)\/(assign|reply|resolve)$/);
+  if (request.method === "POST" && handoffActionMatch) {
+    const businessId = decodePathPart(handoffActionMatch[1]);
+    const handoffId = decodePathPart(handoffActionMatch[2]);
+    if (businessId === null || handoffId === null) { sendError(response, 400, "Invalid path"); return; }
+    if (!(await isOperatorAuthorized(request, businessId, dependencies))) { sendError(response, 404, "Not found"); return; }
+    const service = handoffServiceDependencies(dependencies);
+    if (handoffActionMatch[3] === "assign") {
+      sendJson(response, 200, await assignHandoff(businessId, handoffId, service));
+    } else if (handoffActionMatch[3] === "resolve") {
+      sendJson(response, 200, await resolveHandoff(businessId, handoffId, service));
+    } else {
+      const body = await readJsonBody(request, response);
+      if (body === undefined) return;
+      const message = await replyToHandoff(businessId, handoffId, isRecord(body) ? body.content : undefined, service);
+      sendJson(response, 200, { messageId: message.id });
+    }
     return;
   }
 
@@ -809,7 +1037,7 @@ async function handleRequest(
       sendError(response, 400, "Invalid businessId");
       return;
     }
-    if (businessId !== dependencies.operator.businessId) {
+    if (!(await isOperatorAuthorized(request, businessId, dependencies))) {
       sendError(response, 404, "Not found");
       return;
     }
@@ -856,17 +1084,19 @@ async function handleRequest(
       return;
     }
     if (request.method === "POST") {
-      if (businessId !== dependencies.operator.businessId) {
+      if (!(await isOperatorAuthorized(request, businessId, dependencies))) {
         sendError(response, 404, "Not found");
         return;
       }
       const body = await readJsonBody(request, response);
       if (body === undefined) return;
-      if (!isRecord(body) || typeof body.content !== "string" || body.content.trim().length === 0) {
+      if (!isRecord(body) || typeof body.content !== "string" || body.content.trim().length === 0 || body.content.length > MAX_MESSAGE_CHARS) {
         sendError(response, 400, "Invalid content");
         return;
       }
       const result = await processMessage({ businessId, conversationId, content: body.content }, dependencies);
+      if (result.handoffOpened) notifyWorkshopOfHandoff(businessId, dependencies);
+      if (result.customerWroteToPerson) notifyWorkshopOfTakenConversation(businessId, conversationId, dependencies);
       sendJson(response, 200, result);
       return;
     }
@@ -1081,15 +1311,16 @@ async function handleRequest(
     if (quoteActionMatch[3] === "respond") {
       const body = await readJsonBody(request, response);
       if (body === undefined) return;
-      if (!isRecord(body) || typeof body.amountCents !== "number" || !Number.isSafeInteger(body.amountCents) || body.amountCents < 0 || body.currency !== "BRL") {
+      if (!isRecord(body) || typeof body.amountCents !== "number" || !Number.isSafeInteger(body.amountCents) || body.amountCents < 0 || body.currency !== "BRL" || typeof body.expectedUpdatedAt !== "string" || body.expectedUpdatedAt === "") {
         sendError(response, 400, "Invalid authorized price");
         return;
       }
       const amountCents = body.amountCents;
+      const expectedUpdatedAt = body.expectedUpdatedAt;
       const operation = async () => {
         const draft = await dependencies.quoteDraftRepository?.findLatestByQuoteRequest(businessId, quoteRequestId);
         if (draft && [QuoteDraftStatus.PENDING_APPROVAL, QuoteDraftStatus.APPROVED, QuoteDraftStatus.PUBLISHED].includes(draft.status)) throw new QuoteDraftError("MANUAL_QUOTE_CONFLICT");
-        return respondToQuote({ businessId, quoteRequestId, authorizedPrice: { amountCents, currency: "BRL" } }, dependencies);
+        return respondToQuote({ businessId, quoteRequestId, authorizedPrice: { amountCents, currency: "BRL" }, expectedUpdatedAt }, dependencies);
       };
       const result = dependencies.quoteTransaction ? await dependencies.quoteTransaction.run(businessId, quoteRequestId, operation) : await operation();
       sendJson(response, 200, result);
@@ -1306,6 +1537,15 @@ function optionalEnumQuery<T extends string>(value: string | null, values: reado
 }
 
 async function readJsonBody(request: IncomingMessage, response: ServerResponse): Promise<unknown | undefined> {
+  const contentType = request.headers["content-type"]?.split(";")[0]?.trim().toLowerCase();
+  if (contentType !== "application/json") {
+    sendError(response, 415, "Content-Type must be application/json");
+    return undefined;
+  }
+  return parseJsonBody(request, response);
+}
+
+async function parseJsonBody(request: IncomingMessage, response: ServerResponse): Promise<unknown | undefined> {
   const chunks: Buffer[] = [];
   let size = 0;
   let tooLarge = false;
@@ -1414,6 +1654,12 @@ function mapError(cause: unknown): { status: number; body: string } {
     const status = cause.code === "QUOTE_NOT_FOUND" ? 404 : cause.code === "CAPABILITY_REQUIRED" ? 403 : cause.code === "PRICE_UNAVAILABLE" ? 503 : ["DRAFT_IMMUTABLE", "DRAFT_NOT_APPROVABLE", "QUOTE_DRAFT_CONFLICT", "QUOTE_DRAFT_STALE", "MANUAL_QUOTE_CONFLICT"].includes(cause.code) ? 409 : 400;
     return { status, body: cause.code };
   }
+  if (cause instanceof HumanHandoffError) {
+    if (cause.code === "HANDOFF_NOT_FOUND") return { status: 404, body: "Not found" };
+    if (cause.code === "HANDOFF_NOT_OPEN") return { status: 409, body: "Este atendimento já foi encerrado ou voltou para o assistente. Para falar com o cliente, responda pelo WhatsApp." };
+    if (cause.code === "INVALID_CONTENT") return { status: 400, body: "Escreva uma resposta de até 4000 caracteres." };
+    return { status: 503, body: "Não foi possível enviar a mensagem ao cliente. Nada foi salvo; tente de novo." };
+  }
   if (cause instanceof ConfirmAppointmentError) {
     const status = cause.code === "APPOINTMENT_NOT_FOUND" ? 404 : cause.code === "INVALID_APPOINTMENT_DATETIME" ? 400 : 409;
     return { status, body: cause.code };
@@ -1422,7 +1668,7 @@ function mapError(cause: unknown): { status: number; body: string } {
   if (message === "Conversation not found" || message === "QuoteRequest not found" || message === "Opportunity not found") {
     return { status: 404, body: message };
   }
-  if (message === "QuoteRequest cannot be responded" || message === "Authorized price cannot be presented") {
+  if (message === "QuoteRequest cannot be responded" || message === "Authorized price cannot be presented" || message === "QUOTE_STALE") {
     return { status: 409, body: message };
   }
   if (message === "authorizedPrice is invalid") {
@@ -1442,7 +1688,22 @@ async function isOperatorAuthorized(request: IncomingMessage, businessId: string
   });
 }
 
+function hasForeignOrigin(request: IncomingMessage, publicOrigin: string | undefined): boolean {
+  const originHeader = request.headers.origin;
+  if (originHeader === undefined) return false;
+  try {
+    const origin = new URL(originHeader);
+    if (publicOrigin !== undefined) return origin.origin !== new URL(publicOrigin).origin;
+    const host = new URL(`${origin.protocol}//${request.headers.host}`);
+    return origin.host !== host.host;
+  } catch {
+    return true;
+  }
+}
+
 function setSecurityHeaders(response: ServerResponse): void {
+  response.setHeader("Content-Security-Policy", JSON_RESPONSE_CSP);
+  response.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
   response.setHeader("X-Content-Type-Options", "nosniff");
   response.setHeader("X-Frame-Options", "DENY");
   response.setHeader("Referrer-Policy", "no-referrer");

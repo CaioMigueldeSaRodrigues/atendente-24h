@@ -16,8 +16,17 @@ export function isAppointmentConfirmed(appointment: Appointment): boolean {
   );
 }
 
+const HUMAN_ONLY_INTENTS: ReadonlySet<Intent> = new Set([
+  Intent.HUMAN_REQUEST,
+  Intent.APPOINTMENT_CHANGE,
+  Intent.APPOINTMENT_CANCEL,
+  Intent.VEHICLE_STATUS,
+  Intent.WARRANTY,
+  Intent.COMPLAINT,
+]);
+
 export function requiresExplicitHumanHandoff(intent: Intent): boolean {
-  return intent === Intent.HUMAN_REQUEST;
+  return HUMAN_ONLY_INTENTS.has(intent);
 }
 
 export function requiresTechnicalDiagnosisHandoff(content: string): boolean {

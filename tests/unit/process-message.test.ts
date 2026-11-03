@@ -10,6 +10,8 @@ import {
   HandoffStatus,
   Intent,
   OpportunityStatus,
+  OutboundDeliveryStatus,
+  QuoteDraftStatus,
   QuoteRequestStatus,
   SenderType,
 } from "../../src/core/domain/enums.js";
@@ -25,17 +27,23 @@ import type {
 import type { AIInterpretation } from "../../src/core/domain/types.js";
 import {
   InMemoryAppointmentRepository,
+  InMemoryBusinessProfileRepository,
   InMemoryConversationRepository,
   InMemoryCommercialEventRepository,
   InMemoryCustomerRepository,
   InMemoryHumanHandoffRepository,
   InMemoryMessageRepository,
   InMemoryOpportunityRepository,
+  InMemoryOutboundDeliveryRepository,
   InMemoryQuoteRequestRepository,
   InMemoryVehicleRepository,
 } from "../../src/core/in-memory-repositories.js";
 import type { MessageInterpreter } from "../../src/core/message-interpreter.js";
-import { processMessage } from "../../src/core/process-message.js";
+import type { BusinessProfile } from "../../src/core/business-profile.js";
+import { LlmGuard } from "../../src/core/llm-guard.js";
+import { applyInterpretation, interpretCustomerMessage, processMessage, receiveCustomerMessage } from "../../src/core/process-message.js";
+import type { QuoteDraft } from "../../src/core/quote-draft.js";
+import { HANDOFF_REPLY, LLM_FAILURE_REPLY, LLM_LIMITED_REPLY, QUOTE_LOCKED_REPLY, UNSAFE_REPLY_FALLBACK, UNSUPPORTED_MESSAGE_REPLY } from "../../src/core/response-policy.js";
 
 const timestamp = "2026-01-01T12:00:00.000Z";
 
@@ -1170,4 +1178,509 @@ test("links a newly created Vehicle to an existing Customer", async () => {
   assert.equal(vehicle?.model, "Corolla");
   assert.equal(customer?.name, "Carlos");
   assert.equal(customer?.primaryPhone, "11999999999");
+});
+
+const failingInterpreter: MessageInterpreter = { interpret: async () => { throw new Error("synthetic LLM outage"); } };
+
+test("LLM failure preserves the message, sends fixed text and opens the AI_FAILURE handoff once; the next message gets no answer", async () => {
+  const harness = createHarness();
+  const saved: HumanHandoff[] = [];
+  const saveHandoff = harness.humanHandoffRepository.save.bind(harness.humanHandoffRepository);
+  harness.humanHandoffRepository.save = async (entity) => { saved.push(entity); await saveHandoff(entity); };
+  const dependencies = { ...harness.dependencies, interpreter: failingInterpreter };
+  const input = { businessId: "business-a", conversationId: "conversation-1", content: "Mensagem preservada" };
+
+  const first = await processMessage(input, dependencies);
+  await processMessage(input, dependencies);
+
+  assert.equal(first.reply, LLM_FAILURE_REPLY);
+  assert.equal(first.requiresHuman, true);
+  assert.equal(first.conversationStatus, ConversationStatus.WAITING_HUMAN);
+  assert.deepEqual(saved.map(({ reason }) => reason), [HandoffReason.AI_FAILURE]);
+  const messages = await harness.messageRepository.listByConversation("business-a", "conversation-1");
+  assert.deepEqual(messages.map(({ senderType }) => senderType), [SenderType.CUSTOMER, SenderType.ASSISTANT, SenderType.CUSTOMER]);
+  assert.equal(messages[0]!.content, "Mensagem preservada");
+  assert.equal((await harness.conversationRepository.findById("business-a", "conversation-1"))?.commercialOutcome, CommercialOutcome.HUMAN_HANDOFF);
+});
+
+test("a blocked LlmGuard answers with fixed text and never calls the LLM", async () => {
+  const harness = createHarness();
+  const llmGuard = new LlmGuard({ now: () => timestamp, dailyCallsPerBusiness: 1, countCallsSince: async () => 1 });
+
+  const result = await processMessage(
+    { businessId: "business-a", conversationId: "conversation-1", content: "Oi" },
+    { ...harness.dependencies, llmGuard },
+  );
+
+  assert.equal(result.reply, LLM_LIMITED_REPLY);
+  assert.equal(result.requiresHuman, false);
+  assert.equal(result.conversationStatus, ConversationStatus.ACTIVE);
+  assert.equal(harness.interpreterInputs.length, 0);
+  assert.equal((await harness.messageRepository.listByConversation("business-a", "conversation-1")).length, 2);
+});
+
+test("an unsupported message gets the fixed text without interpretation", async () => {
+  const harness = createHarness();
+  const input = { businessId: "business-a", conversationId: "conversation-1", content: "[mensagem sem texto]" };
+
+  await receiveCustomerMessage(input, harness.dependencies);
+  const result = await applyInterpretation(input, { status: "UNSUPPORTED" }, harness.dependencies);
+
+  assert.equal(result.reply, UNSUPPORTED_MESSAGE_REPLY);
+  assert.equal(harness.interpreterInputs.length, 0);
+});
+
+test("receiving the same external message twice stores it once", async () => {
+  const harness = createHarness();
+  const input = { businessId: "business-a", conversationId: "conversation-1", content: "Uma vez", externalMessageId: "external-1" };
+
+  await receiveCustomerMessage(input, harness.dependencies);
+  const retried = await receiveCustomerMessage(input, harness.dependencies);
+
+  assert.equal(retried.history.length, 1);
+  assert.equal(retried.history[0]!.externalMessageId, "external-1");
+  assert.equal((await harness.messageRepository.listByConversation("business-a", "conversation-1")).length, 1);
+});
+
+test("applyInterpretation reads the conversation again instead of trusting reception state", async () => {
+  const harness = createHarness(makeInterpretation({ intent: Intent.GENERAL_INFORMATION }));
+  const input = { businessId: "business-a", conversationId: "conversation-1", content: "Oi" };
+  const received = await receiveCustomerMessage(input, harness.dependencies);
+  const outcome = await interpretCustomerMessage(received, "sender-a", harness.dependencies);
+  const conversation = (await harness.conversationRepository.findById("business-a", "conversation-1"))!;
+  await harness.conversationRepository.save({ ...conversation, customerId: "customer-from-concurrent-message" });
+
+  await applyInterpretation(input, outcome, harness.dependencies);
+
+  assert.equal((await harness.conversationRepository.findById("business-a", "conversation-1"))?.customerId, "customer-from-concurrent-message");
+});
+
+test("a price authorized between the read and the write survives and the customer is told the order is locked", async () => {
+  const harness = createHarness(makeInterpretation({ requestedItem: "Outro pedido" }));
+  const { quoteRequest, opportunity } = await seedQuotePair(harness, OpportunityStatus.WAITING_BUSINESS, QuoteRequestStatus.WAITING_BUSINESS);
+  const updateIntake = harness.quoteRequestRepository.updateIntake.bind(harness.quoteRequestRepository);
+  harness.quoteRequestRepository.updateIntake = async (entity) => {
+    await harness.quoteRequestRepository.save({ ...quoteRequest, status: QuoteRequestStatus.RESPONDED, authorizedPrice: { amountCents: 28200, currency: "BRL" } });
+    return updateIntake(entity);
+  };
+
+  const result = await processMessage({ businessId: "business-a", conversationId: "conversation-1", content: "Mudei de ideia" }, harness.dependencies);
+
+  const after = await harness.quoteRequestRepository.findById("business-a", quoteRequest.id);
+  assert.equal(after?.authorizedPrice?.amountCents, 28200);
+  assert.equal(after?.status, QuoteRequestStatus.RESPONDED);
+  assert.equal(after?.requestDescription, quoteRequest.requestDescription);
+  assert.deepEqual(await harness.opportunityRepository.findById("business-a", opportunity.id), opportunity);
+  assert.equal(result.reply, QUOTE_LOCKED_REPLY);
+  assert.equal(result.handoffOpened, true);
+  assert.equal(result.requiresHuman, true);
+  assert.equal(result.conversationStatus, ConversationStatus.WAITING_HUMAN);
+});
+
+const seedRespondedQuote = async (harness: ReturnType<typeof createHarness>) => {
+  const seeded = await seedQuotePair(harness, OpportunityStatus.WAITING_CUSTOMER, QuoteRequestStatus.RESPONDED);
+  await harness.quoteRequestRepository.save({ ...seeded.quoteRequest, authorizedPrice: { amountCents: 28200, currency: "BRL" } });
+  return seeded;
+};
+
+test("asking again for the responded item creates no new order, whatever the accents or case", async () => {
+  for (const requestedItem of ["Pastilhas de freio", "PASTILHAS  DE FREIO", "pastílhas de fréio"]) {
+    const harness = createHarness(makeInterpretation({ requestedItem }));
+    await seedRespondedQuote(harness);
+
+    const result = await processMessage({ businessId: "business-a", conversationId: "conversation-1", content: "Quero orçar de novo" }, harness.dependencies);
+
+    assert.equal(result.reply, QUOTE_LOCKED_REPLY);
+    assert.equal(result.handoffOpened, true);
+    assert.equal((await harness.quoteRequestRepository.listByConversation("business-a", "conversation-1")).length, 1, requestedItem);
+    assert.equal((await harness.opportunityRepository.listByConversation("business-a", "conversation-1")).length, 1);
+  }
+});
+
+test("a different item next to a responded quote creates a new order", async () => {
+  const harness = createHarness(makeInterpretation({ requestedItem: "Troca de óleo" }));
+  await seedRespondedQuote(harness);
+
+  const result = await processMessage({ businessId: "business-a", conversationId: "conversation-1", content: "Quero também o óleo" }, harness.dependencies);
+
+  const quotes = await harness.quoteRequestRepository.listByConversation("business-a", "conversation-1");
+  assert.deepEqual(quotes.map(({ requestDescription }) => requestDescription), ["Pastilhas de freio", "Troca de óleo"]);
+  assert.notEqual(result.reply, QUOTE_LOCKED_REPLY);
+});
+
+const seedDeliveredQuote = async (harness: ReturnType<typeof createHarness>, status = OutboundDeliveryStatus.DELIVERED) => {
+  const { quoteRequest } = await seedRespondedQuote(harness);
+  const outboundDeliveryRepository = new InMemoryOutboundDeliveryRepository();
+  await outboundDeliveryRepository.create({
+    id: "delivery-1", businessId: "business-a", quoteRequestId: quoteRequest.id, conversationId: "conversation-1", channel: Channel.WEB,
+    status, attempts: 1, createdAt: timestamp, updatedAt: timestamp,
+  });
+  return { ...harness.dependencies, outboundDeliveryRepository };
+};
+
+test("any answer to a delivered price opens a handoff, whatever the model understood", async () => {
+  for (const intent of [Intent.GENERAL_INFORMATION, Intent.OTHER, Intent.UNKNOWN, Intent.QUOTE_REQUEST]) {
+    const harness = createHarness(makeInterpretation({ intent, proposedResponse: "Certo!" }));
+    const dependencies = await seedDeliveredQuote(harness);
+
+    const result = await processMessage({ businessId: "business-a", conversationId: "conversation-1", content: "Tá bom então" }, dependencies);
+
+    assert.equal(result.reply, HANDOFF_REPLY, intent);
+    assert.equal(result.handoffOpened, true);
+    assert.equal(result.conversationStatus, ConversationStatus.WAITING_HUMAN);
+  }
+});
+
+test("an audio or a limited sender answering a delivered price reaches a person too", async () => {
+  for (const status of ["UNSUPPORTED", "LIMITED"] as const) {
+    const harness = createHarness();
+    const dependencies = await seedDeliveredQuote(harness);
+
+    const result = await applyInterpretation({ businessId: "business-a", conversationId: "conversation-1", content: "[mensagem sem texto]" }, { status }, dependencies);
+
+    assert.equal(result.reply, HANDOFF_REPLY, status);
+    assert.equal(result.handoffOpened, true);
+    assert.equal(result.requiresHuman, true);
+    assert.equal(result.conversationStatus, ConversationStatus.WAITING_HUMAN);
+  }
+});
+
+
+test("no handoff for a price not delivered yet, nor once an appointment is active", async () => {
+  const input = { businessId: "business-a", conversationId: "conversation-1", content: "Oi" };
+  const interpretation = makeInterpretation({ intent: Intent.GENERAL_INFORMATION, proposedResponse: "Certo!" });
+
+  const notDelivered = createHarness(interpretation);
+  const pending = await processMessage(input, await seedDeliveredQuote(notDelivered, OutboundDeliveryStatus.FAILED_RETRYABLE));
+  assert.equal(pending.reply, "Certo!");
+
+  const scheduled = createHarness(interpretation);
+  const dependencies = await seedDeliveredQuote(scheduled);
+  await scheduled.appointmentRepository.save({ id: "appointment-1", businessId: "business-a", conversationId: "conversation-1", status: AppointmentStatus.CONFIRMED, createdAt: timestamp, updatedAt: timestamp });
+  assert.equal((await processMessage(input, dependencies)).reply, "Certo!");
+});
+
+const giveBackToBot = async (harness: ReturnType<typeof createHarness>) => {
+  for (const handoff of await harness.humanHandoffRepository.listOpen("business-a")) {
+    await harness.humanHandoffRepository.save({ ...handoff, status: HandoffStatus.RESOLVED, resolvedAt: timestamp, updatedAt: timestamp });
+  }
+  const conversation = (await harness.conversationRepository.findById("business-a", "conversation-1"))!;
+  await harness.conversationRepository.save({ ...conversation, status: ConversationStatus.ACTIVE });
+};
+
+test("a delivered price opens one handoff: given back to the bot, the next messages are answered with no new handoff", async () => {
+  const harness = createHarness(makeInterpretation({ intent: Intent.GENERAL_INFORMATION, proposedResponse: "Certo!" }));
+  const dependencies = await seedDeliveredQuote(harness);
+  const input = { businessId: "business-a", conversationId: "conversation-1", content: "Tá bom então" };
+
+  assert.equal((await processMessage(input, dependencies)).handoffOpened, true);
+  await giveBackToBot(harness);
+
+  const answered = await processMessage(input, dependencies);
+  assert.equal(answered.reply, "Certo!");
+  assert.equal(answered.handoffOpened, undefined);
+  assert.equal(answered.conversationStatus, ConversationStatus.ACTIVE);
+
+  const audio = await applyInterpretation({ ...input, content: "[mensagem sem texto]" }, { status: "UNSUPPORTED" }, dependencies);
+  assert.equal(audio.reply, UNSUPPORTED_MESSAGE_REPLY);
+  assert.equal(audio.handoffOpened, undefined);
+  assert.deepEqual(await harness.humanHandoffRepository.listOpen("business-a"), []);
+  assert.equal((await harness.humanHandoffRepository.listByConversation("business-a", "conversation-1")).length, 1);
+});
+
+test("asking again for a quote already handed off gets the locked text, without another handoff", async () => {
+  const harness = createHarness([
+    makeInterpretation({ intent: Intent.GENERAL_INFORMATION }),
+    makeInterpretation({ requestedItem: "Pastilhas de freio" }),
+  ]);
+  const dependencies = await seedDeliveredQuote(harness);
+  const input = { businessId: "business-a", conversationId: "conversation-1", content: "Oi" };
+
+  await processMessage(input, dependencies);
+  await giveBackToBot(harness);
+  const again = await processMessage(input, dependencies);
+
+  assert.equal(again.reply, QUOTE_LOCKED_REPLY);
+  assert.equal(again.handoffOpened, undefined);
+  assert.equal(again.conversationStatus, ConversationStatus.ACTIVE);
+});
+
+test("accepting a delivered quote records the appointment and reaches a person", async () => {
+  const harness = createHarness(makeInterpretation({ intent: Intent.APPOINTMENT_REQUEST, requestedItem: "Troca de óleo" }));
+  const dependencies = await seedDeliveredQuote(harness);
+
+  const result = await processMessage({ businessId: "business-a", conversationId: "conversation-1", content: "sim, pode fazer" }, dependencies);
+
+  assert.equal(result.handoffOpened, true);
+  assert.equal(result.reply, HANDOFF_REPLY);
+  assert.equal((await harness.appointmentRepository.listByConversation("business-a", "conversation-1")).length, 1);
+});
+
+test("only a handoff created after the last update of the quote counts, and a second delivered quote gets its own", async () => {
+  const harness = createHarness(makeInterpretation({ intent: Intent.GENERAL_INFORMATION, proposedResponse: "Certo!" }));
+  const dependencies = await seedDeliveredQuote(harness);
+  const input = { businessId: "business-a", conversationId: "conversation-1", content: "Oi" };
+  const old = "2025-12-30T12:00:00.000Z"; // before the seeded quote's update
+  await harness.humanHandoffRepository.save({ id: "handoff-old", businessId: "business-a", conversationId: "conversation-1", reason: HandoffReason.OTHER, summary: "", status: HandoffStatus.RESOLVED, requestedAt: old, createdAt: old, updatedAt: old });
+
+  assert.equal((await processMessage(input, dependencies)).handoffOpened, true);
+  await giveBackToBot(harness);
+
+  const seeded = (await harness.quoteRequestRepository.findById("business-a", "quote-existing"))!;
+  await harness.quoteRequestRepository.save({ ...seeded, id: "quote-second", updatedAt: "2026-01-01T13:00:00.000Z" });
+  await dependencies.outboundDeliveryRepository.create({
+    id: "delivery-2", businessId: "business-a", quoteRequestId: "quote-second", conversationId: "conversation-1", channel: Channel.WEB,
+    status: OutboundDeliveryStatus.DELIVERED, attempts: 1, createdAt: timestamp, updatedAt: timestamp,
+  });
+  assert.equal((await processMessage(input, { ...dependencies, now: () => "2026-01-01T13:30:00.000Z" })).handoffOpened, true);
+});
+
+for (const [intent, reason] of [
+  [Intent.APPOINTMENT_CHANGE, HandoffReason.OTHER],
+  [Intent.APPOINTMENT_CANCEL, HandoffReason.OTHER],
+  [Intent.VEHICLE_STATUS, HandoffReason.OTHER],
+  [Intent.WARRANTY, HandoffReason.WARRANTY_OR_COMPLAINT],
+  [Intent.COMPLAINT, HandoffReason.WARRANTY_OR_COMPLAINT],
+] as const) {
+  test(`${intent} always goes to a person with the fixed text, even if the model did not ask`, async () => {
+    const harness = createHarness(makeInterpretation({ intent, requiresHuman: false, proposedResponse: "Já resolvi por aqui." }));
+
+    const result = await processMessage({ businessId: "business-a", conversationId: "conversation-1", content: "Oi" }, harness.dependencies);
+
+    assert.equal(result.reply, HANDOFF_REPLY);
+    assert.equal(result.handoffOpened, true);
+    assert.deepEqual((await harness.humanHandoffRepository.listOpen("business-a")).map((handoff) => handoff.reason), [reason]);
+  });
+}
+
+test("vehicle data does not change while a priced quote or a live draft exists", async () => {
+  const vehicle = { id: "vehicle-1", businessId: "business-a", brand: "Toyota", model: "Corolla", createdAt: timestamp, updatedAt: timestamp };
+  const interpretation = makeInterpretation({ intent: Intent.GENERAL_INFORMATION, extractedVehicleData: { model: "Civic", year: 2010 } });
+  const input = { businessId: "business-a", conversationId: "conversation-1", content: "Na verdade é um Civic" };
+
+  const priced = createHarness(interpretation, makeConversation({ vehicleId: vehicle.id }));
+  await priced.vehicleRepository.save(vehicle);
+  await seedRespondedQuote(priced);
+  await processMessage(input, priced.dependencies);
+  assert.deepEqual(await priced.vehicleRepository.findById("business-a", vehicle.id), vehicle);
+
+  for (const [status, changed] of [[QuoteDraftStatus.PENDING_APPROVAL, false], [QuoteDraftStatus.APPROVED, false], [QuoteDraftStatus.SUPERSEDED, true]] as const) {
+    const drafted = createHarness(interpretation, makeConversation({ vehicleId: vehicle.id }));
+    await drafted.vehicleRepository.save(vehicle);
+    await seedQuotePair(drafted, OpportunityStatus.WAITING_BUSINESS, QuoteRequestStatus.WAITING_BUSINESS);
+    await processMessage(input, {
+      ...drafted.dependencies,
+      quoteDraftRepository: { findLatestByQuoteRequest: async () => ({ status }) as QuoteDraft },
+    });
+    assert.equal((await drafted.vehicleRepository.findById("business-a", vehicle.id))?.model === "Civic", changed, status);
+  }
+});
+
+test("redaction markers never become customer or vehicle data", async () => {
+  const harness = createHarness(makeInterpretation({
+    intent: Intent.GENERAL_INFORMATION,
+    extractedCustomerData: { name: "[EMAIL]", primaryPhone: "[TELEFONE]", email: "[EMAIL]" },
+    extractedVehicleData: { licensePlate: "[CPF]", version: "[TELEFONE]" },
+  }));
+
+  await processMessage({ businessId: "business-a", conversationId: "conversation-1", content: "Oi" }, harness.dependencies);
+
+  const conversation = await harness.conversationRepository.findById("business-a", "conversation-1");
+  assert.equal(conversation?.customerId, undefined);
+  assert.equal(conversation?.vehicleId, undefined);
+});
+
+test("a reply blocked by the output filter hands off once, so the promise of a return is true", async () => {
+  const harness = createHarness(makeInterpretation({ intent: Intent.GENERAL_INFORMATION, proposedResponse: "A troca sai por R$ 1." }));
+  const saved: HumanHandoff[] = [];
+  const saveHandoff = harness.humanHandoffRepository.save.bind(harness.humanHandoffRepository);
+  harness.humanHandoffRepository.save = async (entity) => { saved.push(entity); await saveHandoff(entity); };
+  const input = { businessId: "business-a", conversationId: "conversation-1", content: "Quanto fica?" };
+
+  const result = await processMessage(input, harness.dependencies);
+  await processMessage(input, harness.dependencies);
+
+  assert.equal(result.reply, UNSAFE_REPLY_FALLBACK);
+  assert.equal(result.requiresHuman, true);
+  assert.equal(result.conversationStatus, ConversationStatus.WAITING_HUMAN);
+  assert.deepEqual(saved.map(({ reason }) => reason), [HandoffReason.UNKNOWN_INFORMATION]);
+});
+
+test("limit and unsupported texts go out at most once per sender in 10 minutes", async () => {
+  let now = timestamp;
+  const harness = createHarness();
+  const dependencies = { ...harness.dependencies, now: () => now };
+  const input = { businessId: "business-a", conversationId: "conversation-1", content: "[mensagem sem texto]" };
+  const assistantReplies = async () => (await harness.messageRepository.listByConversation("business-a", "conversation-1"))
+    .filter(({ senderType }) => senderType === SenderType.ASSISTANT).length;
+
+  assert.equal((await applyInterpretation(input, { status: "UNSUPPORTED" }, dependencies)).silenced, undefined);
+  assert.equal((await applyInterpretation(input, { status: "UNSUPPORTED" }, dependencies)).silenced, true);
+  assert.equal((await applyInterpretation(input, { status: "LIMITED" }, dependencies)).silenced, true);
+  assert.equal(await assistantReplies(), 1);
+
+  now = "2026-01-01T12:10:00.000Z";
+  assert.equal((await applyInterpretation(input, { status: "LIMITED" }, dependencies)).silenced, undefined);
+  assert.equal(await assistantReplies(), 2);
+});
+
+test("the limit text does not promise a return", () => {
+  assert.equal(/equipe|retorn|contato/i.test(LLM_LIMITED_REPLY), false);
+});
+
+const workshopProfile = (overrides: Partial<BusinessProfile> = {}): BusinessProfile => ({
+  businessId: "business-a",
+  address: "Rua das Oficinas, 10",
+  openingHours: { 1: [{ open: "08:00", close: "18:00" }], 2: [{ open: "08:00", close: "18:00" }], 6: [{ open: "08:00", close: "12:00" }] },
+  services: ["Troca de óleo"],
+  paymentMethods: ["Pix"],
+  updatedAt: timestamp,
+  ...overrides,
+});
+
+const withProfile = async (harness: ReturnType<typeof createHarness>, profile: BusinessProfile, now: () => string = () => timestamp) => {
+  const businessProfileRepository = new InMemoryBusinessProfileRepository();
+  await businessProfileRepository.save(profile);
+  return {
+    ...harness.dependencies,
+    businessProfileRepository,
+    businessRepository: { findById: async () => ({ timezone: "America/Manaus" }) as never },
+    now,
+  };
+};
+
+test("a conversation with a person keeps the message but is not interpreted, counted or answered", async () => {
+  const harness = createHarness(makeInterpretation(), makeConversation({ status: ConversationStatus.WAITING_HUMAN }));
+  let guardCalls = 0;
+  const llmGuard = new LlmGuard({ now: () => timestamp, countCallsSince: async () => { guardCalls += 1; return 0; } });
+  const input = { businessId: "business-a", conversationId: "conversation-1", content: "Alguém aí?" };
+
+  const result = await processMessage(input, { ...harness.dependencies, llmGuard });
+
+  assert.equal(result.silenced, true);
+  assert.equal(result.reply, "");
+  assert.equal(result.conversationStatus, ConversationStatus.WAITING_HUMAN);
+  assert.equal(harness.interpreterInputs.length, 0);
+  assert.equal(guardCalls, 0);
+  assert.deepEqual((await harness.messageRepository.listByConversation("business-a", "conversation-1")).map(({ senderType }) => senderType), [SenderType.CUSTOMER]);
+});
+
+test("a message into a conversation a person took asks for the notice; one nobody took yet does not", async () => {
+  const harness = createHarness(makeInterpretation(), makeConversation({ status: ConversationStatus.WAITING_HUMAN }));
+  const input = { businessId: "business-a", conversationId: "conversation-1", content: "Alguém aí?" };
+  const handoff: HumanHandoff = { id: "handoff-1", businessId: "business-a", conversationId: "conversation-1", reason: HandoffReason.CUSTOMER_REQUEST, summary: "", status: HandoffStatus.REQUESTED, requestedAt: timestamp, createdAt: timestamp, updatedAt: timestamp };
+
+  await harness.humanHandoffRepository.save(handoff);
+  assert.equal((await processMessage(input, harness.dependencies)).customerWroteToPerson, undefined);
+
+  await harness.humanHandoffRepository.save({ ...handoff, status: HandoffStatus.ACCEPTED, acceptedAt: timestamp });
+  const taken = await processMessage(input, harness.dependencies);
+  assert.equal(taken.customerWroteToPerson, true);
+  assert.equal(taken.silenced, true);
+});
+
+test("a conversation has one open handoff however many times the customer asks", async () => {
+  const harness = createHarness(makeInterpretation({ intent: Intent.HUMAN_REQUEST }));
+  const input = { businessId: "business-a", conversationId: "conversation-1", content: "Quero uma pessoa" };
+
+  const first = await processMessage(input, harness.dependencies);
+  // The person returns the conversation to the bot while a second request is already being interpreted.
+  const conversation = (await harness.conversationRepository.findById("business-a", "conversation-1"))!;
+  await harness.conversationRepository.save({ ...conversation, status: ConversationStatus.ACTIVE });
+  const second = await processMessage(input, harness.dependencies);
+
+  assert.equal(first.handoffOpened, true);
+  assert.equal(second.handoffOpened, undefined);
+  assert.equal((await harness.humanHandoffRepository.listOpen("business-a")).length, 1);
+});
+
+test("the handoff summary is the last five customer messages, capped at 500 characters", async () => {
+  const harness = createHarness(makeInterpretation({ intent: Intent.HUMAN_REQUEST }));
+  for (let index = 1; index <= 7; index += 1) {
+    await harness.messageRepository.save({
+      id: `seed-${index}`, businessId: "business-a", conversationId: "conversation-1",
+      senderType: index === 4 ? SenderType.ASSISTANT : SenderType.CUSTOMER, channel: Channel.WEB, content: `mensagem ${index}`,
+      createdAt: `2026-01-01T11:0${index}:00.000Z`,
+    });
+  }
+
+  await processMessage({ businessId: "business-a", conversationId: "conversation-1", content: "mensagem 8" }, harness.dependencies);
+
+  const [handoff] = await harness.humanHandoffRepository.listOpen("business-a");
+  assert.equal(handoff?.summary, ["mensagem 3", "mensagem 5", "mensagem 6", "mensagem 7", "mensagem 8"].join("\n"));
+
+  const long = createHarness(makeInterpretation({ intent: Intent.HUMAN_REQUEST }));
+  await processMessage({ businessId: "business-a", conversationId: "conversation-1", content: `${"a".repeat(600)}fim` }, long.dependencies);
+  const [capped] = await long.humanHandoffRepository.listOpen("business-a");
+  assert.equal(capped?.summary.length, 500);
+  assert.equal(capped?.summary.endsWith("aafim"), true);
+});
+
+test("the registered facts and the local time reach the interpreter as data, without the private notice number", async () => {
+  const harness = createHarness(makeInterpretation({ intent: Intent.GENERAL_INFORMATION }));
+  const dependencies = await withProfile(harness, workshopProfile({ notifyPhone: "5592999991234" }), () => "2026-11-07T15:00:00.000Z");
+
+  await processMessage({ businessId: "business-a", conversationId: "conversation-1", content: "Abrem sábado?" }, dependencies);
+
+  const [received] = harness.interpreterInputs;
+  assert.equal(received?.businessFacts?.openingHours?.sábado, "08:00-12:00");
+  assert.equal(received?.businessFacts?.address, "Rua das Oficinas, 10");
+  assert.equal(received?.localDateTime, "2026-11-07 11:00 (sábado, America/Manaus)");
+  assert.equal(JSON.stringify(received).includes("5592999991234"), false);
+
+  const bare = createHarness(makeInterpretation({ intent: Intent.GENERAL_INFORMATION }));
+  await processMessage({ businessId: "business-a", conversationId: "conversation-1", content: "Oi" }, bare.dependencies);
+  assert.equal(Object.hasOwn(bare.interpreterInputs[0]!, "businessFacts"), false);
+  assert.equal(Object.hasOwn(bare.interpreterInputs[0]!, "localDateTime"), false);
+});
+
+test("outside the hours every automatic answer tells when the workshop opens, once every 12 hours", async () => {
+  let now = "2026-11-07T17:00:00.000Z"; // Saturday 13:00 in Manaus, closed
+  const harness = createHarness(makeInterpretation({ intent: Intent.GENERAL_INFORMATION, proposedResponse: "Fazemos troca de óleo." }));
+  const dependencies = await withProfile(harness, workshopProfile(), () => now);
+  const input = { businessId: "business-a", conversationId: "conversation-1", content: "Oi" };
+  const notice = "Estamos fora do horário de atendimento. Voltamos na segunda-feira às 08:00.";
+
+  assert.equal((await processMessage(input, dependencies)).reply, `Fazemos troca de óleo.\n${notice}`);
+  now = "2026-11-07T18:00:00.000Z";
+  assert.equal((await processMessage(input, dependencies)).reply, "Fazemos troca de óleo.");
+  now = "2026-11-08T05:00:01.000Z"; // Sunday 01:00, more than 12 hours after the first notice
+  assert.equal((await processMessage(input, dependencies)).reply, "Fazemos troca de óleo.\nEstamos fora do horário de atendimento. Voltamos amanhã às 08:00.");
+  now = "2026-11-09T12:00:00.000Z"; // Monday 08:00: open
+  assert.equal((await processMessage(input, dependencies)).reply, "Fazemos troca de óleo.");
+});
+
+test("fixed answers carry the opening notice too, and the 10 minute silence still recognizes them", async () => {
+  const now = "2026-11-07T17:00:00.000Z";
+  const harness = createHarness();
+  const dependencies = { ...(await withProfile(harness, workshopProfile(), () => now)), llmGuard: new LlmGuard({ now: () => now, dailyCallsPerBusiness: 1, countCallsSince: async () => 1 }) };
+  const input = { businessId: "business-a", conversationId: "conversation-1", content: "Oi" };
+
+  const first = await processMessage(input, dependencies);
+  const second = await processMessage(input, dependencies);
+
+  assert.equal(first.reply.startsWith(LLM_LIMITED_REPLY), true);
+  assert.equal(first.reply.includes("Voltamos na segunda-feira às 08:00."), true);
+  assert.equal(second.silenced, true);
+});
+
+test("a number the workshop registered passes the output filter; the same reply without the profile does not", async () => {
+  const proposedResponse = "Estamos na Rua das Oficinas, 10.";
+  const harness = createHarness(makeInterpretation({ intent: Intent.GENERAL_INFORMATION, proposedResponse }));
+  const dependencies = await withProfile(harness, workshopProfile(), () => "2026-11-09T15:00:00.000Z");
+  const input = { businessId: "business-a", conversationId: "conversation-1", content: "Onde fica?" };
+
+  assert.equal((await processMessage(input, dependencies)).reply, proposedResponse);
+
+  const bare = createHarness(makeInterpretation({ intent: Intent.GENERAL_INFORMATION, proposedResponse }));
+  assert.equal((await processMessage(input, bare.dependencies)).reply, UNSAFE_REPLY_FALLBACK);
+});
+
+test("a profile without hours changes nothing in the answers", async () => {
+  const harness = createHarness(makeInterpretation({ intent: Intent.GENERAL_INFORMATION, proposedResponse: "Fazemos troca de óleo." }));
+  const dependencies = await withProfile(harness, workshopProfile({ openingHours: {} }), () => "2026-11-07T17:00:00.000Z");
+
+  const result = await processMessage({ businessId: "business-a", conversationId: "conversation-1", content: "Oi" }, dependencies);
+
+  assert.equal(result.reply, "Fazemos troca de óleo.");
 });

@@ -1,6 +1,7 @@
 import type { Page } from "@playwright/test";
 import { test, expect, Harness, businessId, otherBusinessId, customerText, draftBody, moneyReply } from "./harness.js";
 import { AdminPlan } from "../../src/core/admin-plan-entitlement.js";
+import { LLM_FAILURE_REPLY, UNSUPPORTED_MESSAGE_REPLY } from "../../src/core/response-policy.js";
 
 async function selectQuote(page: Page, gate: Harness) {
   await page.goto(gate.url + "/operator");
@@ -16,7 +17,7 @@ async function selectQuote(page: Page, gate: Harness) {
   const senderJid = link[0]!.sender_jid;
   const phone = /^([0-9]{4,})@s\.whatsapp\.net$/.exec(senderJid.trim())?.[1];
   if (!phone) throw new Error("Selected quote link has no synthetic WhatsApp sender");
-  const contactLabel = `WhatsApp •••• ${phone.slice(-4)}`;
+  const contactLabel = `WhatsApp ${phone}`;
   await expect(selectedQuote).toContainText(contactLabel);
   await expect(page.locator("#conversation-history")).toContainText(customerText);
   await expect(page.locator(".detail-grid")).toContainText("Toyota");
@@ -24,8 +25,8 @@ async function selectQuote(page: Page, gate: Harness) {
   await expect(page.locator(".detail-grid")).toContainText("Corolla");
   await expect(page.locator(".detail-grid")).toContainText("Troca de óleo");
   const documentHtml = await page.evaluate(() => document.documentElement.outerHTML);
+  // The operator needs the whole number to call back; the raw channel id still never reaches the page.
   expect(documentHtml).not.toContain(senderJid);
-  expect(documentHtml).not.toContain(phone);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 }
 async function clickResponse(page: Page, label: string, suffix: string) {
@@ -83,30 +84,36 @@ test("A01 authentication, invalid password, tenant and authenticated reload", as
 });
 
 test("B01 client intake, UTF-8, missing fields and progressive customer/vehicle persistence", async ({ gate }) => {
-  const created = await gate.request(gate.route("/conversations"), "POST", { channel: "WEB" }, false);
+  expect((await gate.request(gate.route("/conversations"), "POST", { channel: "WEB" }, false)).status).toBe(404);
+  const created = await gate.request(gate.route("/conversations"), "POST", { channel: "WEB" });
   expect(created.status).toBe(201);
   const { conversationId } = await created.json() as { conversationId: string };
   const path = gate.route(`/conversations/${conversationId}/messages`);
-  const normal = await gate.request(path, "POST", { content: "Olá <script>alert(1)</script> ação 🚗" }, false);
+  expect((await gate.request(path, "POST", { content: "Sem credencial" }, false)).status).toBe(404);
+  expect(gate.interpreterCalls).toHaveLength(0);
+  const normal = await gate.request(path, "POST", { content: "Olá <script>alert(1)</script> ação 🚗" });
   expect(normal.status).toBe(200);
   expect((await normal.json()).reply).toBe("Olá! Atendimento São José — ação, ç, ã, 🚗.");
-  expect((await gate.request(path, "POST", { content: "Quero orçamento" }, false)).status).toBe(200);
+  expect((await gate.request(path, "POST", { content: "Quero orçamento" })).status).toBe(200);
   expect((await gate.db.query("SELECT status FROM quote_requests")).rows[0]!.status).toBe("WAITING_INFORMATION");
-  expect((await gate.request(path, "POST", { content: customerText }, false)).status).toBe(200);
+  expect((await gate.request(path, "POST", { content: customerText })).status).toBe(200);
   expect((await gate.db.query("SELECT name FROM customers")).rows[0]!.name).toBe("João Açúcar");
   expect((await gate.db.query("SELECT model,year FROM vehicles")).rows[0]).toMatchObject({ model: "Corolla", year: 2020 });
   expect((await gate.db.query("SELECT status FROM quote_requests")).rows).toEqual([{ status: "WAITING_BUSINESS" }]);
   expect((await gate.db.query("SELECT count(*)::int AS n FROM messages")).rows[0]!.n).toBe(6);
 });
 
-test("B02 empty text, invalid JSON, large allowed payload and body limit", async ({ gate }) => {
+test("B02 empty text, invalid JSON, wrong content type, message limit and body limit", async ({ gate }) => {
   const created = await gate.request(gate.route("/conversations"), "POST", { channel: "WEB" });
   const { conversationId } = await created.json() as { conversationId: string };
   const path = gate.route(`/conversations/${conversationId}/messages`);
   expect((await gate.request(path, "POST", { content: " " })).status).toBe(400);
-  expect((await fetch(gate.url + path, { method: "POST", headers: { "content-type": "application/json" }, body: "{" })).status).toBe(400);
-  expect((await gate.request(path, "POST", { content: "a".repeat(950_000) })).status).toBe(200);
+  expect((await fetch(gate.url + path, { method: "POST", headers: { "content-type": "application/json", authorization: gate.auth() }, body: "{" })).status).toBe(400);
+  expect((await fetch(gate.url + path, { method: "POST", headers: { "content-type": "text/plain", authorization: gate.auth() }, body: JSON.stringify({ content: "x" }) })).status).toBe(415);
+  expect((await fetch(gate.url + path, { method: "POST", headers: { "content-type": "application/json", authorization: gate.auth(), origin: "https://evil.example" }, body: JSON.stringify({ content: "x" }) })).status).toBe(403);
+  expect((await gate.request(path, "POST", { content: "a".repeat(4000) })).status).toBe(200);
   const calls = gate.interpreterCalls.length;
+  expect((await gate.request(path, "POST", { content: "a".repeat(4001) })).status).toBe(400);
   expect((await gate.request(path, "POST", { content: "a".repeat(1_048_577) })).status).toBe(413);
   expect(gate.interpreterCalls).toHaveLength(calls);
   expect((await gate.db.query("SELECT count(*)::int AS n FROM messages")).rows[0]!.n).toBe(2);
@@ -115,19 +122,25 @@ test("B02 empty text, invalid JSON, large allowed payload and body limit", async
 test("C01 webhook token, instance, ignored events and exact persisted/sent output", async ({ gate }) => {
   const payload = gate.webhook("Olá São José 🚗");
   for (const altered of [{ ...payload, instanceToken: "invalid" }, { ...payload, instanceToken: undefined }, { ...payload, instanceName: "wrong" }]) expect((await gate.sendWebhook(altered)).status).toBe(401);
-  for (const Info of [{ ...payload.data.Info, IsFromMe: true }, { ...payload.data.Info, Type: "image" }]) {
-    const response = await gate.sendWebhook({ ...payload, data: { ...payload.data, Info } });
-    expect(response.status).toBe(202);
-    expect((await response.json()).accepted).toBe(false);
-  }
+  const ownMessage = await gate.sendWebhook({ ...payload, data: { ...payload.data, Info: { ...payload.data.Info, IsFromMe: true } } });
+  expect(ownMessage.status).toBe(202);
+  expect((await ownMessage.json()).accepted).toBe(false);
   expect(gate.interpreterCalls).toHaveLength(0);
-  expect((await gate.sendWebhook(payload)).status).toBe(202);
+  const accepted = await gate.sendWebhook(payload);
+  expect(accepted.status).toBe(202);
+  expect(await accepted.json()).toEqual({ accepted: true });
   expect((await gate.sendWebhook(payload)).status).toBe(202);
   expect(gate.interpreterCalls).toEqual([payload.data.Message.conversation]);
   expect(gate.senderCalls).toHaveLength(1);
   const messages = (await gate.db.query("SELECT sender_type,content FROM messages ORDER BY created_at,id")).rows;
   expect(messages.find((m) => m.sender_type === "CUSTOMER")!.content).toBe(payload.data.Message.conversation);
   expect(messages.find((m) => m.sender_type === "ASSISTANT")!.content).toBe(gate.senderCalls[0]!.content);
+  const image = gate.webhook("", undefined, payload.data.Info.Sender);
+  const imageWebhook = { ...image, data: { ...image.data, Info: { ...image.data.Info, Type: "image" }, Message: {} } };
+  expect((await gate.sendWebhook(imageWebhook)).status).toBe(202);
+  expect((await gate.sendWebhook(imageWebhook)).status).toBe(202);
+  expect(gate.interpreterCalls).toHaveLength(1);
+  expect(gate.senderCalls.map((call) => call.content)).toEqual([messages.find((m) => m.sender_type === "ASSISTANT")!.content, UNSUPPORTED_MESSAGE_REPLY]);
 });
 
 test("C02 concurrent replay and sender retry reuse persisted interpreter result", async ({ gate }) => {
@@ -147,15 +160,22 @@ test("C02 concurrent replay and sender retry reuse persisted interpreter result"
   expect(gate.senderCalls.filter((c) => c.delivered)).toHaveLength(2);
 });
 
-for (const failure of ["throw", "timeout"] as const) test(`D01-${failure} interpreter failure rolls back and permits recovery`, async ({ gate }) => {
+for (const failure of ["throw", "timeout"] as const) test(`D01-${failure} interpreter failure keeps the message, answers fixed text and hands off`, async ({ gate }) => {
   gate.interpreterMode = failure;
   const payload = gate.webhook();
-  expect((await gate.sendWebhook(payload)).status).toBe(500);
-  for (const table of ["messages", "conversations", "customers", "vehicles", "opportunities", "quote_requests", "evolution_go_conversation_links"]) expect((await gate.db.query(`SELECT count(*)::int AS n FROM ${table}`)).rows[0]!.n).toBe(0);
-  expect(gate.senderCalls).toHaveLength(0);
+  expect((await gate.sendWebhook(payload)).status).toBe(202);
+  expect((await gate.db.query("SELECT sender_type,content FROM messages ORDER BY sender_type DESC")).rows).toEqual([{ sender_type: "CUSTOMER", content: customerText }, { sender_type: "ASSISTANT", content: LLM_FAILURE_REPLY }]);
+  expect(gate.senderCalls.map((call) => call.content)).toEqual([LLM_FAILURE_REPLY]);
+  expect((await gate.db.query("SELECT reason,status FROM human_handoffs")).rows).toEqual([{ reason: "AI_FAILURE", status: "REQUESTED" }]);
+  expect((await gate.db.query("SELECT status FROM conversations")).rows).toEqual([{ status: "WAITING_HUMAN" }]);
+  for (const table of ["vehicles", "opportunities", "quote_requests"]) expect((await gate.db.query(`SELECT count(*)::int AS n FROM ${table}`)).rows[0]!.n).toBe(0);
+  // The only customer is the one WhatsApp itself identified: the phone of the sender, nothing the model said.
+  expect((await gate.db.query("SELECT name,primary_phone FROM customers")).rows).toEqual([{ name: null, primary_phone: payload.data.Info.Sender.replace("@s.whatsapp.net", "") }]);
   gate.interpreterMode = "normal";
   expect((await gate.sendWebhook(payload)).status).toBe(202);
-  expect((await gate.db.query("SELECT count(*)::int AS n FROM quote_requests")).rows[0]!.n).toBe(1);
+  expect(gate.interpreterCalls).toHaveLength(1);
+  expect(gate.senderCalls.filter((call) => call.delivered)).toHaveLength(1);
+  expect((await gate.db.query("SELECT count(*)::int AS n FROM messages")).rows[0]!.n).toBe(2);
 });
 
 test("D02 requiresHuman is persisted and safe response reaches sender", async ({ gate }) => {
@@ -244,6 +264,19 @@ test("E04 stale selected quote blocks authorization until the queue is refreshed
   await expect(page.locator(".action-panel button[type=submit]")).toBeEnabled();
 });
 
+test("E05 order changed during analysis: authorization is refused, panel reloads and the second attempt works", async ({ gate, page }) => {
+  const quote = await gate.intake();
+  await page.goto(gate.url + "/operator");
+  await page.locator(`.quote-option[data-quote-request-id="${quote.id}"]`).click();
+  await page.getByLabel("Valor autorizado em reais").fill("282,00");
+  await gate.db.query("UPDATE quote_requests SET updated_at=$1 WHERE id=$2", ["2026-01-02T00:00:01.000Z", quote.id]);
+  expect((await clickResponse(page, "Autorizar", "/respond")).status()).toBe(409);
+  await expect(page.locator("#feedback")).toContainText("mudou");
+  expect((await gate.db.query("SELECT authorized_price_amount_cents FROM quote_requests WHERE id=$1", [quote.id])).rows[0]!.authorized_price_amount_cents).toBeNull();
+  await page.getByLabel("Valor autorizado em reais").fill("282,00");
+  expect((await clickResponse(page, "Autorizar", "/respond")).status()).toBe(200);
+});
+
 test("F01 BASIC manual browser authorization, reload and exact financial delivery", async ({ gate, page }) => {
   const quote = await gate.intake();
   await authorizeManual(page, gate);
@@ -315,8 +348,8 @@ test("G03 lost authorization response reconciles persisted state without resubmi
 test("H01 every tenant endpoint rejects before any foreign repository call", async ({ gate }) => {
   await gate.intake();
   gate.repositoryCalls = [];
-  for (const [method, suffix] of [["POST", "/conversations"], ["GET", "/conversations/id/messages"], ["POST", "/conversations/id/messages"], ["GET", "/conversations/id/quotes"], ["GET", "/quotes/pending"], ["POST", "/quotes/id/respond"], ["POST", "/quotes/id/publish"], ["GET", "/quotes/id/inventory"], ["POST", "/quotes/id/inventory"], ["GET", "/quotes/id/draft"], ["POST", "/quotes/id/draft"], ["POST", "/quotes/id/draft/authorize"]]) {
-    const response = await gate.request(`/v1/businesses/${otherBusinessId}${suffix}`, method, method === "POST" ? {} : undefined);
+  for (const [method, suffix] of [["POST", "/conversations"], ["GET", "/conversations/id/messages"], ["POST", "/conversations/id/messages"], ["GET", "/conversations/id/quotes"], ["GET", "/quotes/pending"], ["POST", "/quotes/id/respond"], ["POST", "/quotes/id/publish"], ["GET", "/quotes/id/inventory"], ["POST", "/quotes/id/inventory"], ["GET", "/quotes/id/draft"], ["POST", "/quotes/id/draft"], ["POST", "/quotes/id/draft/authorize"], ["GET", "/profile"], ["PUT", "/profile"], ["GET", "/handoffs"], ["POST", "/handoffs/id/assign"], ["POST", "/handoffs/id/reply"], ["POST", "/handoffs/id/resolve"]]) {
+    const response = await gate.request(`/v1/businesses/${otherBusinessId}${suffix}`, method, method === "POST" || method === "PUT" ? {} : undefined);
     expect(response.status, `${method} ${suffix}`).toBe(404);
   }
   expect(gate.repositoryCalls).toEqual([]);
@@ -447,7 +480,7 @@ test("L02 manual versus integrated authorization serialize without financial div
   const quote = await gate.intake();
   const path = gate.route(`/quotes/${quote.id}`);
   const draft = await (await gate.request(path + "/draft", "POST", draftBody())).json();
-  const [manual, integrated] = await Promise.all([gate.request(path + "/respond", "POST", { amountCents: 1, currency: "BRL" }), gate.request(path + "/draft/authorize", "POST", { draftId: draft.id, revision: draft.revision })]);
+  const [manual, integrated] = await Promise.all([gate.request(path + "/respond", "POST", { amountCents: 1, currency: "BRL", expectedUpdatedAt: quote.updated_at }), gate.request(path + "/draft/authorize", "POST", { draftId: draft.id, revision: draft.revision })]);
   expect(manual.status).toBe(409);
   expect(integrated.status).toBe(200);
   const result = (await gate.db.query("SELECT q.authorized_price_amount_cents,d.total_amount_cents FROM quote_requests q JOIN quote_drafts d ON d.quote_request_id=q.id AND d.business_id=q.business_id WHERE q.id=$1", [quote.id])).rows[0]!;
@@ -532,4 +565,83 @@ test("K07 publication rejects divergent money and PUBLISHED without persisted de
   expect((await gate.db.query("SELECT count(*)::int AS n FROM outbound_deliveries")).rows[0]!.n).toBe(0);
   expect((await gate.db.query("SELECT count(*)::int AS n FROM commercial_events WHERE event_type='QUOTE_PUBLISHED'")).rows[0]!.n).toBe(0);
   expect(gate.senderCalls).toHaveLength(1); // Only the original customer reply, no financial output.
+});
+
+const HUMAN_REPLY = "Vou encaminhar sua solicitação para a equipe responsável.";
+
+test("M01 a customer asks for a person, waits in silence, and the operator takes over from the panel and hands the bot back", async ({ gate, page }) => {
+  const sender = "5592988887777@s.whatsapp.net";
+  expect((await gate.sendWebhook(gate.webhook("Quero atendente", undefined, sender))).status).toBe(202);
+  expect(gate.senderCalls.map((call) => call.content)).toEqual([HUMAN_REPLY]);
+  expect((await gate.sendWebhook(gate.webhook("Alguém aí?", undefined, sender))).status).toBe(202);
+  expect(gate.interpreterCalls).toEqual(["Quero atendente"]);
+  expect(gate.senderCalls).toHaveLength(1);
+  expect((await gate.db.query("SELECT count(*)::int AS n FROM human_handoffs")).rows[0]!.n).toBe(1);
+
+  await page.goto(gate.url + "/operator");
+  const item = page.locator(".handoff-item");
+  await expect(page.locator("#handoff-count")).toHaveText("1");
+  await expect(item).toContainText("5592988887777");
+  await expect(item).toContainText("Alguém aí?");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await item.getByRole("button", { name: "Assumir" }).click();
+  await expect(item.getByRole("button", { name: "Assumir" })).toBeHidden();
+
+  const reply = item.getByLabel("Resposta ao cliente");
+  gate.senderFails = true;
+  await reply.fill("Oi, aqui é da oficina. Já te ajudo.");
+  await item.getByRole("button", { name: "Enviar resposta" }).click();
+  await expect(item).toContainText("Não foi possível enviar");
+  await expect(reply).toHaveValue("Oi, aqui é da oficina. Já te ajudo.");
+  gate.senderFails = false;
+  await item.getByRole("button", { name: "Enviar resposta" }).click();
+  await expect(reply).toHaveValue("");
+  await expect(item).toContainText("Oi, aqui é da oficina");
+  expect(gate.senderCalls.filter((call) => call.delivered).at(-1)).toMatchObject({ recipientJid: sender, content: "Oi, aqui é da oficina. Já te ajudo." });
+  expect((await gate.db.query("SELECT status FROM human_handoffs")).rows).toEqual([{ status: "ACCEPTED" }]);
+  expect(gate.interpreterCalls).toEqual(["Quero atendente"]);
+
+  await item.getByRole("button", { name: "Devolver ao bot" }).click();
+  await expect(page.locator("#handoff-count")).toHaveText("0");
+  await expect(page.locator(".handoff-item")).toHaveCount(0);
+  expect((await gate.db.query("SELECT status FROM conversations")).rows).toEqual([{ status: "ACTIVE" }]);
+  expect((await gate.db.query("SELECT status FROM human_handoffs")).rows).toEqual([{ status: "RESOLVED" }]);
+
+  expect((await gate.sendWebhook(gate.webhook("Voltei, e o carro?", undefined, sender))).status).toBe(202);
+  expect(gate.interpreterCalls).toEqual(["Quero atendente", "Voltei, e o carro?"]);
+  expect(gate.senderCalls.filter((call) => call.delivered).at(-1)!.content).toBe("Olá! Atendimento São José — ação, ç, ã, 🚗.");
+});
+
+test("N01 workshop data saved on the panel reach the interpreter as facts and the out-of-hours answer says when the workshop opens", async ({ gate, page }) => {
+  gate.clock = Date.parse("2026-11-07T15:00:00.000Z"); // Saturday afternoon, after the Saturday hours
+  await page.goto(gate.url + "/operator");
+  await page.getByText("Dados da oficina").click();
+  await page.getByLabel("Endereço").fill("Rua das Oficinas, 10");
+  await page.getByLabel("Telefone da oficina").fill("(92) 3333-4444");
+  await page.getByLabel("WhatsApp para avisos").fill("(92) 99999-1234");
+  for (const day of ["Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira"]) await page.getByLabel(day).fill("08:00-18:00");
+  await page.getByLabel("Sábado").fill("08:00-12:00");
+  await page.getByLabel("Serviços (um por linha)").fill("Troca de óleo\nFreios");
+  await page.getByLabel("Formas de pagamento (um por linha)").fill("Pix\nCartão");
+  await page.getByRole("button", { name: "Salvar dados" }).click();
+  await expect(page.locator("#profile-message")).toHaveText("Dados salvos.");
+  const stored = (await gate.db.query("SELECT address,notify_phone,opening_hours,services FROM business_profiles WHERE business_id=$1", [businessId])).rows[0]!;
+  expect(stored).toMatchObject({ address: "Rua das Oficinas, 10", notify_phone: "5592999991234", services: ["Troca de óleo", "Freios"] });
+  expect(stored.opening_hours["6"]).toEqual([{ open: "08:00", close: "12:00" }]);
+
+  await page.reload();
+  await page.getByText("Dados da oficina").click();
+  await expect(page.getByLabel("Sábado")).toHaveValue("08:00-12:00");
+  await expect(page.getByLabel("Domingo")).toHaveValue("");
+
+  expect((await gate.sendWebhook(gate.webhook("abrem sábado?"))).status).toBe(202);
+  const received = gate.interpreterInputs.at(-1)!;
+  expect(received.businessFacts).toEqual({
+    address: "Rua das Oficinas, 10", phone: "(92) 3333-4444",
+    openingHours: { domingo: "fechado", "segunda-feira": "08:00-18:00", "terça-feira": "08:00-18:00", "quarta-feira": "08:00-18:00", "quinta-feira": "08:00-18:00", "sexta-feira": "08:00-18:00", sábado: "08:00-12:00" },
+    services: ["Troca de óleo", "Freios"], paymentMethods: ["Pix", "Cartão"],
+  });
+  expect(received.localDateTime).toBe("2026-11-07 15:00 (sábado, UTC)");
+  expect(JSON.stringify(received)).not.toContain("5592999991234");
+  expect(gate.senderCalls.at(-1)!.content).toBe("Olá! Atendimento São José — ação, ç, ã, 🚗.\nEstamos fora do horário de atendimento. Voltamos na segunda-feira às 08:00.");
 });

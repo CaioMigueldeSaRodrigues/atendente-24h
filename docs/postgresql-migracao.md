@@ -20,7 +20,7 @@ No PowerShell, na raiz do projeto:
 ```powershell
 npm run check:postgres
 npm run migrate:postgres
-npm run start:basic
+npm start
 ```
 
 `check:postgres` executa uma consulta simples e confirma TLS. `migrate:postgres` compila e aplica apenas migrações ainda ausentes. O runtime também aplica migrações pendentes no startup. Nenhum comando toca no banco externo do Evolution Go.

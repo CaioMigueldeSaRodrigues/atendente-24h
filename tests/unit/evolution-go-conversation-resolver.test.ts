@@ -172,3 +172,14 @@ test("rejects empty input before accessing repositories", async () => {
   }
   assert.deepEqual(state.calls, []);
 });
+
+test("the replacement for a closed conversation belongs to the same customer", async () => {
+  const state = harness({
+    existingLink: link(),
+    existingConversation: conversation({ status: ConversationStatus.CLOSED, customerId: "customer-synthetic" }),
+  });
+  const result = await resolveEvolutionGoConversation(input, state.dependencies);
+  assert.equal(result.created, true);
+  assert.equal(result.conversation.customerId, "customer-synthetic");
+  assert.equal(state.savedConversations[0]?.customerId, "customer-synthetic");
+});

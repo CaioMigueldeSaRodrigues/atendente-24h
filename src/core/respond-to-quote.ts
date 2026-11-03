@@ -22,6 +22,7 @@ export type RespondToQuoteInput = {
   businessId: string;
   quoteRequestId: string;
   authorizedPrice: Money;
+  expectedUpdatedAt?: string;
 };
 
 export type RespondToQuoteDependencies = RespondToQuoteBaseDependencies & {
@@ -49,6 +50,10 @@ export async function respondToQuote(
 
   if (!opportunity) {
     throw new Error("Opportunity not found");
+  }
+
+  if (input.expectedUpdatedAt !== undefined && input.expectedUpdatedAt !== quoteRequest.updatedAt) {
+    throw new Error("QUOTE_STALE");
   }
 
   if (quoteRequest.status !== QuoteRequestStatus.WAITING_BUSINESS) {

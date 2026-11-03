@@ -57,7 +57,8 @@ export async function resolveEvolutionGoConversation(
       }
 
       const timestamp = dependencies.now();
-      const conversation = newConversation(input.businessId, dependencies.generateId, timestamp);
+      // The person is the same; only the history starts over.
+      const conversation = { ...newConversation(input.businessId, dependencies.generateId, timestamp), ...(existing.customerId === undefined ? {} : { customerId: existing.customerId }) };
       await dependencies.conversationRepository.save(conversation);
       await linkRepository.save({
         ...link,
