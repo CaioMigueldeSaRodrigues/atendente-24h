@@ -1,6 +1,6 @@
 # Operação do atendente-24h (campo)
 
-Uma instância por oficina, num servidor próprio (Hetzner), com Docker Compose: `app`, `db` (Postgres 16) e `caddy` (HTTPS automático). O Evolution Go é externo.
+Uma instância por oficina, numa máquina com Docker (servidor próprio ou PC), com Docker Compose: `app`, `db` (Postgres 16) e `caddy` (HTTPS automático). O Evolution Go é externo.
 
 Todos os comandos `docker compose` usam o arquivo de variáveis:
 
@@ -145,7 +145,7 @@ O script apaga cliente, veículos, conversas, mensagens, orçamentos, agendament
 
 Exige chave de LLM e número de WhatsApp reais. Rodar nesta ordem, no servidor do piloto:
 
-1. `npm run test:llm:live` (`run-live-smoke`): o modelo escolhido responde dentro do contrato.
+1. `dc exec app node dist/integrations/llm/run-live-smoke.js`: o modelo escolhido responde dentro do contrato. (`npm run test:llm:live` só funciona fora do container, porque compila com `tsc`.)
 2. Do celular de teste, mandar uma mensagem de texto para o número de atendimento: a resposta chega e a primeira traz o aviso de privacidade.
 3. Repetir pelo WhatsApp Web do mesmo celular: a conversa continua a mesma, sem cliente novo no painel.
 4. Mandar um áudio e uma foto: cada um recebe o texto de "só consigo ler mensagens de texto".
